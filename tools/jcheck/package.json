@@ -1,0 +1,12 @@
+{
+  "name": "jcheck",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static checker for the JCore Lua runtime",
+  "type": "commonjs",
+  "scripts": {
+    "check": "node check.js",
+    "selftest": "node selftest.js"
+  },
+  "dependencies": { "luaparse": "^0.3.1" }
+}

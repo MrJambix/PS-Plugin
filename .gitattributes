@@ -1,0 +1,4 @@
+# Every file byte for byte: no line-ending conversion. This PC and the GitHub
+# Windows runner both have core.autocrlf=true, which would turn the LF files
+# into CRLF on checkout.
+* -text

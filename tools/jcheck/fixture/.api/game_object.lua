@@ -1,0 +1,4 @@
+-- Stand-in for the game_object stub. The member-name pass reads ---@field.
+---@class game_object
+---@field get_health fun(self: game_object): number
+---@field is_moving fun(self: game_object): boolean

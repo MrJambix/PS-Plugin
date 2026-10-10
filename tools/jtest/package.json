@@ -1,0 +1,20 @@
+{
+  "name": "jtest",
+  "version": "1.0.0",
+  "description": "Offline Lua test harness (fengari) for the project's Lua modules",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node run.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "fengari": "^0.1.5",
+    "pngjs": "^7.0.0"
+  },
+  "private": true
+}

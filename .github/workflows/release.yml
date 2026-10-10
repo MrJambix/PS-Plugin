@@ -1,0 +1,92 @@
+# Uploads a plugin to Project Sylvanas when a push to main changes its version
+# (plugin["version"] in scripts/<plugin>/header.lua). Other pushes upload
+# nothing, so work in progress can be pushed any time.
+#
+# It runs tools/upload.ps1, the same script used by hand, on a Windows runner,
+# so the zip is built exactly as tools/repack.ps1 builds it on the PC.
+#
+# Secrets (Settings > Secrets and variables > Actions):
+#   SYLVANAS_USERNAME, SYLVANAS_PASSWORD
+# Plugin ids live in tools/upload.ps1.
+#
+# By hand: Actions > Release > Run workflow, naming the plugins.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/jcore/header.lua"
+      - "scripts/jambix_aio/header.lua"
+  workflow_dispatch:
+    inputs:
+      plugins:
+        description: "Plugins to upload, space separated (jcore, jambix_aio)"
+        required: true
+        default: "jambix_aio"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Upload to Project Sylvanas
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick plugins
+        id: pick
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+          REQUESTED: ${{ github.event.inputs.plugins }}
+        run: |
+          set -f
+          known="jcore jambix_aio"
+          ver() { grep -m1 '^plugin\["version"\]' | sed 's/.*= *"\([^"]*\)".*/\1/'; }
+          picked=""
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            for p in $(echo "$REQUESTED" | tr ',' ' '); do
+              case " $known " in
+                *" $p "*) picked="$picked $p" ;;
+                *) echo "::error::'$p' is not uploadable (known: $known)"; exit 1 ;;
+              esac
+            done
+          elif [ -z "${BEFORE//0/}" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "No earlier commit to compare with, so nothing is uploaded. Use Run workflow to upload by hand."
+          else
+            for p in $known; do
+              new=$(ver < "scripts/$p/header.lua")
+              old=$(git show "$BEFORE:scripts/$p/header.lua" 2>/dev/null | ver)
+              if [ -n "$new" ] && [ "$new" != "$old" ]; then
+                echo "$p: ${old:-none} -> $new"
+                picked="$picked $p"
+              else
+                echo "$p: $new, unchanged"
+              fi
+            done
+          fi
+          echo "plugins=${picked# }" >> "$GITHUB_OUTPUT"
+
+      - name: Upload
+        if: steps.pick.outputs.plugins != ''
+        shell: powershell
+        env:
+          SYLVANAS_USERNAME: ${{ secrets.SYLVANAS_USERNAME }}
+          SYLVANAS_PASSWORD: ${{ secrets.SYLVANAS_PASSWORD }}
+          PLUGINS: ${{ steps.pick.outputs.plugins }}
+        run: |
+          if (-not $env:SYLVANAS_USERNAME -or -not $env:SYLVANAS_PASSWORD) {
+              throw "add the SYLVANAS_USERNAME and SYLVANAS_PASSWORD secrets"
+          }
+          $names = @($env:PLUGINS -split '\s+' | Where-Object { $_ })
+          & .\tools\upload.ps1 @names -Yes
