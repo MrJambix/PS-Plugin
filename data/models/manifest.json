@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "versions": [
+    {
+      "version": "1",
+      "schema": 1,
+      "min_plugin": "1.8.1",
+      "status": "active",
+      "created_at": "2026-10-12T18:41:29.634Z",
+      "fights": 0,
+      "contributors": 0,
+      "note": "scheduled"
+    }
+  ]
+}
