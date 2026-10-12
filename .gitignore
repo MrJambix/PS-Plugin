@@ -14,9 +14,13 @@
 !/scripts/jambix_aio/
 !/scripts/jambix_market/
 !/scripts/jambix_debug/
+!/scripts/jambix_worldclick/
 
 /tools/jtest/node_modules/
 /tools/jtest/out/
 /tools/jcheck/node_modules/
 *.zip
 *.tmp
+
+# The shared network's real config carries a token: shipped by release.yml from a secret, never committed.
+scripts/jambix_aio/modules/central_config.lua

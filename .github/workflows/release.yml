@@ -77,6 +77,25 @@ jobs:
           fi
           echo "plugins=${picked# }" >> "$GITHUB_OUTPUT"
 
+      # The shared PvP intelligence network's address and token
+      # (scripts/jambix_aio/CENTRAL_NETWORK.md §9) ship in
+      # modules/central_config.lua, written here from a secret so the token
+      # never enters the repository. The secret holds the file's whole text
+      # (copy central_config.example.lua, fill it in). Without the secret the
+      # plugin ships with no central address and the network stays off.
+      - name: Central network config (from a secret)
+        if: steps.pick.outputs.plugins != ''
+        shell: bash
+        env:
+          JAMBIX_CENTRAL_CONFIG: ${{ secrets.JAMBIX_CENTRAL_CONFIG }}
+        run: |
+          if [ -n "$JAMBIX_CENTRAL_CONFIG" ]; then
+            printf '%s\n' "$JAMBIX_CENTRAL_CONFIG" > scripts/jambix_aio/modules/central_config.lua
+            echo "central_config.lua written from the JAMBIX_CENTRAL_CONFIG secret"
+          else
+            echo "no JAMBIX_CENTRAL_CONFIG secret: the plugin ships without a central address"
+          fi
+
       - name: Upload
         if: steps.pick.outputs.plugins != ''
         shell: powershell

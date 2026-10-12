@@ -1,0 +1,98 @@
+# The Jambix central PvP intelligence network, with this repository as the
+# service (scripts/jambix_aio/CENTRAL_NETWORK.md §9).
+#
+# The clients open issues titled "jambix-batch <id>", "jambix-lesson <id>"
+# or "jambix-delete <contributor>" with a fenced JSON body, using a
+# fine-grained token that can only open issues here and read contents. This
+# workflow files each accepted issue into the data branch (jambix-data:
+# data/batches.jsonl, data/lessons.jsonl), answers and closes it, and every
+# six hours publishes a model version (data/models/vN.json + manifest.json)
+# the clients download. Refused issues get the reason in a comment.
+#
+# By hand: Actions > Jambix central > Run workflow ("ingest", "publish" or
+# "withdraw <version>").
+
+name: Jambix central
+
+on:
+  issues:
+    types: [opened]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "ingest | publish | withdraw <version>"
+        required: true
+        default: "ingest"
+
+concurrency:
+  group: jambix-central
+  cancel-in-progress: false
+
+jobs:
+  central:
+    name: File the issues, publish the model
+    runs-on: ubuntu-latest
+    if: github.event_name != 'issues' || startsWith(github.event.issue.title, 'jambix-')
+    permissions:
+      contents: write
+      issues: write
+    env:
+      DATA_BRANCH: jambix-data
+    steps:
+      - name: Checkout main (the tools)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout the data branch beside it
+        shell: bash
+        run: |
+          set -e
+          if git ls-remote --exit-code --heads origin "$DATA_BRANCH" >/dev/null 2>&1; then
+            git worktree add data-branch "origin/$DATA_BRANCH"
+            (cd data-branch && git checkout -B "$DATA_BRANCH")
+          else
+            git worktree add --detach data-branch
+            (cd data-branch && git checkout --orphan "$DATA_BRANCH" && git rm -rfq . && mkdir -p data/models && echo "# Jambix central data" > README.md)
+          fi
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DATA_DIR: ${{ github.workspace }}/data-branch/data
+          ACTION: ${{ github.event.inputs.action }}
+        run: |
+          set -e
+          case "$GITHUB_EVENT_NAME" in
+            issues) node tools/fightlog_server/github_ingest.js ingest ;;
+            schedule) node tools/fightlog_server/github_ingest.js ingest && node tools/fightlog_server/github_ingest.js publish "scheduled" ;;
+            workflow_dispatch)
+              set -- $ACTION
+              case "$1" in
+                ingest) node tools/fightlog_server/github_ingest.js ingest ;;
+                publish) node tools/fightlog_server/github_ingest.js publish "by hand" ;;
+                withdraw) node tools/fightlog_server/github_ingest.js withdraw "$2" ;;
+                *) echo "unknown action: $ACTION"; exit 1 ;;
+              esac ;;
+          esac
+
+      - name: Commit the data branch
+        shell: bash
+        run: |
+          set -e
+          cd data-branch
+          git config user.name "jambix-central"
+          git config user.email "jambix-central@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
+          git commit -m "central: ${GITHUB_EVENT_NAME} $(date -u +%FT%TZ)"
+          git push origin "HEAD:$DATA_BRANCH"
