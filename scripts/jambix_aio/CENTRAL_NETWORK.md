@@ -554,6 +554,19 @@ session's clock) and an item tried before is looked for first. The fix is
 in the client and needs a release to reach players. Test: `aio_intel_central_test`
 ("live 2026-10-12: a fight filed five times").
 
+**Empty tables, either shape.** Replaying the user's real stuck queue (six
+records) through the fixed client showed what the service would have done
+with them: the second fight's batch refused (an episode with no actions,
+written `"actions": {}` by the client's own encoder) and, with the game's
+encoder (JCore's, which writes every empty table as `[]`), all three
+lessons refused (an enemy that never controlled you: `"controls_on_me": []`).
+Lua cannot tell an empty list from an empty map. The service now gives an
+empty value the shape its field has before checking it
+(`validate.js normalize`; the trust screen does the same for anything
+stored before), and still refuses a non-empty value of the wrong shape. This
+is the service's side, so it holds for every 1.7.8 client already out.
+Test: `github_ingest.test.js` ("an empty table in either shape").
+
 **The empty v1.** The old schedule (before the gated cycle was pushed)
 published an empty v1 at 18:41. A production with no fight is now no
 production: the first real model goes to every player, with no rollback

@@ -76,7 +76,38 @@ function head(r, what) {
     return null;
 }
 
+// An empty table is ambiguous in Lua: JCore's encoder writes every empty
+// table as [] (an empty map too), the client's own fallback writes {} (an
+// empty list too). Live on 2026-10-12 a batch with an episode that had no
+// actions came out as "actions": {} and a lesson's empty "controls_on_me"
+// would come out as []. So before checking, an EMPTY value takes the shape
+// its field has: [] or {} for a list, {} or [] for a map. A non-empty value
+// of the wrong shape is still refused. This mutates the record, which is
+// what the callers store.
+const isEmptyObj = v => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0;
+const isEmptyArr = v => Array.isArray(v) && v.length === 0;
+const asList = (o, k) => { if (o && isEmptyObj(o[k])) o[k] = []; };
+const asMap = (o, k) => { if (o && isEmptyArr(o[k])) o[k] = {}; };
+
+function normalize(r) {
+    if (!r || typeof r !== 'object') return r;
+    asList(r, 'observations'); asList(r, 'episodes'); asList(r, 'enemies'); asList(r, 'lessons');
+    for (const e of Array.isArray(r.episodes) ? r.episodes : []) {
+        if (!e || typeof e !== 'object') continue;
+        asList(e, 'actions');
+        if (e.result && typeof e.result === 'object') asList(e.result, 'all');
+    }
+    for (const x of Array.isArray(r.enemies) ? r.enemies : []) {
+        if (!x || typeof x !== 'object') continue;
+        asMap(x, 'used'); asMap(x, 'controls_on_me'); asMap(x, 'patterns'); asMap(x, 'defensives');
+    }
+    if (r.diagnostics && typeof r.diagnostics === 'object') { asList(r.diagnostics, 'moments'); asList(r.diagnostics, 'states'); }
+    if (r.baits && typeof r.baits === 'object') asMap(r.baits, 'kinds');
+    return r;
+}
+
 function validateBatch(b) {
+    normalize(b);
     const e = head(b, 'batch');
     if (e) return e;
     if (!Array.isArray(b.observations)) return 'observations must be a list';
@@ -146,6 +177,7 @@ function validateBatch(b) {
 }
 
 function validateLesson(l) {
+    normalize(l);
     const e = head(l, 'lesson');
     if (e) return e;
     if (!Array.isArray(l.enemies) || l.enemies.length > 10) return 'enemies must be a list of at most 10';
@@ -184,5 +216,5 @@ function validateDelete(d) {
     return null;
 }
 
-module.exports = { SCHEMA, CLASSES, PATTERNS, OUTCOMES, ENCOUNTERS, LESSON_CODES, EPISODE_TYPES, RESULTS,
+module.exports = { normalize, SCHEMA, CLASSES, PATTERNS, OUTCOMES, ENCOUNTERS, LESSON_CODES, EPISODE_TYPES, RESULTS,
     validateBatch, validateLesson, validateDelete, forbiddenKey };

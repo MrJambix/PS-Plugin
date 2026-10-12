@@ -20,6 +20,7 @@
 // others' is an outlier and weighs half (learn.js outliers).
 
 const crypto = require('crypto');
+const { normalize } = require('./validate');
 
 const DEFAULTS = {
     maxPerDay: 40,              // fights one contributor may file on one day; the rest quarantined
@@ -75,8 +76,12 @@ function suspicious(b, o) {
  * quarantined (each with its reasons), the audit rows, and per-contributor
  * counts. Records are taken in the order received.
  */
-function screen(batches, lessons, opts) {
+function screen(batchesIn, lessonsIn, opts) {
     const o = Object.assign({}, DEFAULTS, opts || {});
+    // Every record in the shapes the learner reads (an empty {} list or [] map
+    // from an older ingest), and nothing that is not a record at all.
+    const batches = (batchesIn || []).filter(r => r && typeof r === 'object').map(normalize);
+    const lessons = (lessonsIn || []).filter(r => r && typeof r === 'object').map(normalize);
     const quarantined = [];
     const audit = [];
     const perDay = {};                  // contributor|day -> fights filed

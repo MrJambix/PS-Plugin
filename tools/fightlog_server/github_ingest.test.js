@@ -87,3 +87,36 @@ test('publish is a gated learning cycle: one contributor is rejected and only th
     assert.strictEqual(store.readManifest().versions[0].status, 'withdrawn');
     assert.strictEqual(store.withdraw('9'), false);
 });
+
+test('an empty table in either shape (live 2026-10-12): an episode\'s "actions": {} and a lesson\'s "controls_on_me": [] are taken, stored in the shape the field has, and the learner reads them', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jambix-ingest-'));
+    const store = createStore(dataDir);
+    const me = hex(24);
+    const b = batch(me, '4'.repeat(20));
+    b.observations = {};                                   // the client's own encoder: an empty list as {}
+    b.episodes = [{ id: '5'.repeat(20), type: 'gap_close_attempt', enemy_class: 'ROGUE', t: 3, horizon: 5,
+        trigger: { text: 'the player Sprint', observed: true, source: 'event' },
+        before: { hp: 1, attackers: 1, controlled: false }, after: { hp: 0.9, attackers: 1, controlled: false },
+        prediction: { outcome: 'NONE' }, recommendation: { outcome: 'UNKNOWN' }, actions: {}, moved: false,
+        result: { primary: 'NO_MEASURABLE_CHANGE', all: {} }, quality: { test_data: false } }];
+    const l = { schema: 1, id: '6'.repeat(20), contributor: me, client: b.client, me: b.me, encounter: b.encounter,
+        enemies: [{ class: 'ROGUE', role: 'melee', used: [], controls_on_me: [], bursts: 0, hp_min: 1 }],   // JCore's encoder: an empty map as []
+        lessons: [] };
+    const api = fakeApi([issue(1, 'jambix-batch ' + b.id, b), issue(2, 'jambix-lesson ' + l.id, l)]);
+    const s = await ingest(store, api);
+    assert.deepStrictEqual(api.comments, [[1, 'accepted'], [2, 'accepted']]);
+    assert.strictEqual(s.accepted, 2);
+    const stored = store.batches()[0];
+    assert.deepStrictEqual(stored.observations, []); assert.deepStrictEqual(stored.episodes[0].actions, []); assert.deepStrictEqual(stored.episodes[0].result.all, []);
+    const lesson = store.lessons()[0];
+    assert.deepStrictEqual(lesson.enemies[0].used, {}); assert.deepStrictEqual(lesson.enemies[0].controls_on_me, {});
+    // A non-empty value of the wrong shape is still refused.
+    const bad = batch(me, '7'.repeat(20)); bad.observations = { a: 1 };
+    const api2 = fakeApi([issue(3, 'jambix-batch ' + bad.id, bad)]);
+    await ingest(store, api2);
+    assert.match(api2.comments[0][1], /refused: observations must be a list/);
+    // And the learner reads what was stored, and an older record stored in the wrong empty shape.
+    const learn = require('./learn');
+    const m = learn.build([...store.batches(), Object.assign({}, b, { id: '8'.repeat(20), fight: '8'.repeat(20), observations: {}, episodes: {} })], store.lessons());
+    assert.ok(m.games.Forever, 'built');
+});
