@@ -116,13 +116,17 @@ return function(R, P, lib)
         return false
     end
 
-    --- What the next incapacitate gets on this player: 1, 0.5, 0.25 or 0
-    --- (pvpx.lua's diminishing returns; Scatter Shot and the trap share one).
+    --- What the next incapacitate gets on this player: 1, 0.5, 0.25 or 0,
+    --- from the PvP intelligence's control plan (react/intel/ccplan.lua,
+    --- Stage 6: on Era DRList's rule on the controls it counted; on Forever
+    --- UNKNOWN, taken as full). Scatter Shot and the trap share one category.
     local function dr(unit)
-        local x = P.pvpx
-        if not (x and x.dr) then return 1 end
-        local ok, mult = pcall(x.dr, unit, "incapacitate")
-        return ok and tonumber(mult) or 1
+        local I = P.react and P.react.intel
+        local S = I and I.S
+        if not (I and I.cc and S and S.active and not S.off and unit and P.units) then return 1 end
+        local ok, mult = pcall(I.cc.next, S, P.units.guid(unit), "incapacitate")
+        if ok and type(mult) == "number" then return mult end
+        return 1
     end
 
     local function in_melee(r)

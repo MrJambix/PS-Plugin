@@ -175,29 +175,55 @@ return function(P)
         return math.max(0, (expires - now_ms) / 1000)
     end
 
+    --- Whose an aura is: "yes" (its caster is us), "other" (another unit's),
+    --- or "unknown" (the row carries no caster, or one that gives no guid).
+    --- JCore's aura_is_mine fails open the same way; the PvP intelligence's
+    --- control plan reads "unknown" as ours at a lower confidence.
+    ---@param aura table
+    ---@return string who
+    local function caster_of(aura)
+        local caster = type(aura) == "table" and aura.caster or nil
+        if caster == nil then return "unknown" end
+        local ok, guid = pcall(function() return caster:get_guid() end)
+        if not ok or type(guid) ~= "string" or guid == "" then return "unknown" end
+        local me = units.player and try(units.player) or nil
+        local mine = me and units.guid and try(units.guid, me) or nil
+        if type(mine) ~= "string" or mine == "" then return "unknown" end
+        return guid == mine and "yes" or "other"
+    end
+    M.caster_of = caster_of
+
     --- Held by a control of ours that damage breaks: its kind ("trap",
-    --- "scatter", "sting") and seconds left; nil when it is not.
+    --- "scatter", "sting"), seconds left, and whose the aura is ("yes": its
+    --- caster is us; "unknown": no caster to read); nil when it is not.
+    --- Another hunter's trap (a caster that is not us) does not count
+    --- (2026-10-11: until then any trap read as ours, PVP_INTEL_PLAN.md
+    --- §1.13 defect 10).
     ---@param unit game_object|nil
     ---@return string|nil kind
     ---@return number left
+    ---@return string|nil ours "yes" or "unknown"
     function M.held(unit)
-        if not unit then return nil, 0 end
+        if not unit then return nil, 0, nil end
         local index = units.aura_index and try(units.aura_index, unit) or nil
         if type(index) ~= "table" then
             local list = try(unit.get_debuffs, unit)
             index = type(list) == "table" and list or nil
         end
-        if not index then return nil, 0 end
+        if not index then return nil, 0, nil end
         local now_ms = game_ms()
-        local kind, left = nil, 0
+        local kind, left, ours = nil, 0, nil
         for _, aura in pairs(index) do
             local k = type(aura) == "table" and OURS[aura.buff_name or ""] or nil
             if k then
-                local l = left_on(aura, now_ms)
-                if not kind or l > left then kind, left = k, l end
+                local who = caster_of(aura)
+                if who ~= "other" then
+                    local l = left_on(aura, now_ms)
+                    if not kind or l > left then kind, left, ours = k, l, who end
+                end
             end
         end
-        return kind, left
+        return kind, left, ours
     end
 
     --- Yards the step out keeps walking to from this target: a player

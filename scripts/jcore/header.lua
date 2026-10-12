@@ -13,7 +13,7 @@
 local plugin = {}
 
 plugin["name"] = "JCore"
-plugin["version"] = "1.7.9"
+plugin["version"] = "1.8.1"
 plugin["author"] = "jambix"
 
 -- Must be a BOOLEAN. The loader reads this key by type, and a function here is

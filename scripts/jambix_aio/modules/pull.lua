@@ -18,6 +18,12 @@
 --
 -- Neutral mobs never come for you, so only what the client calls your enemy
 -- is ringed. The rings are the nearest few; the rest would only be clutter.
+--
+-- Mobs only (1.8.1). A player, or a player's pet or minion, notices nobody
+-- from a distance, so none has a ring, a curtain or a pulse. The user's
+-- screenshot, 2026-10-11 (Forever, Booty Bay on a PvP realm): every Horde
+-- player on the dock stood in a 20-yard ring, red because you were inside
+-- them all, and the rings covered the screen.
 
 return function(P)
     local ctx = P.ctx
@@ -61,6 +67,20 @@ return function(P)
     local known = {}             -- guid -> { level, level_at, hostile, hostile_at, rank, rare_seen }
     local known_n, swept_at = 0, 0
 
+    --- A player, or a pet or minion a player owns. One whose owner does not
+    --- answer keeps its ring: a ring too many is safer than one missing.
+    local function players_own(obj)
+        local snap = units.snapshot and ask(units.snapshot, obj)
+        if type(snap) == "table" and snap.is_player ~= nil then
+            if snap.is_player == true then return true end
+        elseif ask(obj.is_player, obj) == true then
+            return true
+        end
+        if ask(obj.is_pet, obj) ~= true and ask(obj.is_minion, obj) ~= true then return false end
+        local owner = ask(obj.get_owner, obj)
+        return owner ~= nil and ask(owner.is_player, owner) == true
+    end
+
     local function facts(row, player, now)
         local k = known[row.guid]
         if not k then
@@ -75,7 +95,7 @@ return function(P)
             k.level_at = now
         end
         if now - k.hostile_at > HOSTILE_EVERY then
-            k.hostile = player and ask(player.is_enemy_with, player, obj) == true or false
+            k.hostile = player ~= nil and not players_own(obj) and ask(player.is_enemy_with, player, obj) == true
             k.hostile_at = now
         end
         return k

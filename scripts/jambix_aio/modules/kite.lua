@@ -60,9 +60,11 @@
 -- target still shootable, we walk clear of the add's reach while the shots
 -- stay on the target -- never so far that the target leaves range.
 --
--- THE AOE MELEE WEAVE (1.7.6, ALPHA/TEST). While the hunter's AOE weave
--- profile runs (classes/hunter.lua), the walking in and out is yours, and
--- this stands aside: a step out would fight the walk in.
+-- BEAST MASTERY'S MELEE WEAVE (1.8.1; the AOE melee weave's, 1.7.6). While
+-- the hunter's Beast Mastery runs (classes/hunter.lua) and the pet levels
+-- have begun, the walking in and out is yours, and this stands aside: a step
+-- out would fight the walk in. Before Tame Beast the run-and-shoot is still
+-- this module's, Beast Mastery or not (a hunter with no points reads as one).
 
 return function(P)
     local ctx, log = P.ctx, P.log
@@ -126,10 +128,11 @@ return function(P)
         return class_module ~= nil and class_module.key == "hunter"
     end
 
-    --- The hunter's AOE melee weave is the profile running (1.7.6).
-    local function aoe_weave()
+    --- The hunter's Beast Mastery, with its melee weave, is the profile
+    --- running (1.8.1; the AOE melee weave's switch, 1.7.6).
+    local function weave()
         local class_module = P.rotation and P.rotation.active_class()
-        local fn = class_module and class_module.aoe_running
+        local fn = class_module and class_module.weave_running
         return type(fn) == "function" and fn() == true
     end
 
@@ -404,9 +407,12 @@ return function(P)
             return stop("rotation off")
         end
         if not hunter_active() then return stop("not a hunter") end
-        -- The AOE melee weave (1.7.6): you walk in and out yourself, and
-        -- the walk in is what the step out would undo.
-        if aoe_weave() then return stop("AOE melee weave: you move") end
+        -- Beast Mastery's melee weave (1.8.1): you walk in and out yourself,
+        -- and the walk in is what the step out would undo. From the pet
+        -- levels on; the run-and-shoot before them is still ours.
+        if weave() and (pet_levels() or pet_alive()) then
+            return stop("Beast Mastery: you move in and out")
+        end
         if user_driving() then return stop("you are driving") end
 
         local player = units.player()

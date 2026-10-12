@@ -184,7 +184,7 @@ T[#T + 1] = { "boot: require jcore/main publishes JCore 1.8.1", function()
     JCore = _G.JCore
     assert(JCore, "_G.JCore missing")
     assert(JCore == public, "require should return the published table")
-    assert_eq(JCore.version, "1.7.9", "version")
+    assert_eq(JCore.version, "1.8.1", "version")
     assert(JCore.ui, "JCore.ui"); assert(JCore.assets, "JCore.assets"); assert(JCore.image, "JCore.image")
     assert(#mock.callbacks.update == 1, "one native update callback")
     assert(#mock.callbacks.render == 1, "one native render callback")

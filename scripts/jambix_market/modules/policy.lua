@@ -167,10 +167,18 @@ return function(M)
     function Pol.record() return data.ok, data.n end
 
     --- Your money as the plugin sees it, and what it may spend now.
+    -- Vendor flips wait in the bags for a merchant and earn pennies a unit: at
+    -- most a fifth of capital in them (the user's bags, 2026-10-12: 3g 22s of
+    -- Murloc Eyes, Boar Intestines and oils waiting to make about 40s).
+    local VENDOR_SHARE = 0.20
+
     function Pol.capital()
         local gold = L.gold_now() or 0
-        local invested = 0
-        for _, h in pairs(L.holdings()) do invested = invested + (h.cost or 0) end
+        local invested, vendor_invested = 0, 0
+        for _, h in pairs(L.holdings()) do
+            invested = invested + (h.cost or 0)
+            if h.mode == "vendor" then vendor_invested = vendor_invested + (h.cost or 0) end
+        end
         local capital = gold + invested
         local reserve = capital * RESERVE_SHARE
         local free = math.max(0, gold - reserve)
@@ -187,7 +195,16 @@ return function(M)
             else why = "no money free" end
         end
         return { gold = gold, invested = invested, capital = capital, reserve = reserve, free = free,
-            stock_room = stock_room, max_deal = max_deal, small_room = small_room, max_small = max_small, why = why }
+            stock_room = stock_room, max_deal = max_deal, small_room = small_room, max_small = max_small, why = why,
+            vendor_invested = vendor_invested, vendor_room = math.max(0, capital * VENDOR_SHARE - vendor_invested) }
+    end
+
+    --- The most that may go into vendor flips now: a fifth of capital, less
+    --- what waits for a merchant already.
+    function Pol.vendor_room(cap)
+        cap = cap or Pol.capital()
+        if cap.vendor_room then return cap.vendor_room end
+        return math.max(0, (cap.capital or 0) * VENDOR_SHARE - (cap.vendor_invested or 0))
     end
 
     --- The same capital with nothing tied up: what one deal could get once

@@ -236,6 +236,7 @@ local function bundle(opts)
     G.profile = { label = "Test", rules = {}, power = G.class.power }
     G.pet = unit(G, "pet", { name = "Felhunter", hostile = false })
     P.ctx.world = { client = function() return { forever = false, combat_log = true } end }
+    P.ctx.react = require("jcore/services/react")({}).for_owner("jambix.aio", P.ctx)
     G.React = fresh("jambix_aio/modules/react/init")(P)
 
     function G.fire(event, data)
@@ -370,10 +371,12 @@ T[#T + 1] = { "break: stunned at full health with nothing hitting you, the Insig
     G.rows[1].targeting_me = false
     G.tick()
     assert_eq(G.used_named(INSIGNIA), 0, "held: a stun nobody is using is worth less than the trinket")
+    -- The 'Break any control' line left with the Reactions page's PvP
+    -- section on 2026-10-11: a saved mode changes nothing.
     G.settings.react_pvp_trinket = 3
     G.clock = G.clock + 0.2
     G.tick()
-    assert_eq(G.used_named(INSIGNIA), 1, "'Break any control': used")
+    assert_eq(G.used_named(INSIGNIA), 0, "still held: the line is Balanced whatever was saved")
 end }
 
 T[#T + 1] = { "break: the readout says why the trinket is held", function()
@@ -402,20 +405,6 @@ T[#T + 1] = { "break: a mob's stun is not the trinket's, even with a player in s
     G.clock = G.clock + 0.2
     G.tick()
     assert_eq(G.used_named(INSIGNIA), 1, "unless you carry the flag")
-end }
-
-T[#T + 1] = { "break: 'only to stay alive' keeps it at 70% health, spends it at 25%", function()
-    local G = bundle()
-    G.settings.react_pvp_trinket = 1
-    G.wear(13, 18854, INSIGNIA)
-    G.aura("player", "Kidney Shot", 5, { caster = G.target })
-    G.hp, G.hp_rate = 0.7, -0.06
-    G.tick()
-    assert_eq(G.used_named(INSIGNIA), 0, "70% and hit: kept")
-    G.hp = 0.25
-    G.clock = G.clock + 0.2
-    G.tick()
-    assert_eq(G.used_named(INSIGNIA), 1, "25% and hit: used")
 end }
 
 T[#T + 1] = { "break: a warrior's Insignia cannot break a fear; Berserker Rage does", function()

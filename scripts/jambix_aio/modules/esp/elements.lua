@@ -585,11 +585,17 @@ return function(P)
     ---@return string range "In Range", "Out of Range" or "Too Close".
     local function reach_state(e)
         local player = units.player()
-        local graphics = type(core) == "table" and core.graphics or nil
+        -- JCore's sight, not the client's is_line_of_sight (1.8.1): this row
+        -- asked the native every frame at the target, and on Forever build
+        -- 70338 that ray asserts in the client (M2HitTest.cpp) -- three of
+        -- the four crashes of 2026-10-11 were rays at the selected target.
+        -- geometry.sight is model-free there and shared for a fifth of a
+        -- second; nil (unknown) shows no LoS pill.
+        local geometry = ctx.geometry
         local sight = nil
-        if player and graphics and type(graphics.is_line_of_sight) == "function" then
-            local ok, yes = pcall(graphics.is_line_of_sight, player, e.obj)
-            if ok then sight = yes == true end
+        if player and geometry and type(geometry.sight) == "function" then
+            local ok, yes = pcall(geometry.sight, player, e.obj)
+            if ok and yes ~= nil then sight = yes == true end
         end
 
         local min, max = class_reach()

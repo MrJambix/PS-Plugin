@@ -4,7 +4,9 @@
 --     (rotation.may_engage_unit asks guidewalk.pulling); targeting's side is
 --     aio_guidewalk_test's, on a hand-built bundle (this mock has no player);
 --   * the walk is loaded, its switch is on the Quests page, off, and frames
---     run clean with it on.
+--     run clean with it on;
+--   * 1.8.1: the ESP acting as you walk up (rxp_act) is declared, off, and
+--     frames run clean with it on too.
 
 local boot = require("mock/aio_boot")
 
@@ -34,6 +36,10 @@ T[#T + 1] = { "the plugin boots with the guide walk loaded and its switch off", 
     local values = b.mock.menu.values["Jambix AIO/Quests"]
     assert(values and values.rxp_follow ~= nil, "declared on the Quests page")
     assert_eq(b.P.guidewalk.status(), "off", "says off")
+    assert_eq(b.P.opt("rxp_act", nil), false, "the ESP acting off by default (1.8.1)")
+    assert(values.rxp_act ~= nil and values.rxp_act_accept ~= nil and values.rxp_act_turnin ~= nil
+        and values.rxp_act_fight ~= nil, "the ESP acting's switches on the Quests page")
+    assert_eq(b.P.guidewalk.active(), false, "not active")
 end }
 
 T[#T + 1] = { "the rotation may open on the mob the walk is pulling, and only on it", function()
@@ -62,6 +68,16 @@ T[#T + 1] = { "the Quests page's lines, and frames run clean with the walk on", 
     assert_eq(b.errors(), "", "core.log_error while running with the walk on")
     -- Switched on it runs; this mock has no player, so it waits and moves nothing.
     assert_eq(b.P.guidewalk.status(), "loading", "running, waiting for a player")
+
+    -- The ESP acting (1.8.1), the walk off: runs clean too, and the page's line is its.
+    b.mock.menu:set("Jambix AIO/Quests", "rxp_follow", false)
+    b.mock.menu:set("Jambix AIO/Quests", "rxp_act", true)
+    b.P.opt_invalidate()
+    b.mock.frame(30)
+    assert_eq(b.errors(), "", "core.log_error while running with the ESP acting")
+    assert_eq(b.P.guidewalk.status(), "loading", "running, waiting for a player")
+    assert(b.P.guidewalk.status_lines()[1]:find("Guide ESP:", 1, true), b.P.guidewalk.status_lines()[1])
+    assert_eq(b.P.guidewalk.active(), true, "active")
 end }
 
 return T

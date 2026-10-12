@@ -17,7 +17,13 @@
 --   * it waits, letting go, while resting, at low health, in combat, while
 --     you steer, while dead, and on a step it cannot do itself;
 --   * the step's stops are walked in turn while nothing shows; your kills are
---     walked to and looted.
+--     walked to and looted;
+--   * 1.8.1, the ESP acting as you walk up (rxp_act): nothing walks you or
+--     holds a key; the step's quest giver is talked to only once you stand
+--     within 5 yd, and its windows answered by the pick-up and hand-in
+--     switches; the step's mob in pull range is the rotation's to open on
+--     (pulling, pull_target) and is never selected, faced or hit; the gates
+--     hold it; both switches on, the walk wins; steering never pauses it.
 
 local root = (jtest and jtest.scripts) or "scripts"
 if not package.path:find(root .. "/?.lua", 1, true) then
@@ -738,6 +744,136 @@ T[#T + 1] = { "the route for the ESP: Sentinel's path while it walks this walk, 
 
     W.run(20)
     assert_eq(W.M.route(), nil, "there: nothing to draw")
+end }
+
+-- --- 1.8.1: the RestedXP ESP acts as you walk up --------------------------------------
+
+T[#T + 1] = { "the ESP acting: nothing walks you, and the line says where the guide points", function()
+    local W = world({ settings = { rxp_act = true }, step = goto_step(), waypoint = { x = 100, y = 0, z = 0 } })
+    W.run(1)
+    assert_eq(count(W, "move_to"), 0, "no route")
+    assert_eq(pressed(W), 0, "no key")
+    assert_eq(count(W, "acquire"), 0, "no lease on anything")
+    assert_true(W.status():find("follow the line to the spot (100 yd)", 1, true), W.status())
+    assert_eq(W.M.status_lines()[1]:sub(1, 10), "Guide ESP:", W.M.status_lines()[1])
+    assert_eq(W.M.active(), true, "active")
+    assert_eq(W.M.stats().switch, "act", "which switch, in the stats")
+    assert_eq(W.M.route(), nil, "no route to draw")
+end }
+
+T[#T + 1] = { "the ESP acting: the step's quest giver is talked to only once you stand by it", function()
+    local W, npc = turnin_world({ settings = { rxp_act = true } })
+    W.run(2)
+    assert_eq(count(W, "perform"), 0, "20 yd away: not talked to")
+    assert_true(W.status():find("walk up to Marshal McBride to hand in (20 yd)", 1, true), W.status())
+    W.me = { x = 16, y = 0, z = 0 }
+    W.run(1)
+    local p = last(W, "perform")
+    assert_true(p and p[2] == npc and p[3] == "interact", "talked to within reach")
+    assert_eq(count(W, "move_to"), 0, "never walked")
+    assert_eq(count(W, "dismount"), 0, "never got off a mount")
+    W.gossip_active = { { quest_id = 99, title = "Not the guide's", is_complete = true },
+        { quest_id = 783, title = "A Threat Within", is_complete = true } }
+    W.gossip_available = { { quest_id = 7, title = "Kobold Camp Cleanup" } }
+    W.event("GOSSIP_SHOW")
+    W.run(0.7)
+    assert_eq(last(W, "select_active")[2], 783, "handed in the step's quest")
+    assert_eq(count(W, "select_available"), 0, "the pick-up waits its turn")
+end }
+
+T[#T + 1] = { "the ESP acting: its hand-in and pick-up switches", function()
+    -- Hand in off: the npc is talked to for the pick-up alone, and its finished quest is left.
+    local W = turnin_world({ settings = { rxp_act = true, rxp_act_turnin = false }, me = { x = 17, y = 0, z = 0 } })
+    W.run(1)
+    assert_eq(count(W, "perform"), 1, "talked to, to pick up")
+    assert_true(W.M.stats().talking == "Marshal McBride", "talking")
+    W.gossip_active = { { quest_id = 783, title = "A Threat Within", is_complete = true } }
+    W.gossip_available = { { quest_id = 7, title = "Kobold Camp Cleanup" } }
+    W.event("GOSSIP_SHOW")
+    W.run(0.7)
+    assert_eq(count(W, "select_active"), 0, "not handed in")
+    assert_eq(last(W, "select_available")[2], 7, "picked up")
+    -- Pick up off: the step's own detail window is not accepted.
+    local A = turnin_world({ settings = { rxp_act = true, rxp_act_accept = false }, me = { x = 17, y = 0, z = 0 } })
+    A.run(1)
+    assert_eq(count(A, "perform"), 1, "talked to, to hand in")
+    A.open_quest = { quest_id = 7, title = "Kobold Camp Cleanup" }
+    A.event("QUEST_DETAIL")
+    A.run(1)
+    assert_eq(count(A, "accept"), 0, "not accepted")
+    -- Both off: nobody is talked to.
+    local N = turnin_world({ settings = { rxp_act = true, rxp_act_turnin = false, rxp_act_accept = false },
+        me = { x = 17, y = 0, z = 0 } })
+    N.run(2)
+    assert_eq(count(N, "perform"), 0, "left alone")
+end }
+
+T[#T + 1] = { "the ESP acting: the step's mob in pull range is the rotation's to open on, and only then", function()
+    local W, mob = kill_world({ settings = { rxp_act = true, rot_enabled = true }, rotation = true })
+    W.run(1)
+    assert_eq(count(W, "move_to"), 0, "not walked to")
+    assert_eq(W.M.pulling(mob), false, "40 yd off: not yet")
+    assert_eq(W.M.pull_target(), nil, "no target yet")
+    assert_true(W.status():find("Kobold Vermin is 40 yd away", 1, true), W.status())
+    W.me = { x = 37, y = 0, z = 0 }
+    W.run(1)
+    assert_eq(W.M.pulling(mob), true, "in melee range: the rotation may open on it")
+    assert_eq(W.M.pull_target(), mob, "and automatic targeting takes it")
+    assert_eq(count(W, "set_target"), 0, "not selected by this")
+    assert_eq(count(W, "face"), 0, "not faced by this")
+    assert_eq(count(W, "perform"), 0, "no attack of its own")
+    assert_true(W.status():find("the rotation's to open on", 1, true), W.status())
+    W.me = { x = 0, y = 0, z = 0 }
+    W.run(1)
+    assert_eq(W.M.pulling(mob), false, "walked away: not any more")
+end }
+
+T[#T + 1] = { "the ESP acting: a caster's range, the rotation off, the fight switch off, and the gates", function()
+    local C, cmob = kill_world({ settings = { rxp_act = true }, class = "MAGE", me = { x = 20, y = 0, z = 0 } })
+    C.run(1)
+    assert_eq(C.M.pulling(cmob), true, "20 yd: in a caster's range")
+    assert_true(C.status():find("switch the rotation on", 1, true), C.status())
+    assert_eq(count(C, "perform"), 0, "no attack started for you")
+
+    local F, fmob = kill_world({ settings = { rxp_act = true, rxp_act_fight = false }, class = "MAGE",
+        me = { x = 20, y = 0, z = 0 } })
+    F.run(1)
+    assert_eq(F.M.pulling(fmob), false, "the switch off")
+
+    local R, rmob = kill_world({ settings = { rxp_act = true }, class = "MAGE", me = { x = 20, y = 0, z = 0 } })
+    R.resting = true
+    R.run(1)
+    assert_eq(R.M.pulling(rmob), false, "resting: no")
+    assert_true(R.status():find("resting", 1, true), R.status())
+    R.resting = false
+    R.health = 0.3
+    R.run(1)
+    assert_eq(R.M.pulling(rmob), false, "low health: no")
+    assert_true(R.status():find("health", 1, true), R.status())
+end }
+
+T[#T + 1] = { "both switches on: the walk wins; the walk off again, the ESP acts on", function()
+    local W = world({ settings = { rxp_follow = true, rxp_act = true }, step = goto_step(),
+        waypoint = { x = 100, y = 0, z = 0 } })
+    W.run(0.5)
+    assert_eq(count(W, "move_to"), 1, "walking")
+    assert_eq(W.M.stats().switch, "walk", "the walk")
+    W.settings.rxp_follow = false
+    W.run(0.5)
+    assert_true(count(W, "nav_stop") >= 1, "the route stopped")
+    assert_eq(count(W, "move_to"), 1, "no new route")
+    assert_true(W.status():find("follow the line", 1, true), W.status())
+end }
+
+T[#T + 1] = { "the ESP acting: steering never pauses it, and in combat the fight is the rotation's or yours", function()
+    local W = turnin_world({ settings = { rxp_act = true }, me = { x = 17, y = 0, z = 0 } })
+    W.keys[0x57] = true
+    W.run(1)
+    assert_eq(count(W, "perform"), 1, "talked to with W held (the actions gate minds moving)")
+    W.in_combat = true
+    W.run(0.3)
+    assert_true(W.status():find("in combat", 1, true), W.status())
+    assert_eq(count(W, "nav_stop"), 0, "nothing of Sentinel's to stop")
 end }
 
 T[#T + 1] = { "arriving is said in the trace, by Sentinel", function()

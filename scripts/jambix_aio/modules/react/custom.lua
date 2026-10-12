@@ -422,6 +422,31 @@ return function(R, P, lib, engine, load)
             if W.bench then return W.player.control and "stun" or "" end
             return ""
         end,
+        -- PvP intelligence, Stage 3: a protection of yours up that covers
+        -- something (Deterrence, Evasion, a bubble, a shield) for 1.5 s or more.
+        protected = function(W)
+            local C = W.intel and W.intel.cds
+            local pr = C and C.protection
+            if not pr then return false end
+            return (pr.physical >= 0.8 or pr.spell >= 0.8 or pr.melee >= 0.8) and (pr.left or 0) >= 1.5
+        end,
+        -- Stage 4: inside your minimum ranged distance; a safe escape.
+        dead_zone = function(W)
+            local I = W.intel
+            local zone = I and I.active and I.env and I.env.target and I.env.target.zone or nil
+            return zone == "melee" or zone == "dead_zone"
+        end,
+        safe_escape = function(W)
+            local I = W.intel
+            if not (I and I.active) then return false end
+            local me = I.me
+            if (me.escapes_ready or 0) == 0 then return false end
+            if me.control and me.control.helpless then return false end
+            if (I.melee_attackers or 0) == 0 then return true end
+            -- Someone in melee: safe only once it is slowed or held (the move
+            -- advice then says to step out).
+            return I.pos ~= nil and I.pos.advice == "increase"
+        end,
         pvp_trinket = function()
             local pvp, hc = lib.pvp, P.hardcore
             if not (pvp and pvp.trinkets and hc and hc.named_ready) then return false end
@@ -469,11 +494,101 @@ return function(R, P, lib, engine, load)
         immune = function(W) local st = W.pvp and W.pvp.target return st ~= nil and st.immune ~= nil end,
         bursting = function(W) local st = W.pvp and W.pvp.target return st ~= nil and st.burst ~= nil end,
         trinket_down = function(W) local st = W.pvp and W.pvp.target return st ~= nil and st.trinket_down == true end,
+        -- PvP intelligence (react/intel, Stage 2): the target as a player in
+        -- the picture. Absent (the bench, the layer off): false.
+        mobility = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            if not f or not I.threat then return false end
+            local now = I.now or 0
+            local recent = f.recent or {}
+            for k = #recent, 1, -1 do
+                local r = recent[k]
+                if (now - r.at) > 3.0 then break end
+                if I.mobility_names and I.mobility_names[r.name] then return true end
+            end
+            return false
+        end,
+        defensive = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local st = f and f.st or nil
+            if not st then return false end
+            if st.immune or st.avoid then return true end
+            for i = 1, #(st.purge or {}) do
+                if I.protection_names and I.protection_names[st.purge[i].name] then return true end
+            end
+            return false
+        end,
+        -- Seconds left on the control on the target (0: none), for "about to
+        -- expire": the control plan's row (Stage 6), the picture's under it.
+        cc_left = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local c = f and ((f.cc and f.cc.held) or f.control) or nil
+            return c and (tonumber(c.left) or 0) or 0
+        end,
+        -- The control plan (react/intel/ccplan.lua): what keeping the control
+        -- on the target is worth, what the next control gets, whose it is.
+        cc_value = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            return f and f.cc and f.cc.value and f.cc.value.kind or "none"
+        end,
+        dr_next = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            return f and f.cc and f.cc.next_level or "full"
+        end,
+        cc_ours = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local h = f and f.cc and f.cc.held or nil
+            return h ~= nil and h.ours ~= "no"
+        end,
+        -- Opponent prediction (react/intel/predict.lua): the target's surest
+        -- pattern this session ("none" when nothing is sure), and how sure (%).
+        pattern = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local best, p = "none", 0
+            for key, e in pairs(f and f.predict or {}) do
+                if e.sure and not e.adapting and (e.p or 0) > p then best, p = key, e.p end
+            end
+            return best
+        end,
+        -- The surest pattern's rate (%), and the evidence behind it (%): two
+        -- chances read 50, however high the rate.
+        pattern_conf = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local p = 0
+            for _, e in pairs(f and f.predict or {}) do
+                if (e.p or 0) > p then p = e.p end
+            end
+            return math.floor(p * 100 + 0.5)
+        end,
+        pattern_reliability = function(W)
+            local I = W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local p, rel = 0, 0
+            for _, e in pairs(f and f.predict or {}) do
+                if (e.p or 0) > p then p, rel = e.p, e.reliability or 0 end
+            end
+            return math.floor(rel * 100 + 0.5)
+        end,
     }
     local PET = {
         exists = function(W) return W.pet.alive == true end,
         hp = function(W) return W.pet.alive and pct(W.pet.hp) or 0 end,
         attackers = function(W) return W.pet.attackers or 0 end,
+        -- PvP intelligence: the pet is on a player held by a control damage
+        -- breaks -- the control plan's word (Stage 6), the picture's under it.
+        breaks_cc = function(W)
+            local I = W.intel
+            if I and I.cc and I.cc.pet then return I.cc.pet.recall == true end
+            return I ~= nil and I.pet ~= nil and I.pet.on_controlled == true
+        end,
         tanking = function(W) return W.pet.tanking == true end,
     }
     local GROUP = {
@@ -498,6 +613,19 @@ return function(R, P, lib, engine, load)
         elites = function(W) return W.enemies.elites or 0 end,
         boss = function(W) return W.env.boss == true end,
         pvp = function(W) return W.env.pvp == true end,
+        -- PvP intelligence (react/intel/threat.lua, Stage 2). Absent: calm.
+        threat = function(W) local T = W.intel and W.intel.threat return T and T.level or "INFORMATIONAL" end,
+        threat_score = function(W) local T = W.intel and W.intel.threat return T and math.floor((T.score or 0) + 0.5) or 0 end,
+        incoming_cast = function(W) local T = W.intel and W.intel.threat return T ~= nil and T.incoming_cast == true end,
+        -- Stage 4: the tactical state and the move.
+        tactic = function(W) local X = W.intel and W.intel.tactic return X and X.state or "NONE" end,
+        advice = function(W) local Pm = W.intel and W.intel.pos return Pm and Pm.advice or "none" end,
+        kill_window = function(W) local X = W.intel and W.intel.tactic return X ~= nil and X.state == "KILL_WINDOW" end,
+        -- Bait detection (react/intel/bait.lua): the bait on the target, or "none".
+        bait = function(W)
+            local B = W.intel and W.intel.bait
+            return B and B.target and B.target.kind or "none"
+        end,
         within8 = function(W) return enemies_within(W, 8) end,
         within30 = function(W) return enemies_within(W, 30) end,
         players = function(W) return enemies_within(W, 40, true) end,
@@ -703,6 +831,42 @@ return function(R, P, lib, engine, load)
             return aura_stacks(aura_row(W.target.unit, tostring(name or ""), mine == true, W))
         end,
         key = function(vk) return key_held(vk, cur_W) end,
+        -- PvP intelligence, Stage 3 (react/intel/cooldowns.lua): the target's
+        -- ledger. Never seen, or a cooldown the tables do not carry: not
+        -- "ready" -- enemy_cd_ready_in answers 999 then.
+        enemy_cd_seen = function(name)
+            local W = cur_W
+            local I = W and W.intel
+            local cds = P.react and P.react.intel and P.react.intel.cooldowns
+            if not (I and cds and W.target.guid) then return false end
+            return cds.seen(I, W.target.guid, tostring(name or "")) ~= nil
+        end,
+        enemy_cd_ready_in = function(name)
+            local W = cur_W
+            local I = W and W.intel
+            local cds = P.react and P.react.intel and P.react.intel.cooldowns
+            if not (I and cds and W.target.guid) then return 999 end
+            local left = cds.ready_in(I, W.target.guid, tostring(name or ""))
+            if left == nil then return 999 end
+            return left
+        end,
+        -- Opponent prediction (react/intel/predict.lua): how sure the layer
+        -- is of a pattern of the target's, 0 to 1 (0: nothing seen).
+        prediction_confidence = function(key)
+            local W = cur_W
+            local I = W and W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local e = f and f.predict and f.predict[tostring(key or "")] or nil
+            return e and e.p or 0
+        end,
+        -- The evidence behind that rate, 0 to 1 (two chances: 0.5).
+        prediction_reliability = function(key)
+            local W = cur_W
+            local I = W and W.intel
+            local f = I and I.foes and W.target.guid and I.foes[W.target.guid] or nil
+            local e = f and f.predict and f.predict[tostring(key or "")] or nil
+            return e and e.reliability or 0
+        end,
         has_item = function(name)
             name = tostring(name or "")
             local W = cur_W
@@ -994,6 +1158,14 @@ return function(R, P, lib, engine, load)
         t_aura = function(v) return FUNCS.debuff(v) end,
         t_my_aura = function(v) return FUNCS.debuff(v, true) end,
         f_mode = function(v) return API.fight.mode == v end,
+        f_threat = function(v) return API.fight.threat == v end,
+        f_tactic = function(v) return API.fight.tactic == v end,
+        f_advice = function(v) return API.fight.advice == v end,
+        t_cd_seen = function(v) return FUNCS.enemy_cd_seen(v) end,
+        t_cc_value = function(v) return API.target.cc_value == v end,
+        t_dr_next = function(v) return API.target.dr_next == v end,
+        t_pattern = function(v) return API.target.pattern == v end,
+        f_bait = function(v) return API.fight.bait == v end,
         f_situation = function(v) return FUNCS.situation(v) end,
         w_kind = function(v) return API.where.kind == v end,
         w_name = function(v) return FUNCS.place(v) end,
@@ -1016,6 +1188,7 @@ return function(R, P, lib, engine, load)
         spell_cd = function(v) return FUNCS.cooldown(v) end,
         t_debuff_left = function(v) return FUNCS.debuff_left(v, true) end,
         t_debuff_stacks = function(v) return FUNCS.debuff_stacks(v) end,
+        t_cd_ready_in = function(v) return FUNCS.enemy_cd_ready_in(v) end,
     }
 
     local function show_value(def, v)
@@ -1222,8 +1395,11 @@ return function(R, P, lib, engine, load)
     M.runtime = function(id) return runtime[id] end
     M.runtime_of = rt_of
 
+    -- Always on since 2026-10-11 (the user: "reactions should automatically
+    -- activate in PvP when PvP is detected", not an option; the Reactions
+    -- page's switch is gone and a saved react_active changes nothing).
     local function master_on()
-        return not P.opt or P.opt("react_active", true) ~= false
+        return true
     end
     M.master_on = master_on
 
@@ -2023,6 +2199,13 @@ return function(R, P, lib, engine, load)
     function M.choices(kind)
         if kind == "creatures" then return D.CREATURES, D.CREATURES end
         if kind == "modes" then return D.MODES, D.MODES end
+        if kind == "threats" then return D.THREATS, D.THREATS end
+        if kind == "tactics" then return D.TACTICAL_STATES, D.TACTICAL_STATES end
+        if kind == "advice" then return D.ADVICE, D.ADVICE end
+        if kind == "cc_values" then return D.CC_VALUES, D.CC_VALUES end
+        if kind == "dr" then return D.DR_LEVELS, D.DR_LEVELS end
+        if kind == "patterns" then return D.PATTERNS, D.PATTERNS end
+        if kind == "baits" then return D.BAITS, D.BAITS end
         if kind == "controls" then return D.CONTROLS, D.CONTROLS end
         if kind == "situations" then
             local labels, values = {}, {}
@@ -2244,6 +2427,77 @@ return function(R, P, lib, engine, load)
                         elites = tonumber(s.elites) or 0, controlled = 0, list = {}, count = 0 },
             sit = {},
         }
+        -- The PvP intelligence picture (react/intel), made up the same way:
+        -- what its conditions read, from the situation's own fields.
+        do
+            local I = {
+                bench = true, active = s.pvp == true, off = false, now = W.now,
+                players = tonumber(s.players) or 0, attackers = on_me,
+                melee_attackers = tonumber(s.melee_on_me) or 0,
+                me = { escapes_ready = (s.me_safe_escape or s.escapes_ready) and 1 or 0,
+                       control = (s.controlled and s.control_helpless) and { helpless = true } or nil },
+                env = { target = { guid = s.target and "bench-target" or nil,
+                                   zone = s.me_dead_zone and "dead_zone" or (s.target and "ranged" or nil) } },
+                foes = {}, mobility_names = { Charge = true, Intercept = true, Blink = true, Sprint = true, Dash = true },
+                protection_names = { ["Power Word: Shield"] = true, ["Ice Barrier"] = true },
+                threat = { level = s.pvp_threat or "INFORMATIONAL", score = tonumber(s.pvp_threat_score) or 0,
+                           incoming_cast = s.pvp_incoming_cast == true },
+                tactic = { state = s.pvp_tactic or (s.pvp and "IDLE" or "NONE") },
+                pos = { advice = s.pvp_advice or (s.me_safe_escape and "increase") or (s.pvp and "hold" or "none") },
+                cds = { protection = { names = {}, left = 0, physical = 0, spell = 0, melee = 0 } },
+                pet = { on_controlled = s.pet_breaks_cc == true },
+                -- The control plan (Stage 6): the pet's recall, the target's row below.
+                cc = { hold = nil, doomed = nil, target = nil, held_n = 0, ours_n = 0,
+                       pet = { recall = s.pet_breaks_cc == true, why = "" }, unknown = {} },
+                -- The bait (Stage 8): the one the situation says.
+                bait = { target = (s.pvp_bait and s.pvp_bait ~= "none") and
+                             { kind = s.pvp_bait, guid = "bench-target", v = s.pvp_bait .. " bait", conf = 0.7, why = "the bench's" } or nil,
+                         list = {}, hold_burst = s.pvp_bait == "defensive" and "Rapid Fire" or nil, hold_why = "" },
+            }
+            if s.me_protected then
+                I.cds.protection.names[1] = "Deterrence"
+                I.cds.protection.physical, I.cds.protection.melee, I.cds.protection.left = 0.85, 0.85, 8
+            end
+            if s.target then
+                local foe = { guid = "bench-target", name = s.t_name or "your target", recent = {}, cds = {},
+                              st = { avoid = s.t_defensive and "physical" or nil, purge = {} },
+                              control = (tonumber(s.t_cc_left) or 0) > 0 and { kind = "control", left = tonumber(s.t_cc_left), breaks = true } or nil }
+                -- The control plan's row for the target (Stage 6).
+                local left = tonumber(s.t_cc_left) or 0
+                foe.cc = {
+                    held = left > 0 and { name = "a control", kind = "incapacitate", left = left, breaks = true,
+                                          category = "incapacitate", ours = s.t_cc_ours == true and "yes" or "no",
+                                          ours_conf = 1 } or nil,
+                    value = { kind = s.t_cc_value or "none", why = "", conf = 1 },
+                    next_level = s.t_dr_next or "full", dr = {}, dots = {}, breakers = {}, pet_on = s.pet_breaks_cc == true,
+                }
+                I.cc.target = foe.cc
+                if foe.cc.held then I.cc.held_n = 1 end
+                -- The predictor's row for the target (Stage 7): one pattern, as sure as the situation says.
+                foe.predict = {}
+                local pat = s.t_pattern
+                if pat and pat ~= "none" then
+                    local conf = (tonumber(s.t_pattern_conf) or 70) / 100
+                    local rel = (tonumber(s.t_pattern_rel) or 50) / 100
+                    foe.predict[pat] = { category = pat, v = pat:gsub("_", " "), p = conf, conf = conf,
+                                         reliability = rel, label = rel < 0.6 and "low" or rel < 0.75 and "moderate" or "high",
+                                         samples = 2, n = 2, sure = conf >= 0.6, adapting = false, basis = "recent", data = "ok",
+                                         why = "the bench's", response = "", fallback = "" }
+                end
+                if s.t_mobility then foe.recent[1] = { name = "Charge", at = W.now, kind = "cast" } end
+                local ready = tonumber(s.t_cd_ready)
+                for name in tostring(s.t_cd_seen or ""):gmatch("[^,]+") do
+                    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+                    if name ~= "" then
+                        foe.cds[name] = { name = name, state = (ready and ready > 0) and "down" or "ready",
+                                          ready_in = ready or 0, conf_now = 1 }
+                    end
+                end
+                I.foes["bench-target"] = foe
+                I.cds.target = foe.cds
+            end
+            W.intel = I
+        end
         if s.target then
             local T = W.target
             T.unit, T.guid = tg, "bench-target"
@@ -2377,6 +2631,29 @@ return function(R, P, lib, engine, load)
             tank_alive = W.group.tank_alive == true, healer_alive = W.group.healer_alive == true,
             dead = W.group.dead or 0, lowest = r(lowest), hurt = hurt,
             where = kind, where_name = place_name, buffs = table.concat(names, ", "),
+            -- The PvP intelligence picture (react/intel), as it is now.
+            pvp_threat = FIGHT.threat(W), pvp_threat_score = FIGHT.threat_score(W),
+            pvp_incoming_cast = FIGHT.incoming_cast(W), pvp_tactic = FIGHT.tactic(W), pvp_advice = FIGHT.advice(W),
+            pvp_bait = FIGHT.bait(W),
+            t_mobility = T.unit ~= nil and TARGET.mobility(W) or false, t_defensive = T.unit ~= nil and TARGET.defensive(W) or false,
+            t_cd_seen = (function()
+                local I = W.intel
+                local f = I and I.foes and T.guid and I.foes[T.guid] or nil
+                if not (f and f.cds) then return "" end
+                local list = {}
+                for n in pairs(f.cds) do list[#list + 1] = n end
+                table.sort(list)
+                return table.concat(list, ", ")
+            end)(),
+            t_cc_left = T.unit ~= nil and TARGET.cc_left(W) or 0,
+            t_cc_value = T.unit ~= nil and TARGET.cc_value(W) or "none",
+            t_dr_next = T.unit ~= nil and TARGET.dr_next(W) or "full",
+            t_cc_ours = T.unit ~= nil and TARGET.cc_ours(W) or false,
+            t_pattern = T.unit ~= nil and TARGET.pattern(W) or "none",
+            t_pattern_conf = T.unit ~= nil and TARGET.pattern_conf(W) or 0,
+            t_pattern_rel = T.unit ~= nil and TARGET.pattern_reliability(W) or 0,
+            me_protected = ME.protected(W), me_dead_zone = ME.dead_zone(W), me_safe_escape = ME.safe_escape(W),
+            pet_breaks_cc = PET.breaks_cc(W),
         }
     end
 

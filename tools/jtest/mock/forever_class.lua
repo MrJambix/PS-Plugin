@@ -201,7 +201,43 @@ local CLASSES = {
         { "Rake", cost = 40, type = "ENERGY", melee = true, debuff = 9, needs = "Cat Form",
           desc = "Rake the target for damage over time. Awards 1 combo point." },
     } },
+    -- A level 1 Night Elf druid, the book of the live dump (AIO 1.8.1): every
+    -- levelling rule was a cat's, and it stood still in every fight.
+    druid_level1 = { id = 11, power = "MANA", spells = {
+        { "Attack", id = 6603, melee = true, off = true },
+        { "Wrath", id = 5176, cost = 10, type = "MANA" },
+        { "Healing Touch", id = 5185, cost = 25, type = "MANA", self = true },
+        { "Elune's Light", id = 1259799, cd = 180, self = true, buff = 15, off = true },
+        { "Shadowmeld", id = 20580, cd = 10, self = true, off = true },
+    } },
+    -- Level 10: Bear Form, no Cat Form until 20.
+    druid_level10 = { id = 11, power = "MANA", spells = {
+        { "Attack", id = 6603, melee = true, off = true },
+        { "Wrath", cost = 20, type = "MANA" },
+        { "Moonfire", cost = 25, type = "MANA", debuff = 12 },
+        { "Healing Touch", cost = 55, type = "MANA", self = true },
+        { "Rejuvenation", cost = 25, type = "MANA", self = true, buff = 12 },
+        { "Mark of the Wild", cost = 20, type = "MANA", self = true, buff = 1800 },
+        { "Thorns", cost = 35, type = "MANA", self = true, buff = 600 },
+        { "Entangling Roots", cost = 50, type = "MANA", debuff = 12 },
+        { "Bear Form", cost = 100, type = "MANA", form = true, toggle = true, self = true, pool = "RAGE" },
+        { "Demoralizing Roar", cost = 10, type = "RAGE", self = true, debuff = 30, needs = "Bear Form" },
+        { "Growl", cd = 10, needs = "Bear Form" },
+        { "Maul", cost = 15, type = "RAGE", melee = true, off = true, needs = "Bear Form" },
+    } },
 }
+-- A Beast Mastery hunter with Intimidation (1.8.1): the hunter's book and the
+-- talent's spell (19577, cast on yourself, the pet stuns on its next hit).
+do
+    local spells = {}
+    for i, sp in ipairs(CLASSES.hunter.spells) do
+        local copy = {}
+        for k, v in pairs(sp) do copy[k] = v end
+        spells[i] = copy
+    end
+    spells[#spells + 1] = { "Intimidation", id = 19577, cost = 30, type = "MANA", cd = 60, self = true }
+    CLASSES.hunter_intimidation = { id = 3, power = "MANA", spells = spells }
+end
 M.CLASSES = CLASSES
 
 local function methods_of(fields)
@@ -220,7 +256,9 @@ end
 ---@param distance? number yards from the player to the mob (3: melee)
 ---@param with_pet? boolean a pet beside the player that get_pet does NOT name
 --- (as on Forever): only is_pet and get_owner say whose it is
-function M.run(key, seconds, setup, distance, with_pet)
+---@param pet_blind? boolean the pet's get_target answers nil too (1.8.1): the
+--- client says nothing about what the pet attacks (1.73.1)
+function M.run(key, seconds, setup, distance, with_pet, pet_blind)
     local class = assert(CLASSES[key], "no class " .. tostring(key))
     local mock_ref
     local t0 = nil
@@ -413,7 +451,7 @@ function M.run(key, seconds, setup, distance, with_pet)
             get_auras = function() return {} end, get_buffs = function() return {} end,
             get_debuffs = function() return {} end,
             is_in_combat = function() return t0 ~= nil end,
-            get_target = function() return t0 and mob or nil end,
+            get_target = function() return (t0 and not pet_blind) and mob or nil end,
             get_owner = function() return me end,
         })
     end
@@ -572,10 +610,10 @@ end
 --- fewer distinct abilities than `min`, on a form flipped back and forth,
 --- or on one of `must` never pressed.
 ---@param key string
----@param opts? { seconds?: number, min?: number, must?: string[], max_forms?: number, setup?: function, distance?: number, pet?: boolean }
+---@param opts? { seconds?: number, min?: number, must?: string[], max_forms?: number, setup?: function, distance?: number, pet?: boolean, pet_blind?: boolean }
 function M.check(key, opts)
     opts = opts or {}
-    local r = M.run(key, opts.seconds or 24, opts.setup, opts.distance, opts.pet)
+    local r = M.run(key, opts.seconds or 24, opts.setup, opts.distance, opts.pet, opts.pet_blind)
     local distinct = r.distinct()
     print(string.format("    %s: %d casts, %d distinct [%s]; forms cast %d; refused %d", key, #r.casts, #distinct,
         r.summary(), r.forms, #r.refused))

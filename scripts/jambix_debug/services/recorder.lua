@@ -108,6 +108,12 @@ local MAX_OBJECT_TYPES = 8    -- metatables proxied for game_object methods
 local ARG_TEXT = 120
 local RET_TEXT = 200
 
+-- The watch (Jambix Debug 1.1.0; see THE WATCH in the factory).
+local WATCH_DISCOVER = 20      -- first answers of each function searched for game objects
+local WATCH_RAISE_SITES = 200  -- raises per function whose call site is read
+local NULL_SITES_FIRST = 20    -- nils per function whose call site is read, then every 1000th
+local MAX_NULL_SITES = 6       -- distinct call sites handed over per function
+
 local SAVE_CHECK = 15         -- seconds between save checks
 local SAVE_DIRTY = 20         -- something new: save at most this often
 local SAVE_COUNTS = 120       -- only counts moved: save this often
@@ -298,6 +304,9 @@ return function(rt)
         function M.stop() end
         function M.trace() end
         function M.trace_lines() return {} end
+        function M.set_watch() return false end
+        function M.watching() return false end
+        function M.watch_stats() return { watching = false, installed = false, raised = 0, nulls = 0, top_nulls = {}, top_raised = {} } end
         return M
     end
 
@@ -320,6 +329,13 @@ return function(rt)
     local proxied_types = 0
 
     local active = false
+    -- THE WATCH (Jambix Debug 1.1.0). While on, the wrappers stay in place
+    -- with recording stopped, and every call goes through a pcall: a native
+    -- that raises is handed to JCore's rt.faults (and so to the fault log)
+    -- even when the caller's own pcall swallows it, and one that answers nil
+    -- after answering values before is handed over once per call site.
+    -- One table: this factory is close to Lua's limit of 200 locals.
+    local watch = { on = rt.faultlog ~= nil, installed = false, raised = 0, nulls = 0 }
     local dirty = false
     local counts_moved = false
     local last_save = 0
@@ -566,6 +582,10 @@ return function(rt)
             triggers = {}, n_triggers = 0,
             effects = nil, n_effects = 0,
             error_samples = {},
+            -- The watch (1.1.0): has it ever answered a value, nils after
+            -- that, the sites they came from, raises.
+            answered = false, watch_seen = 0, nulls = 0, raised = 0,
+            null_sites = nil, n_null_sites = 0,
         }
         records[key] = rec
         record_count = record_count + 1
@@ -693,6 +713,72 @@ return function(rt)
         end
     end
 
+    -- --- the watch (1.1.0) ------------------------------------------------
+
+    --- A native raised: to rt.faults with the call site, every time (the
+    --- fault log counts the repeats).
+    local function watch_raise(rec, err)
+        rec.raised = (rec.raised or 0) + 1
+        watch.raised = watch.raised + 1
+        local faults = rt.faults
+        if not (faults and faults.listening()) then return end
+        local site = rec.raised <= WATCH_RAISE_SITES and trigger_text() or "(call sites past the first 200 not read)"
+        faults.native(rec.key, err, site)
+    end
+
+    --- A native answered nil after answering values before. The call site
+    --- is read for the first nils of each function and then every 1000th:
+    --- nil is an ordinary answer for many calls, and a stack walk on each
+    --- would cost more than the call. A new site is handed over once.
+    local function watch_null(rec)
+        local n = (rec.nulls or 0) + 1
+        rec.nulls = n
+        watch.nulls = watch.nulls + 1
+        if n > NULL_SITES_FIRST and n % 1000 ~= 0 then return end
+        local site = trigger_text()
+        local sites = rec.null_sites
+        if not sites then
+            sites = {}
+            rec.null_sites = sites
+        end
+        if sites[site] then
+            sites[site] = sites[site] + 1
+            return
+        end
+        if (rec.n_null_sites or 0) >= MAX_NULL_SITES then return end
+        sites[site] = 1
+        rec.n_null_sites = (rec.n_null_sites or 0) + 1
+        local faults = rt.faults
+        if faults and faults.listening() then faults.null(rec.key, site, n) end
+    end
+
+    --- The answer of a watched call: a raise is handed over and raised
+    --- again untouched; a nil after values is noted; the first answers are
+    --- searched for game objects, so their methods get watched too.
+    local function watched(rec, ok, ...)
+        if not ok then
+            local err = ...
+            watch_raise(rec, err)
+            error(err, 0)
+        end
+        local a = ...
+        if a == nil then
+            if rec.answered then watch_null(rec) end
+        else
+            if not rec.answered then rec.answered = true end
+            local seen = rec.watch_seen or 0
+            if seen < WATCH_DISCOVER then
+                rec.watch_seen = seen + 1
+                note_values(select("#", ...), ...)
+            end
+        end
+        return ...
+    end
+
+    skip_fn[watch_raise] = true
+    skip_fn[watch_null] = true
+    skip_fn[watched] = true
+
     local function tally(rec, ...)
         local a = ...
         rec.tallied = rec.tallied + 1
@@ -716,6 +802,7 @@ return function(rt)
         if not ok then
             local err = ...
             rec.errors = rec.errors + 1
+            if watch.on then watch_raise(rec, err) end
             local text = clean(err, 240)
             local list = rec.error_samples
             local known = false
@@ -738,6 +825,13 @@ return function(rt)
         local a, b, c = ...
         rec.tallied = rec.tallied + 1
         if is_empty(a) then rec.empty = rec.empty + 1 end
+        if watch.on then
+            if a == nil then
+                if rec.answered then watch_null(rec) end
+            elseif not rec.answered then
+                rec.answered = true
+            end
+        end
 
         -- What goes in and what comes out, by kind and position.
         local last = args.n
@@ -817,7 +911,10 @@ return function(rt)
             local action = rec.kind == "action"
             w = function(...)
                 rec.calls = rec.calls + 1
-                if not active then return fn(...) end
+                if not active then
+                    if watch.on then return watched(rec, pcall(fn, ...)) end
+                    return fn(...)
+                end
                 local n = rec.session + 1
                 rec.session = n
                 counts_moved = true
@@ -827,6 +924,7 @@ return function(rt)
                 if n <= INSPECT_FIRST or n % INSPECT_EVERY == 0 then
                     return inspect(rec, fn, ...)
                 end
+                if watch.on then return tally(rec, watched(rec, pcall(fn, ...))) end
                 return tally(rec, fn(...))
             end
         end
@@ -897,7 +995,7 @@ return function(rt)
         local original = idx
         local proxy = function(self, key)
             local value = original(self, key)
-            if active and type(value) == "function" and type(key) == "string" then
+            if (active or watch.on) and type(value) == "function" and type(key) == "string" then
                 return method_wrapper(key, value)
             end
             return value
@@ -1065,6 +1163,7 @@ return function(rt)
     end
 
     local function install()
+        watch.installed = true
         installed = {}
         surface = { core = {}, namespaces = {}, unwritable = {}, skipped = {} }
         hook_phases()
@@ -1076,6 +1175,7 @@ return function(rt)
     end
 
     local function uninstall()
+        watch.installed = false
         unhook_phases()
         open_windows = {}
         for i = #installed, 1, -1 do
@@ -2563,7 +2663,7 @@ return function(rt)
     --- Wraps everything and starts recording. False when already running.
     function M.start()
         if active then return false end
-        install()
+        if not watch.installed then install() end
         subscribe()
         active = true
         dirty = true
@@ -2582,13 +2682,14 @@ return function(rt)
         return true
     end
 
-    --- Puts every original back, saves, and stops.
+    --- Saves and stops, and puts every original back unless the watch is
+    --- on (then the wrappers stay, passing calls through it).
     function M.stop()
         if not active then return end
         M.save()
         active = false
         unsubscribe()
-        uninstall()
+        if not watch.on then uninstall() end
         if timer_id then
             rt.scheduler.cancel(timer_id)
             timer_id = nil
@@ -2597,6 +2698,47 @@ return function(rt)
             rt.scheduler.cancel(catalog_timer)
             catalog_timer = nil
         end
+    end
+
+    --- The watch on or off (the fault log's page). On, the wrappers go in if
+    --- they are not; off with recording stopped, the originals go back.
+    ---@param on boolean
+    ---@return boolean watching
+    function M.set_watch(on)
+        on = on and true or false
+        if on == watch.on then return watch.on end
+        watch.on = on
+        if on and not watch.installed then install() end
+        if not on and not active and watch.installed then uninstall() end
+        return watch.on
+    end
+
+    function M.watching() return watch.on end
+
+    --- What the watch saw: raises and nils, with the functions that went nil
+    --- most and those that raised, busiest first.
+    function M.watch_stats(limit)
+        limit = limit or 10
+        local nulls, raised = {}, {}
+        for key, rec in pairs(records) do
+            if (rec.nulls or 0) > 0 then
+                local sites = {}
+                for site, n in pairs(rec.null_sites or {}) do sites[#sites + 1] = site .. " x" .. n end
+                table.sort(sites)
+                nulls[#nulls + 1] = { key = key, count = rec.nulls, sites = sites }
+            end
+            if (rec.raised or 0) > 0 then raised[#raised + 1] = { key = key, count = rec.raised } end
+        end
+        local function busiest(a, b)
+            if a.count ~= b.count then return a.count > b.count end
+            return a.key < b.key
+        end
+        table.sort(nulls, busiest)
+        table.sort(raised, busiest)
+        for i = #nulls, limit + 1, -1 do nulls[i] = nil end
+        for i = #raised, limit + 1, -1 do raised[i] = nil end
+        return { watching = watch.on, installed = watch.installed, raised = watch.raised, nulls = watch.nulls,
+                 top_nulls = nulls, top_raised = raised }
     end
 
     --- Forgets everything recorded so far, this session and the saved ones.

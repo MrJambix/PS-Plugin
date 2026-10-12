@@ -1,14 +1,12 @@
--- Jambix AIO 1.53.0: esp/forever_quests reading the GAME's own quest log on
--- Forever, through JCore's gamelua bridge (services/gamelua).
+-- Jambix AIO 1.53.0: esp/forever_quests reading the quest log on Forever.
 --
--- The bridge and the game behind it are the fake in mock/gamelua_fake.lua:
--- the quest module's own game-side bodies run against a scripted C_QuestLog,
--- C_Map, nameplates, tooltips and item names, so what is tested is the whole
--- way round -- the body the game would run, the pieces read back, and what
--- the ESP is then told: the quests and their objectives, a mob's KILL / LOOT
--- chip with its quest, the game's name for a unit, and each quest's area as
--- a world position (with the map-to-world conversion checked on the player
--- first, both ways round, and refused when it does not land on them).
+-- Until JCore 1.8.1 it could read the GAME's own quest log through JCore's
+-- gamelua bridge, and the tests here drove that whole way round against the
+-- fake game in mock/gamelua_fake.lua. JCore 1.8.1 switched the bridge off:
+-- core.execute and core.read_lua_* are not in scripts/.api (the user,
+-- 2026-10-12: "if its not in the .api remove it from game calls"). Those
+-- tests went with it (git history has them). What is left: on Forever
+-- nothing is sent to the game, and the quest log comes from core.quests.
 
 local fake = require("mock/gamelua_fake")
 
@@ -122,92 +120,9 @@ end
 
 local T = {}
 
-T[#T + 1] = { "the quest log comes from the game: quests, objectives, and the store the readers use", function()
+T[#T + 1] = { "Forever, JCore 1.8.1: the bridge is off, so nothing is sent to the game and nothing comes from it", function()
     local S = setup()
-    S.R.run(5.5)
-    assert_eq(S.R.M.state(), "ready", "the bridge is up")
-    S.R.run(1.0)
-    local live = S.Q.live
-    assert_eq(live.ok, true, "the log answered")
-    assert_eq(#live.order, 2, "two quests; the zone header is not one")
-    assert_eq(live.how, "C_QuestLog", "read through C_QuestLog")
-    assert_eq(live.quests[92469].title, "Wolves at the Door", "title")
-    local kill = S.Q.objective("Ragged Young Wolf")
-    assert(kill, "the kill objective is known by name")
-    assert_eq(kill.kind, "kill", "a kill")
-    assert_eq(kill.have, 2, "2")
-    assert_eq(kill.need, 8, "of 8 (the retail order, numbers first, is read)")
-    local item = S.Q.objective("Wolf Pelt")
-    assert_eq(item and item.kind, "item", "the item objective, the classic order")
-    assert_eq(item and item.have, 1, "1 of 6")
-    assert_eq(S.Q.data.quests["92469"].on_quest, true, "on the quest")
-    assert(S.traced_has("fquests: log: 2 quests via C_QuestLog, map 2521, conversion direct"), "the trace says what was read")
-end }
-
-T[#T + 1] = { "a mob the game ties to a quest gets its objective, its quest and its name; a squirrel gets nothing", function()
-    local S = setup()
-    S.R.run(7.0)
-    local u = S.Q.unit(WOLF, 705)
-    assert(u, "the wolf is a quest target")
-    assert_eq(u.text, "KILL 2/8", "with the objective's progress")
-    assert_eq(u.title, "Wolves at the Door", "and the quest")
-    assert_eq(S.Q.unit_name(WOLF), "Ragged Young Wolf", "the game's own name for it")
-    assert_eq(S.Q.unit(SQUIRREL, 1412), nil, "a squirrel is not")
-    assert_eq(S.Q.unit_name(SQUIRREL), "Grey Squirrel", "but it is named")
-    assert_eq(S.Q.stats().live_related, 1, "one unit on a quest")
-end }
-
-T[#T + 1] = { "what a mob drops for quests: the creature cache's quest items, named by the game, against the item objectives", function()
-    local S = setup()
-    S.R.run(7.0)
-    assert_eq(S.Q.unit(MANGY, 706), nil, "the item's name is not known yet: asked for")
-    S.R.run(1.0)
-    local u = S.Q.unit(MANGY, 706)
-    assert(u, "now it is")
-    assert_eq(u.text, "LOOT 1/6", "it drops what the item objective wants")
-    assert_eq(u.title, "Pelts for the Tanner", "and the quest it is for")
-    assert_eq(S.Q.unit_name(MANGY), "Mangy Wolf", "named from its tooltip by guid")
-end }
-
-T[#T + 1] = { "quest areas: placed on the world once the conversion lands on you -- either axis order", function()
-    local S = setup()
-    S.R.run(7.0)
-    local locs = S.Q.locations()
-    assert_eq(#locs, 1, "one quest has an area on this map")
-    assert_eq(locs[1].quest.id, 92469, "the kill quest")
-    assert_eq(locs[1].x, 500, "x")
-    assert_eq(locs[1].y, 500, "y")
-    assert_eq(S.Q.live.conv, "direct", "the conversion is direct")
-
-    local S2 = setup({ conv = "swapped", me_x = 0.25, me_y = 0.30, me = { x = 250, y = 300, z = 10 },
-        poi_x = 0.5, poi_y = 0.6 })
-    S2.R.run(7.0)
-    assert_eq(S2.Q.live.conv, "swapped", "the axes come back the other way round")
-    local l2 = S2.Q.locations()
-    assert_eq(#l2, 1, "still placed")
-    assert_eq(l2[1].x, 500, "x after the swap")
-    assert_eq(l2[1].y, 600, "y after the swap")
-end }
-
-T[#T + 1] = { "a conversion that does not land on you places nothing", function()
-    local S = setup({ me = { x = 9000, y = 9000, z = 0 } })
-    S.R.run(7.0)
-    assert_eq(S.Q.live.conv, "bad", "refused")
-    assert_eq(#S.Q.locations(), 0, "no areas")
-    assert_eq(#S.Q.live.order, 2, "the quests are still read")
-end }
-
-T[#T + 1] = { "one part of the game's answer failing costs that part only", function()
-    local S = setup({ map_raises = true })
-    S.R.run(7.0)
-    assert_eq(#S.Q.live.order, 2, "the quests are read")
-    assert_eq(S.Q.live.map, nil, "no map")
-    assert(S.Q.live.errors[1] and S.Q.live.errors[1]:find("map:", 1, true), "the map's error is kept")
-    assert(S.traced_has("errors: map:"), "and traced")
-end }
-
-T[#T + 1] = { "without the bridge nothing changes: no runs, no chips from the game", function()
-    local S = setup({ forever = false })
+    assert_eq(S.R.M.state(), "off", "the bridge is off")
     S.R.run(7.0)
     assert_eq(S.W.executed, 0, "nothing sent to the game")
     assert_eq(S.Q.live.ok, false, "no log")
@@ -216,7 +131,7 @@ T[#T + 1] = { "without the bridge nothing changes: no runs, no chips from the ga
 end }
 
 T[#T + 1] = { "the 2026-10-06 core: with no bridge the log comes from core.quests, and the readers follow it (1.82.0)", function()
-    local S = setup({ forever = false })
+    local S = setup()
     S.W.core.quests = {
         get_quest_log_quest_ids = function() return { 92469, 92470 } end,
         get_num_quest_log_entries = function() return 3 end,

@@ -11,10 +11,17 @@ project-sylvanas.net).
 
 ## Using it
 
-1. Stand at an auctioneer and open the auction house. The **Jambix Market** window opens with it.
-   Drag it by its title bar; resize it from its bottom-right corner (it keeps the size you give
-   it and scrolls inside).
-2. Press **AUTO**. Straight away it shows the **projected profit**: what it has found it can
+**Market is off every time the scripts load**, and so is AUTO, whatever they were last time.
+While off, nothing scans, opens, reads your auctions, trades, keeps you active or walks. It
+still writes down your gold and the sale mails you take, so what Auto already posted settles in
+its books.
+
+1. Turn it on: the switch at the top of its settings page, or the **MARKET IS OFF — click to
+   turn it on** button in the window (its key, or "Open the market window"). Then stand at an
+   auctioneer and open the auction house. The **Jambix Market** window opens with it. Drag it by
+   its title bar; resize it from its bottom-right corner (it keeps the size you give it and
+   scrolls inside).
+2. Press **AUTO** (which turns Market on too, if it is still off). Straight away it shows the **projected profit**: what it has found it can
    make (see below). It then:
    - scans the auction house every 3 minutes;
    - buys the best deals, sized from your gold (see "Money");
@@ -28,9 +35,10 @@ project-sylvanas.net).
 3. Press it again to stop. Stopping halts a purchase or post in progress at its next step. It
    does not touch anything already listed, and the activity list says what the session made.
 
-There is nothing to set for the trading. The settings page has the plugin's on/off switch, the
-AUTO switch, the mail-run checkbox (also in the window, off by default), a button and a key to
-open the window, and two reset buttons (forget prices, clear the ledger).
+There is nothing to set for the trading. The settings page has the plugin's on/off switch (off at
+every load), the AUTO switch (off at every load), the mail-run checkbox (also in the window, off
+by default), a button and a key to open the window, and two reset buttons (forget prices, clear
+the ledger).
 It also shows, live, what the plugin has decided from your gold.
 
 The window has no Buy, Post or Cancel buttons; Auto does all of that, except posting gear (the game
@@ -203,6 +211,9 @@ the auction house.
   - A post that leaves without selling (you cancelled it, or it expired) is not a sale, and your
     repost is taken in again.
 - **Undercut gear is yours to repost.** The Auctions tab compares gear with its own roll only.
+- **A single item bought for a vendor** that the auction house pays more for (after its cut) is
+  listed under "Post these yourself" instead of going to the vendor. Its buyout has no floor at
+  what Auto paid: "If it sells" shows the gain or the loss, and you decide.
 - **A piece you keep becomes yours.** If you equip, bank or sell a piece yourself, it is in none
   of the bags, your auctions or the mailbox the next time all three are seen. It then leaves
   Auto's stock at what it cost, shown as "Yours now" in the Trade log, and no longer counts as
@@ -270,7 +281,8 @@ gold, the stock Auto holds, and how its own trades have gone.
 | One deal | Quarter Kelly: the share of capital a trade deserves from how sure it is, what it makes, and what it would lose (what a vendor, or a market two standard deviations lower, would still pay). The chance is taken two points lower than the model says first. Never more than half of capital or more than is free. |
 | Least profit | 5s, twice the deposits the deal posts, or 0.1% of capital, whichever is most. The 5s rises (never past half the big-money line) when small resale lots have fallen short of their plan by more: the 90th percentile of the last 20, once there are 5. |
 | Big money | A deal whose expected profit (after the cut, its deposits and the chance it fails), planned at what one deal may get now, is at least 5% of capital (never under 20s) and at least 4 times its deposits. It may use the 70% line; it is said in the activity list and pops up when bought. |
-| When | By what each deal earns a day on the gold it ties up: expected profit ÷ (cost × days until it sells; for a vendor flip, days until you visit a merchant, learned from the last ten). Auto buys from the top while money is free, and waits when nothing clears the bar. |
+| When | By what each deal earns a day on the gold it ties up: expected profit ÷ (cost × days until it sells; for a vendor flip, days until you visit a merchant, learned from the last ten). Auto buys from the top while money is free, and waits when nothing clears the bar. Posting what it holds comes before buying. |
+| Vendor flips | At least 15% under what the vendor pays, and a full stack must make 2s at the vendor. Unless the flip is big money on its own, at most a fifth of capital goes into vendor flips at once and four bag slots are always left free. They cannot lose, but they wait in the bags until you open a merchant. |
 | An item that lost | Not bought to resell for 2 days after a lot of it lost money; 7 days after two within a week. |
 | Confidence bar | Starts at 99%. It tunes itself so that **98% of Auto's purchases make money** once sold out, fees included (see "The success rate"). Under 98% it rises half a point (99.9% at most). Over 99% after ten purchases it falls a quarter point (95% at least). |
 | Auction house cut | 5% until a sale says otherwise. Each "Auction successful" mail is read against the post it fits: the same item and quantity, reading 3% to 8%. (1.0's learning once read a sale against an older expired post and drifted to 4.3%; 1.1.0 starts again from 5%.) |
@@ -538,6 +550,9 @@ Seen since (2026-10-09):
 - **No single item can be posted.** The test plugin found that every form of `post_item`
   returns `false` with nothing listed and no answer from the game (see "Gear").
 - **Sale mails name the roll** ("Auction successful: Curved Dagger of Defense").
+- **An item search groups identical auctions into one row** (2026-10-11): "75 Minor Wizard Oil,
+  4s" is 75 auctions of one oil at 4s each, and a bid on the row buys one of them. Read as 75
+  for 4s, 1.2.3 booked 1,353 oils for 92s; fixed in 1.2.4, with the books repaired once.
 - **A single item is searched by its ITEM level** (2026-10-10). The full scan's `level` is the
   level to use the item (Edged Bastard Sword: 13, item level 18). A search by that level finds
   none of the item's auctions, which is why no gear was bought before 1.2.2. The commodity

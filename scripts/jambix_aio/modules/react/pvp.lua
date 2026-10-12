@@ -684,7 +684,7 @@ return function(P, world)
                     local entry = {
                         name = name, mech = row.mech, dispel = row.dispel, breaks = row.breaks,
                         remaining = left_on(aura, now_ms), helpless = M.HELPLESS[row.mech] == true,
-                        from_player = caster_player(aura), id = aura.buff_id,
+                        from_player = caster_player(aura), id = aura.buff_id, source = "aura",
                     }
                     if row.mech == "root" then
                         if better(root, entry) then root = entry end
@@ -707,10 +707,11 @@ return function(P, world)
                     name = name ~= "" and name or mech, mech = mech, dispel = row and row.dispel or nil,
                     breaks = row and row.breaks or false, remaining = pl.control.remaining or 0,
                     helpless = M.HELPLESS[mech] == true, from_player = nil, id = pl.control.spell_id,
+                    source = "client",
                 }
             elseif mech == "root" and not root then
                 root = { name = name ~= "" and name or "root", mech = "root", remaining = pl.control.remaining or 0,
-                         helpless = false, dispel = row and row.dispel or nil }
+                         helpless = false, dispel = row and row.dispel or nil, source = "client" }
             end
         end
         return control, root, snare

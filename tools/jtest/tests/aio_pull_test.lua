@@ -70,7 +70,7 @@ local function bundle(list, opts)
     }
     package.loaded["jambix_aio/modules/pull"] = nil
     local M = require("jambix_aio/modules/pull")(P)
-    return M, calls, rows, settings
+    return M, calls, rows, settings, P
 end
 
 local function all(calls, name)
@@ -125,6 +125,52 @@ T[#T + 1] = { "only hostile mobs not yet fighting, the nearest few", function()
     M.render()
     assert_eq(#all(calls, "ring_3d"), 8, "the nearest 8 (the default)")
     for _, c in ipairs(all(calls, "ring_3d")) do assert(c[1].x >= 11, "neither the neutral, the busy nor the dead one") end
+end }
+
+T[#T + 1] = { "1.8.1: never a player, nor a player's pet or minion; a mob's own pet and an owner that does not answer keep theirs", function()
+    local function owned_by(m, kind, owner)
+        m[kind] = function() return true end
+        m.get_owner = function() return owner end
+        return m
+    end
+    local horde = mob({ guid = "player", dist = 6, level = 30 })
+    horde.is_player = function() return true end
+    local npc_owner = mob({ guid = "npc_owner", dist = 50 })
+    npc_owner.is_player = function() return false end
+    local list = {
+        horde,
+        owned_by(mob({ guid = "imp", dist = 7 }), "is_minion", horde),
+        owned_by(mob({ guid = "wolf", dist = 8 }), "is_pet", horde),
+        owned_by(mob({ guid = "mob_pet", dist = 9 }), "is_pet", npc_owner),
+        owned_by(mob({ guid = "unknown_owner", dist = 10 }), "is_pet", nil),
+        mob({ guid = "boar", dist = 11 }),
+    }
+    local M, calls = bundle(list)
+    M.render()
+    local at = {}
+    for _, c in ipairs(all(calls, "ring_3d")) do at[c[1].x] = true end
+    assert_eq(at[6], nil, "no ring under the player")
+    assert_eq(at[7], nil, "nor its minion")
+    assert_eq(at[8], nil, "nor its pet")
+    assert_eq(at[9], true, "a mob's pet keeps its ring")
+    assert_eq(at[10], true, "an owner that does not answer: the ring stays")
+    assert_eq(at[11], true, "the boar")
+end }
+
+T[#T + 1] = { "1.8.1: a player the sweep marks as one gets no ring, curtain or pulse; the sweep's word comes first", function()
+    local rare = mob({ guid = "rare_player", dist = 20, rank = 4 })
+    rare.closing = 2
+    local boar = mob({ guid = "boar", dist = 15 })
+    local asked = 0
+    boar.is_player = function() asked = asked + 1 return false end
+    local M, calls, _, _, P = bundle({ rare, boar })
+    P.units.snapshot = function(o) return { is_player = o == rare } end
+    M.render()
+    assert_eq(#all(calls, "curtain_3d") + #all(calls, "pulse"), 0, "no curtain or pulse")
+    local r = all(calls, "ring_3d")
+    assert_eq(#r, 1, "the boar's ring only")
+    assert_eq(r[1][1].x, 15, "under the boar")
+    assert_eq(asked, 0, "the sweep had said: the unit not asked")
 end }
 
 T[#T + 1] = { "an elite, rare or boss heading your way gets a curtain in its colour; a rare a pulse the first time", function()

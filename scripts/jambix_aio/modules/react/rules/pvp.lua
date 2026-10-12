@@ -132,10 +132,12 @@ return function(R, P, lib)
     -- Cheaper first when two would do: the trinket is the last thing spent.
     local COST_ORDER = { cheap = 4, racial = 3, potion = 2, trinket = 1 }
 
+    -- Balanced. The *Use the PvP trinket* dropdown left the Reactions page with
+    -- the old PvP sections on 2026-10-11 (the user: "drop/delete old stuff");
+    -- the PvP intelligence layer's cooldown economy is to own this choice
+    -- (PVP_INTEL_PLAN.md, Stage 6).
     local function trinket_line()
-        local mode = tonumber(opt("react_pvp_trinket", 2)) or 2
-        if not TRINKET_LINE[mode] then mode = 2 end
-        return TRINKET_LINE[mode], TRINKET_MODE[mode]
+        return TRINKET_LINE[2], TRINKET_MODE[2]
     end
 
     ---@return number line
@@ -615,6 +617,15 @@ return function(R, P, lib)
             end
             local n = W.pvp.attackers or 0
             if n >= 2 then c:add(min(15, (n - 1) * 8), string.format("%d players on you", n)) end
+        end,
+        -- The cooldown economy (intel/cooldowns.lua, Stage 3): a defensive on
+        -- yourself is held while the protection already up covers the burst
+        -- -- never under critical health. A control on the burster still goes.
+        validate = function(W, c)
+            local I = P.react and P.react.intel
+            local cds = I and I.cooldowns
+            if cds and W.intel and W.intel.active then return cds.hold_answer(W, c) end
+            return nil
         end,
     })
 

@@ -232,17 +232,25 @@ end
 
 -- Poll until the core publishes itself, then hand off. The callback removes
 -- itself by going inert; a scheduler job would be neater but the whole point of
--- this block is that it cannot assume the core exists yet.
-if _G.JCore then
+-- this block is that it cannot assume the core exists yet. And not before a
+-- character is in the world (JCore 1.8.1): see the README's world gate.
+local function in_world(J)
+    return type(J.in_world) ~= "function" or J.in_world()
+end
+
+if _G.JCore and in_world(_G.JCore) then
     start(_G.JCore)
 else
     local deadline = core.time() + 15.0
     local started = false
     core.register_on_update_callback(function()
         if started then return end
-        if _G.JCore then
-            started = true
-            start(_G.JCore)
+        local J = _G.JCore
+        if J then
+            if in_world(J) then
+                started = true
+                start(J)
+            end
         elseif core.time() > deadline then
             started = true
             core.log_error("[JCore Example] JCore never loaded; plugin inactive")

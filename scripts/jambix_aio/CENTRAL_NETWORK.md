@@ -7,7 +7,22 @@
 > consent controls on the Reactions page, the central service
 > (`tools/fightlog_server/`: data service, learning engine, knowledge
 > distribution) with its tests, and the repository's Action with its
-> ingest script. **Nothing of it has run against a live
+> ingest script. **First live run, 2026-10-12 18:15 UTC**: the
+> infrastructure pushed to main (commit 3aca274, no plugin file, so no
+> release), issue #1 (a deletion request for a contributor that never
+> existed) opened with the fine-grained token, the Action accepted it
+> ("accepted: 0 record(s) removed"), closed it and created the
+> `jambix-data` branch within a minute. The client side in a live game and
+> the first published model are still to come. **The global learning
+> engine (§11, the same day)**: learning groups with backoff, a trust screen
+> with quarantine and audit, opponent models with intervals and drift,
+> tactics as associations with counterexamples, a chronological holdout,
+> release gates and a canary rollout -- tested on synthetic records only.
+> **First live game, 2026-10-12**: the debrief crashed on your death (the
+> game's Lua has no `os` table) and took the intel layer down with it until
+> reload; fixed (a safe clock and a seeded id maker in `intel/init.lua`,
+> each step of a fight's close protected, a regression test that runs a
+> fight with no `os`). **Nothing of it has run against a live
 > server from a live client, and the network is not learning anything yet:
 > no contributor has sent a record.** The learning engine refuses to offer a
 > pattern until several contributors, enough chances and a measured
@@ -312,6 +327,215 @@ page, the confidence, the test-data refusal; the batch's compact
 episodes); `test.js` (episodes validated and refused with the reason; the
 learning engine's episode lessons).
 
+## 11. The global learning engine (the brief of 2026-10-12)
+
+"Continuously evaluate newly accepted combat experiences and periodically
+generate candidate global intelligence updates ... Do not allow
+unvalidated new submissions to directly change live tactical
+recommendations." The service side lives in `tools/fightlog_server/`:
+
+| File | What it is |
+|---|---|
+| `groups.js` | the learning groups and the backoff (§1 of the brief) |
+| `trust.js` | the trust screen: duplicates, replays, suspicious numbers, volume, quarantine, audit (§5) |
+| `learn.js` | the opponent models, the tactics, the episodes' lessons, the monitoring (§2, §3, §4) |
+| `evaluate.js` | the chronological holdout against production, the prior and the baseline (§6) |
+| `release.js` | the gates, the canary, promotion, rollback, the hold on noise (§7, §8) |
+| `store.js` | the data directory both the HTTP service and the repository's Action use |
+
+**The learning groups.** Every record is filed four times, narrowest
+first, and the game variant is in every key, so nothing on Forever and
+nothing on Era ever share a number:
+
+| Level | Key | What it answers |
+|---|---|---|
+| exact | game, your class, their class, your level bracket (tens; 60), the encounter, 1v1 or outnumbered | this very matchup in this context |
+| matchup | game, your class, their class | your class against theirs |
+| class | game, their class | how that class behaves, whoever faces it |
+| general | game | the compatible baseline |
+
+The build is kept beside each rate, never in the key, so drift can be
+measured. The client walks the same keys (`central.lua` `context`,
+`key_at`, `prior_for`) and takes the narrowest level whose entry is
+reliable, drawn toward even odds by that level's certainty -- broader
+evidence, less certainty: exact 1, matchup 0.85, class 0.7, general 0.5
+(a class-wide 0.9 seeds 0.78); the predictor's `why` names the level ("the database's over 30
+fights at the matchup level"). Conditions that change inside a fight
+(threat, your health) are not levels: they are conditional rates inside a
+group (`by_condition`, shown with five chances or more). **Not keyed**:
+specialisation (no record carries it yet; `me.spec` is accepted for when
+one does), ability availability, resource state.
+
+**The opponent model** of one group and pattern (`learn.js
+patternEntry`): the chances, hits, misses and censored ones (episodes
+whose window was cut); the weighted counts; the rate shrunk toward 0.5
+by two chances; a 95% interval whose width uses the **effective count**
+-- the observations of one fight are clusters, not independent draws,
+so `n_eff = (Σw)² / Σw²` over fights; the forecast quality as the
+forecasts stood (Brier, a calibration error over three bands with each
+band's mean forecast and hit rate); the share with verified inputs; the
+contributors and fights; the first and last time seen and the builds;
+and `unreliable` with `why` when any bar fails (20 weighted chances, 2
+contributors, 10 effective chances, Brier 0.30, half the inputs
+verified, no contributor over 60% of the weight). A level whose rate
+stands 0.2 or more from its parent's is marked `separate`: that matchup
+needs its own model.
+
+**Drift.** When the latest build has 10 chances and the earlier builds
+10, and their rates stand 0.25 apart, the earlier builds' chances are
+set aside for the rate and the entry says so (`drift`, `basis: latest
+build`).
+
+**Tactics as associations** (`learn.js tactic`). The brief's strategies,
+each read off the decision episodes:
+
+| Strategy | Episodes | The two arms |
+|---|---|---|
+| controlling the distance | a gap closer, the opener, a Blink, the dead zone, with a slow, a control or a move advised | followed / not followed |
+| interrupting the cast | an interrupt advised | followed / not followed |
+| waiting out the defensive | the opponent's defence changing | followed / not followed |
+| managing the pet during control | the pet threatening a control | followed / not followed |
+| pressing the kill opportunity | a kill window | followed / not followed |
+| disengaging under pressure | outnumbered, rooted, a burst, with an escape or defensive advised | followed / not followed |
+| preserving the escape | pressure with a defensive ready | kept / spent (what was done) |
+| trading cooldowns | any episode with a cooldown spent | minor (slow, control, interrupt) / major (escape, defensive) |
+| protecting allies | -- | **not measured**: no record carries an ally's state |
+
+Only measured episodes with no quality flag count. Per group (exact,
+matchup, class; never "against anyone"): each arm's count, fights,
+effective count, contributors and good rate (a good result: survival,
+position, damage opportunity, control, cooldown saved, objective); the
+difference with its interval (fights as clusters); the same difference
+**stratified** by the confounders the records carry (your health band,
+two or more attackers, HIGH threat, a defensive ready) -- when the
+stratified difference points the other way, the finding is "weak, the
+confounders carry it"; a strength (insufficient: under 6 episodes or 3
+fights an arm or one contributor; weak: the interval crosses zero;
+moderate; strong: 0.2 or more); and the words "an association". Every
+tactic carries `causal: false`, the confounders it was stratified by and
+the ones it was not (gear, skill, teammates, the opponent's remaining
+cooldowns).
+
+**Successes and failures.** In the better arm the failures are the
+counterexamples, kept with every finding: how many, their results, and
+the conditions that told them apart from the successes (a condition at
+least 30 points more common among the failures, "attackers = 2+ in 3 of
+4 failures, 1 of 26 successes"). A strategy whose good rate fell 25
+points in the last 30 days against its earlier self, with 6 episodes on
+each side, is `stale` and no longer validated: a strategy that stopped
+working.
+
+**Poisoning and domination** (`trust.js`, before anything is counted).
+Client uploads are claims; the screen reads the numbers, not the label:
+
+- **duplicate content**: the same fight under a new id (a fingerprint of
+  the record without its ids and clock);
+- **replays**: half or more of a batch's episodes already seen from that
+  contributor;
+- **suspicious numbers**: a forecast or episode past the fight's end, more
+  than three forecasts a second, fifteen or more forecasts all sure and
+  all right, a fight of 0 s with records in it, a fight id another
+  contributor filed, one fight at two levels or on two games;
+- **volume**: more than 40 fights from one contributor on one day.
+
+What fails is **quarantined** with its reasons (the model's `screen`
+block counts them) and written to the audit; nothing is dropped
+silently. Then, inside the learner: a forecast without verified inputs
+weighs half (source quality); with three or more contributors none may
+hold more than 40% of a group's weight (capped, and the entry says how
+many were); a contributor whose own rate stands 0.4 from the **median
+of the other contributors' own rates** (one vote each, so a flood cannot
+make the honest ones the outliers) weighs half and is listed; a group
+where one contributor still holds over 60% is not offered.
+
+**Evaluation** (`evaluate.js`). The fights in the order received: the
+earlier 70% teach a candidate, the later 30% test it; nothing from the
+test fights reaches the training. On the same test forecasts: the
+candidate, **production** (the model the clients run), the **prior**
+(0.5, what every client starts with) and the **baseline** (the training
+fights' matchup or class rate, reliable or not). For each: the Brier
+score with its standard error (fights as clusters), the calibration
+error over five bins, the coverage (the share of forecasts the model
+had a usable rate for, and at which level), the accuracy, the false and
+true positive rates at 0.6, the skill against the prior, and the same by
+matchup and by game. Then paired comparisons fight by fight (better /
+worse / indistinguishable at two standard errors), and the
+recommendation stability between the candidate and production (the
+share of shared usable rates that moved under 0.1; the share of shared
+validated tactics with the same better arm). The holdout says when it is
+too small (under 10 test forecasts) to mean anything.
+
+**Release gates** (`release.js gates`), all written into the package:
+
+1. contributors: 2 or more;
+2. content: at least one usable rate or validated tactic;
+3. not worse than the prior (Brier within 0.02), on the holdout;
+4. not worse than production (Brier within 0.02), on the holdout;
+5. calibration error at most 0.15, with 30 test forecasts or more;
+6. material change: 20 new fights since production, or 10% more, or a
+   holdout verdict "better" -- otherwise **hold** (no new version on a
+   tiny fluctuation).
+
+Gates 3 to 5 are skipped and said to be when the holdout is too small. A
+cycle ends `unchanged` (no record arrived since the last cycle and
+production is the same: nothing is written, so the six-hourly schedule
+does not commit to the data branch for nothing), `reject` (a gate failed:
+the evaluation and the audit are written, nothing else), `hold` (passed,
+nothing material) or `publish`.
+
+**Publishing.** A version is a package: the model; `compatibility`
+(schema, minimum plugin, the games and their builds); `release` with the
+evidence (usable rates, validated tactics), the gates and their checks,
+the evaluation, the stability, the rollback target and the known
+limitations; the version and the time. The first version goes out
+**full**; every later one as a **canary** to 25% of clients, chosen by
+the contributor id (the same client always lands on the same side),
+until promoted by hand; the clients still on the full version keep it.
+Each batch now carries the model version its client ran under
+(`client.model`), so the next cycle reads how the forecasts made under
+each version scored (`monitoring`): the canary's own record in play,
+compared with the full version's, before anyone promotes it. Withdrawing
+a version rolls back to the previous active one; promotion and
+withdrawal are audited. **No model is ever a rule**: the client reads
+rates into the predictor's prior and shows validated tactics as words
+("association: ..."); the reaction engine never reads a model (the
+client test "nothing from a model becomes a rule" holds that).
+
+**Continuous improvement.** Every six hours the repository's Action
+ingests the issues and runs a learning cycle; most cycles end in hold
+or reject, and that is the design: a version changes only when the
+evidence grew enough and the holdout does not say it got worse. By hand:
+`evaluate` (the candidate, the gates, the holdout, nothing written),
+`publish` (one cycle), `publish --force` (past the gates, written as
+forced), `promote N`, `withdraw N`. The HTTP service has the same as
+admin routes, and `GET /v1/admin/audit`, `GET /v1/knowledge/tactics`.
+
+**Tests.** `node --test tools/fightlog_server/learn.test.js` (10): the
+groups and the backoff; the trust screen (duplicate content, replays,
+the three suspicious numbers, the volume cap, a shared fight id, the
+audit); the opponent model (the interval, the effective count and
+calibration; a flood capped, the outlier by the median, one person
+alone refused; no merge across games; a matchup apart from its class;
+conditional rates; drift); tactics (an association with its interval,
+strength, counterexamples and the condition that told them apart; too
+thin; stale); the evaluation (the holdout, beating the prior, production
+compared and beaten paired by fight, the thin holdout, stability); the
+release (rejected, first full, held, canary, promoted, withdrawn,
+forced, the audit's order; a worse candidate against production and the
+monitoring under a version; preview writes nothing). `test.js` and
+`github_ingest.test.js` follow the gated publish. On the client,
+`aio_intel_central_test`: the narrowest reliable level wins and says so,
+an unreliable one backs off, another game's knowledge is never read; the
+canary by share, at 100%, the same side every time; each batch carries
+its model version and the number of players faced; adopting a model
+changes no rule and shows only validated tactics, as associations.
+
+**Success, as the brief states it**, is "measurable, repeatable
+improvements ... without letting noisy or malicious data degrade the
+network". The machinery to measure that exists and is tested on
+synthetic records. **Whether it happens is unknown**: no contributor has
+sent a record yet, so no model has been judged on real fights.
+
 ## 8. Not done, and why
 
 - Movement-based recommendations are judged by the target's gap and your
@@ -341,5 +565,21 @@ learning engine's episode lessons).
   switch on, a moment's text could carry a name the replacement missed (an
   ability name that is also a player's name, say). The switch is off by
   default and says what it includes.
-- The model's advice is per opponent class only; class and specialisation
-  of the contributor shape nothing yet beyond `me.class` in the record.
+- Specialisation is not a level: no record carries it (the validator
+  accepts `me.spec` for when one does). Your class, level bracket, the
+  encounter and 1v1 or outnumbered are (§11).
+- The global learning engine's limits (§11): a tactic is an association,
+  never a cause (no fight was randomised); gear, skill, teammates and the
+  opponent's remaining cooldowns are confounders the records do not carry;
+  the effective count treats a fight as one cluster, which is an
+  approximation (one player met in several fights is not clustered);
+  "protecting allies" is not measured; the trust screen catches a
+  duplicate, a replay and impossible numbers, but a careful forger who
+  sends plausible, varied fights under many identifiers is limited only by
+  the per-identifier caps, the median outlier check and the two-contributor
+  bars, and the GitHub token every client carries lets anyone with the
+  plugin open issues. The release gates judge forecasts on a holdout of the
+  same contributors' later fights, not on new players.
+- The first canary's monitoring needs batches sent under it: until enough
+  arrive, a canary's own record in play is empty and the promotion is a
+  judgement on the holdout alone.

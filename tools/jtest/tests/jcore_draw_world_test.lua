@@ -60,7 +60,7 @@ T[#T + 1] = { "boot: JCore 1.11.0 publishes ring_3d and curtain_3d", function()
     fail_on_errors("boot")
     JCore = _G.JCore
     draw = JCore.draw
-    assert_eq(JCore.version, "1.7.9", "version")
+    assert_eq(JCore.version, "1.8.1", "version")
     assert(type(draw.ring_3d) == "function", "draw.ring_3d")
     assert(type(draw.curtain_3d) == "function", "draw.curtain_3d")
     assert_eq(draw.shaders, true, "draw.shaders on by default")

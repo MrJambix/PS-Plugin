@@ -1,25 +1,33 @@
--- Jambix AIO / react -- the reaction engine.
+-- Jambix AIO / react -- the reactions: the picture of the fight, and what to
+-- do about it.
 --
 -- OBSERVE -> UNDERSTAND -> DECIDE -> ACT -> RE-EVALUATE
 --
 --   world.lua     game reads, once a tick, into one shared table
---   detect.lua    what it means: situations, each with two lines (latch.lua)
+--   detect.lua    what it means: situations, each with two lines (JCore's latch)
 --   behavior.lua  what kind of moment: NORMAL / DEFENSIVE / EMERGENCY /
 --                 ESCAPE / RECOVERY, and BOSS / AOE / PVP
---   engine.lua    every reaction proposes, everything is scored, one per lane
---                 is validated and sent
---   memory.lua    what was just done and what came of it, so nothing is done
---                 twice for one event
+--   ctx.react     JCORE'S REACTION FRAMEWORK (1.8.0; jcore/services/react.lua):
+--                 the rules, the scoring, one winner per lane, the safety
+--                 checks, the cast, the memory of what was just done and the
+--                 journal of why. Until 1.8.0 it was this folder's engine.lua,
+--                 memory.lua and latch.lua; this module now tells it about the
+--                 AIO's world (engine.configure, below) and nothing more
 --   rules/        the reactions themselves, as data: core.lua for everyone,
 --                 <class>.lua for what only that class has
 --
--- WHERE IT SITS
--- modules/rotation.lua calls R.tick() first thing in its own tick, with the
--- snapshot it has just built. Whatever the engine sends outranks the rotation
--- in the cast arbiter; a reaction on the global cooldown means the priority
--- walk does not run this tick, and a hold (a hardcore bail-out, easing off
--- threat) means nothing offensive runs. When the engine is switched off the
--- rotation uses its old fixed sequence, unchanged.
+-- WHERE IT SITS: APART FROM THE ROTATION (1.8.0)
+-- The user: "Reactions themselves I wanna separate completely from
+-- Rotations... Reactions will become Specifics you set if you need the
+-- rotations to adjust for some reason but apart". So the reactions run in a
+-- job of their own, just before the rotation's, on the snapshot the two
+-- share (rotation.snapshot), and leave a verdict the rotation reads: a
+-- reaction took the global cooldown, or something says stop attacking. The
+-- rotation never calls in here. Whatever a reaction sends outranks the
+-- rotation in the cast arbiter anyway. Switched off (the Reactions page's
+-- "Use reactions in the rotation"), no reaction acts, nothing owns a spell,
+-- and the rotation runs by itself with its own fixed sequence; the picture
+-- of the fight is still built, for the rotation's scoring and the targeting.
 
 return function(P)
     local ctx, log = P.ctx, P.log
@@ -27,9 +35,20 @@ return function(P)
 
     local load = P.load or function(path) return require("jambix_aio/" .. path) end
 
-    local L = load("modules/react/latch")()
-
     local function clock() return core.time() end
+
+    -- THE FRAMEWORK IS JCORE'S (1.8.0): one engine per plugin, bound to our
+    -- handle. Its latch, its memory and its journal are the ones every module
+    -- in this folder reads.
+    local engine = ctx and ctx.react
+    assert(engine, "Jambix AIO's reactions need JCore 1.8.0 or newer (ctx.react)")
+    local L = engine.latch
+    local memory = engine.memory
+    local journal, journal_due = engine.journal, engine.journal_due
+
+    -- The red text that says something about the MOB (learn.lua); defined
+    -- with the event wiring below, asked by the engine's on_refused hook.
+    local teach
 
     -- What the client can and cannot tell us (JCore's world.client(), 1.6.0):
     -- no combat log arguments (combat_log false: damage from tooltips, evades
@@ -51,7 +70,6 @@ return function(P)
         return nil
     end
 
-    local memory = load("modules/react/memory")(clock, spell_name)
     local detect = load("modules/react/detect")(P, L)
     local world = load("modules/react/world")(P, detect, memory)
     local behavior = load("modules/react/behavior")(P)
@@ -75,12 +93,15 @@ return function(P)
     -- The other player (pvp.lua, 1.81.0): what controls us, what each enemy
     -- player is immune to or bursting with, which trinket breaks what.
     local pvp = load("modules/react/pvp")(P, world)
-    -- What the reactions decide, drawn in the world (marks.lua, 1.85.0): the
-    -- kick lined up on a caster, who a reaction just acted on, and PvP's
-    -- vanish spot, the control on you and the player bursting on you.
-    local marks = load("modules/react/marks")(P)
+    -- The PvP picture with its sources (intel/, PVP_INTEL_PLAN.md Phase 2):
+    -- every field observed, inferred with a confidence, or unknown. Built
+    -- after W.pvp each tick; nothing in it decides.
+    local intel = load("modules/react/intel/init")(P, {
+        world = world, pvp = pvp, memory = memory, client = client, spell_name = spell_name,
+    })
 
     local R = {}
+    R.intel = intel
     R.memory, R.detect, R.world, R.behavior, R.latch = memory, detect, world, behavior, L
     R.adapt_module = adapt
     R.tactics = tactics
@@ -89,7 +110,6 @@ return function(P)
     R.petcare = petcare
     R.petthreat = petthreat
     R.pvp = pvp
-    R.marks = marks
 
     -- --- Forever: what its client does not say ------------------------------
     --
@@ -163,6 +183,47 @@ return function(P)
         return count
     end
 
+    -- WHAT THE ROW DOES NOT SAY (1.8.1). On Forever JCore reads a mob's
+    -- control from its debuffs only while the mob is in a fight (its loss of
+    -- control never answers there), so a sap, or a trap or a sheep laid
+    -- before the pull, read free -- and the pet went in. For a mob with no
+    -- row, or one within 40 yd out of a fight with no control on it, the
+    -- debuffs are read here, at most every quarter of a second per mob.
+    -- The names are JCore's
+    -- breakable kinds (services/enemies.lua CC_KIND: incapacitate and fear).
+    local BREAKABLE = {
+        ["Polymorph"] = true, ["Polymorph: Pig"] = true, ["Polymorph: Turtle"] = true,
+        ["Sap"] = true, ["Gouge"] = true, ["Blind"] = true,
+        ["Freezing Trap"] = true, ["Freezing Trap Effect"] = true, ["Wyvern Sting"] = true,
+        ["Scatter Shot"] = true, ["Hibernate"] = true, ["Seduction"] = true, ["Repentance"] = true,
+        ["Shackle Undead"] = true, ["Sleep"] = true, ["Hex"] = true, ["Banish"] = true,
+        ["Fear"] = true, ["Howl of Terror"] = true, ["Psychic Scream"] = true, ["Intimidating Shout"] = true,
+        ["Scare Beast"] = true, ["Turn Undead"] = true, ["Turn Evil"] = true, ["Terrify"] = true,
+    }
+    local DEBUFF_EVERY = 0.25
+    local debuff_read, debuff_n = {}, 0     -- guid -> { at, held }
+
+    local function held_by_debuff(unit)
+        local ok_g, guid = pcall(unit.get_guid, unit)
+        if not ok_g or guid == nil then return false end
+        local now = clock()
+        local seen = debuff_read[guid]
+        if seen and (now - seen.at) < DEBUFF_EVERY then return seen.held end
+        local held = false
+        local ok, list = pcall(unit.get_debuffs, unit)
+        if ok and type(list) == "table" then
+            for _, d in pairs(list) do
+                if type(d) == "table" and BREAKABLE[d.buff_name or ""] then held = true break end
+            end
+        end
+        if not seen then
+            debuff_n = debuff_n + 1
+            if debuff_n > 64 then debuff_read, debuff_n = {}, 1 end
+        end
+        debuff_read[guid] = { at = now, held = held }
+        return held
+    end
+
     --- Crowd-controlled in a way damage breaks: never a target to pick. Nor
     --- is a player in Divine Shield or Ice Block, or for a warrior or a rogue
     --- in Blessing of Protection (1.81.0): nothing of ours lands.
@@ -171,66 +232,203 @@ return function(P)
     function R.out_of_fight(unit)
         if not unit then return false end
         local en = ctx and ctx.enemies
+        local row = nil
         if en and en.get then
-            local ok, row = pcall(en.get, unit)
-            if ok and row ~= nil and tactics.out_of_fight(row) then return true end
+            local ok, r = pcall(en.get, unit)
+            if ok then row = r end
+            if row ~= nil and tactics.out_of_fight(row) then return true end
         end
+        local unread = row == nil or (row.control == nil and not row.in_combat and (row.dist or 0) <= 40)
+        if unread and held_by_debuff(unit) then return true end
         local ok_i, immune = pcall(pvp.immune_to_us, unit)
         return ok_i and immune == true
     end
 
-    -- --- the journal --------------------------------------------------------
-    --
-    -- Every state change, every reaction sent, every refusal and why, every
-    -- bail-out start and end, every retry held back. Kept as a ring for the
-    -- Debug page and mirrored to the log -- at info for what changes the
-    -- fight, at debug for refusals unless "log every decision" is on.
-
-    local journal_rows, journal_seen = {}, {}
-    local JOURNAL_MAX = 60
-    local LEVEL = { state = "info", trigger = "info", bailout = "warn", reject = "debug",
-                    retry = "debug", error = "warn", select = "debug", idle = "warn", learn = "info",
-                    plan = "info" }
-
     local function explain_on() return P.opt and P.opt("react_explain_log", false) == true end
 
-    ---@param kind string state | trigger | bailout | reject | retry | error | select
-    ---@param text string
-    ---@param key? string throttle: one line per key per 3s
-    --- Would a line under this throttle key be kept right now? Asked before
-    --- formatting one, so a refusal repeated every frame costs no string.
-    local function journal_due(key)
-        local last = journal_seen[key]
-        return not last or (clock() - last) >= 3.0
+    -- --- what the framework needs to know about this plugin -------------------
+    --
+    -- The spellbook by name, what the catalogue says a spell takes, the gates
+    -- a press passes (its key, its channel, the rotation's own reasons), and
+    -- the AIO's own action kinds -- the pet, the bag, an aspect, a target
+    -- switch -- each with what refuses it and what sends it. Every hook reads
+    -- the module it needs at call time, so the load order does not matter.
+
+    local function helpers() return (P.rotation and P.rotation.helpers) or {} end
+
+    --- Catalogue range says what kind of target the ability takes.
+    local function catalog_says(name)
+        local catalog = P.catalog
+        local row = catalog and catalog.ability and catalog.ability(name) or nil
+        if not row then return nil end
+        local r = row.range
+        if r == "self" then return "self" end
+        if r == "pet" then return "pet" end
+        if r == "party" then return "ally" end
+        if r == "ranged" or r == "melee" or type(r) == "number" or type(r) == "table" then return "enemy" end
+        return nil
     end
 
-    local function journal(kind, text, key)
-        local now = clock()
-        if key then
-            local last = journal_seen[key]
-            if last and (now - last) < 3.0 then return end
-            journal_seen[key] = now
-        end
-        journal_rows[#journal_rows + 1] = { at = now, kind = kind, text = text }
-        if #journal_rows > JOURNAL_MAX then table.remove(journal_rows, 1) end
-        local level = LEVEL[kind] or "debug"
+    local function alive(unit)
+        if not unit then return false end
+        local ok_v, valid = pcall(unit.is_valid, unit)
+        if not ok_v or valid ~= true then return false end
+        local ok_d, dead = pcall(unit.is_dead, unit)
+        return not (ok_d and dead == true)
+    end
+
+    --- Nothing selected: the pet stays with you (1.87.1, pet.lua).
+    local function pet_home()
+        return P.pet ~= nil and P.pet.home ~= nil and P.pet.home() == true
+    end
+
+    engine.configure({
+        units = units,
+        spells = {
+            known = function(name) return P.spellbook.known(name) end,
+            ready = function(name) return P.spellbook.ready(name) end,
+            id = function(name) return P.spellbook.id(name) end,
+        },
+        spell_name = spell_name,
+        target_kind = catalog_says,
+        key_allows = function(name)
+            local H = helpers()
+            return not H.key_allows or H.key_allows(name)
+        end,
+        channel_active = function(name)
+            local H = helpers()
+            return H.channel_active ~= nil and H.channel_active(name) == true
+        end,
+        press_blocked = function(name, s, target)
+            local rot = P.rotation
+            if rot and rot.press_blocked then return rot.press_blocked(name, s, target) end
+            return nil
+        end,
+        kinds = {
+            -- The pet's own skill: its own global cooldown, its own lane,
+            -- never the player's, and never stops the rotation.
+            pet_spell = {
+                lane = "pet", answer = "sent",
+                validate = function(c, W)
+                    if not W.pet.alive then return "no pet" end
+                    if not (P.pet and P.pet.knows and P.pet.knows(c.name)) then return "the pet does not know it" end
+                    if c.target_kind == "enemy" and pet_home() then return "nothing selected: the pet stays with you" end
+                    return nil
+                end,
+                execute = function(c)
+                    local ok = P.pet ~= nil and P.pet.cast ~= nil and P.pet.cast(c.name, c.target) == true
+                    local id = ok and P.pet.spell_id and P.pet.spell_id(c.name) or nil
+                    return ok, id
+                end,
+            },
+            -- A bag item by its kind (healthstone, potion, hearthstone):
+            -- asking is using, no arbiter in between.
+            item = {
+                target_kind = "self", answer = "done",
+                validate = function(c, W)
+                    local have = c.item and P.hardcore and P.hardcore.item and P.hardcore.item(c.item)
+                    if not have then return "none in the bags" end
+                    if W.player[c.item] == false then return "not usable yet (cooldown)" end
+                    return nil
+                end,
+                execute = function(c)
+                    return P.hardcore ~= nil and P.hardcore.use_item ~= nil
+                        and P.hardcore.use_item(c.item, c.rule.name) == true
+                end,
+            },
+            -- Any carried item by its name (1.79.0): a trinket, a potion.
+            named_item = {
+                target_kind = "self",
+                validate = function(c)
+                    local hc = P.hardcore
+                    if not (hc and hc.named_ready) then return "items by name need the Hardcore module" end
+                    local ok, why = hc.named_ready(c.item)
+                    if not ok then return (c.item or "the item") .. ": " .. tostring(why or "not usable") end
+                    return nil
+                end,
+                execute = function(c)
+                    return P.hardcore ~= nil and P.hardcore.use_named ~= nil
+                        and P.hardcore.use_named(c.item, c.rule.name) == true
+                end,
+            },
+            -- The pet sent at a mob. Pinned for a few seconds where the pet
+            -- module has an assignment to give, so its own assist pass does
+            -- not send the pet straight back to our target on its next tick.
+            pet_send = {
+                lane = "pet", answer = "done",
+                validate = function(c, W)
+                    if not W.pet.alive then return "no pet" end
+                    if not alive(c.target) then return "target is gone" end
+                    if pet_home() then return "nothing selected: the pet stays with you" end
+                    return nil
+                end,
+                execute = function(c)
+                    if P.pet and P.pet.assign then
+                        return P.pet.assign(c.target, c.rule.name, c.pin or 5) == true
+                    end
+                    return P.pet ~= nil and P.pet.send ~= nil and P.pet.send(c.target, c.rule.name, true) == true
+                end,
+            },
+            -- Called back, and kept off that mob for a while: the pet
+            -- module's assist pass would otherwise send it straight back.
+            pet_recall = {
+                lane = "pet",
+                validate = function(c, W)
+                    if not W.pet.alive then return "no pet" end
+                    if not (P.pet and P.pet.recall) then return "the pet cannot be called back here" end
+                    return nil
+                end,
+                execute = function(c)
+                    return P.pet ~= nil and P.pet.recall ~= nil and P.pet.recall(c.rule.name, c.target_guid, 8) == true
+                end,
+            },
+            -- An aspect, through the Aspects window (modules/aspects.lua,
+            -- 1.49.0): the switch moves with the cast, so the window shows
+            -- what was done and its keeper does not put the old aspect back.
+            aspect = {
+                spell_named = true,
+                validate = function(c)
+                    local A = P.aspects
+                    if not (A and A.can_switch and A.switch_to) then return "no Aspects window here" end
+                    return A.can_switch(c.name)
+                end,
+                execute = function(c)
+                    local A = P.aspects
+                    local ok = A ~= nil and A.switch_to ~= nil
+                        and A.switch_to(c.name, c.why or c.rule.name, engine.band_for(c.rule)) == true
+                    return ok, ok and P.spellbook.id(c.name) or nil
+                end,
+            },
+            -- A target switch (1.81.0: off a player in Divine Shield).
+            set_target = {
+                validate = function(c, W)
+                    if not (P.targeting and P.targeting.switch_to) then return "no targeting here" end
+                    if rawequal(c.target, W.target.unit) then return "already the target" end
+                    return nil
+                end,
+                execute = function(c)
+                    return P.targeting ~= nil and P.targeting.switch_to ~= nil
+                        and P.targeting.switch_to(c.target) == true
+                end,
+            },
+        },
+        explain = explain_on,
         -- Forever: what the engine decided goes into the API recorder's
         -- timeline too, beside what the client answered (jcore.trace.txt).
-        if client.recording and level ~= "debug" and ctx and ctx.emit then
-            pcall(ctx.emit, "jcore.recorder.trace", "react " .. kind .. ": " .. text)
-        end
-        if level == "debug" and explain_on() then level = "info" end
-        if log and log.fmt then log.fmt(level, "react %s: %s", kind, text) end
-    end
+        trace = (client.recording and ctx and ctx.emit) and function(text)
+            pcall(ctx.emit, "jcore.recorder.trace", text)
+        end or nil,
+        log = log,
+        on_refused = function(row, id, text)
+            if teach then teach(row, id, text) end
+        end,
+    })
     R.journal = journal
-
-    local engine = load("modules/react/engine")(P, memory, journal)
     R.engine = engine
 
     -- --- the rule registry ----------------------------------------------------
 
-    local unique = {}
-    memory.unique = unique
+    local unique = memory.unique
 
     local lib = { memory = memory, detect = detect, world = world, engine = engine, latch = L,
                   journal = journal, petcare = petcare, petthreat = petthreat, pvp = pvp }
@@ -274,10 +472,6 @@ return function(P)
         end
     end
 
-    -- Defined further down; declared here so the closure below captures the
-    -- local rather than an undefined global.
-    local wire_wakes
-
     -- Class reactions: modules/react/rules/<class key>.lua, when there is one,
     -- and a class module's own `reactions(R, P, lib)` hook, when it has one.
     -- Only files that exist: a require that misses can be noisy in the
@@ -285,7 +479,7 @@ return function(P)
     local CLASS_RULE_FILES = { hunter = true }
     -- More files for a class (1.7.6: the PvP hunter's reactions, which ask
     -- their own switch before anything).
-    local CLASS_EXTRA_RULES = { hunter = { "hunter_pvp" } }
+    local CLASS_EXTRA_RULES = { hunter = { "hunter_pvp", "intel" } }
 
     local class_rules_for = nil
     local function sync_class_rules()
@@ -303,27 +497,21 @@ return function(P)
             local ok, err = pcall(class_module.reactions, R, P, lib)
             if not ok then journal("error", "class reactions failed: " .. tostring(err)) end
         end
-        if wire_wakes then wire_wakes() end
     end
     R.sync_class_rules = sync_class_rules
 
-    -- --- wiring the memory to the game -----------------------------------------
-
-    local function is_ours(request)
-        return not (ctx.id and request.owner and request.owner ~= ctx.id)
-    end
+    -- --- wiring the fight's lessons to the game ----------------------------------
+    --
+    -- What was sent, confirmed and refused is the engine's own wiring (JCore
+    -- 1.8.0). These are the AIO's: what each skill deals, what the fights
+    -- teach, what hits us and the pet.
 
     if ctx and ctx.on then
-        ctx.on("jcore.cast.sent", function(request)
-            if type(request) ~= "table" or not request.spell_id or not is_ours(request) then return end
-            local guid = request.target and units.guid and units.guid(request.target) or nil
-            memory.on_sent(request.spell_id, guid, request.reason)
-        end)
-
         -- The red text that says something about the MOB: too close, out of
         -- range, immune. Read with where the mob is now and how fast the gap
-        -- moves; learn.lua decides whether the reading is worth keeping.
-        local function teach(row, id, text)
+        -- moves; learn.lua decides whether the reading is worth keeping. The
+        -- engine asks (on_refused) once it has laid the error on our attempt.
+        teach = function(row, id, text)
             local up = type(id) == "string" and id:upper() or ""
             local low = type(text) == "string" and text:lower() or ""
             local kind = nil
@@ -356,7 +544,6 @@ return function(P)
         ctx.on("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", function(args)
             if not player_or_pet(args) then return end
             local id = tonumber(args[3])
-            memory.on_success(id)
             if args[1] == "player" and id then damage.cast(spell_name(id)) end
         end)
 
@@ -435,7 +622,6 @@ return function(P)
                 local ok, guid = pcall(data.caster.get_guid, data.caster)
                 if ok and guid ~= units.guid(player) then return end
             end
-            memory.on_success(data.spell_id)
             damage.cast(spell_name(data.spell_id))
             -- Forever: no combat log, so what this cast is expected to deal
             -- (its tooltip, damage.lua) goes on the target's tally instead.
@@ -446,88 +632,44 @@ return function(P)
                 if expected and guid then damage.dealt_to(guid, expected) end
             end
         end)
-        -- FAILED carries no reason, and most of them are a queued press
-        -- arriving a moment early: recorded, never counted towards a back-off.
-        ctx.on("jcore.game_event.UNIT_SPELLCAST_FAILED", function(args)
-            if not player_or_pet(args) then return end
-            local row = memory.on_failure(tonumber(args[3]), "refused", true)
-            if row then journal("reject", string.format("%s was refused by the client", row.name), "fail:" .. row.name) end
-        end)
-        ctx.on("jcore.game_event.UNIT_SPELLCAST_INTERRUPTED", function(args)
-            if not player_or_pet(args) then return end
-            memory.on_failure(tonumber(args[3]), "interrupted", true)
-        end)
-        ctx.on("jcore.game_event.UI_ERROR_MESSAGE", function(args)
-            if type(args) ~= "table" then return end
-            -- Only an error that will repeat on the next press counts (out of
-            -- range, not facing, no sight); "not ready yet" fixes itself.
-            local soft = not memory.persistent_error(args[3])
-            -- Which press it was, the client does not say: name the others
-            -- sent with it, so a pet's refused Growl is not read as Auto Shot's.
-            local also = {}
-            for _, n in ipairs(memory.sent_recently(0.6)) do also[#also + 1] = n end
-            local row = memory.on_failure(nil, tostring(args[3] or args[2] or "error"), soft)
-            if row then
-                for i = #also, 1, -1 do
-                    if also[i] == row.name then table.remove(also, i) end
-                end
-                journal("reject", string.format("client error after %s%s: %s", row.name,
-                    #also > 0 and (" (or " .. table.concat(also, ", ") .. ", sent with it)") or "",
-                    tostring(args[2] or args[3] or "error")), "uierr:" .. row.name)
-                teach(row, args[3], args[2])
-            end
-        end)
-        ctx.on("jcore.game_event.UNIT_SPELLCAST_CHANNEL_START", function(args)
-            if type(args) == "table" and args[1] == "player" then memory.on_channel(tonumber(args[3]), true) end
-        end)
-        ctx.on("jcore.game_event.UNIT_SPELLCAST_CHANNEL_STOP", function(args)
-            if type(args) == "table" and args[1] == "player" then memory.on_channel(tonumber(args[3]), false) end
-        end)
         ctx.on("jcore.combat.leave", function()
-            memory.combat_end()
             learn.combat_end()
             damage.reset_dealt()
             world.forget_units()
             tactics.reset()
             petthreat.reset()
             pvp.reset()
-            marks.reset()
         end)
     end
 
-    -- Wake events: a rule that waits on an interval is asked at once when
-    -- the thing it answers happens. Registered per event, once.
-    local woken = {}
-    wire_wakes = function()
-        if not (ctx and ctx.on) then return end
-        local rules = engine.rules()
-        for i = 1, #rules do
-            local def = rules[i]
-            for _, event in ipairs(def.wake or {}) do
-                if not woken[event] then
-                    woken[event] = true
-                    ctx.on(event, function()
-                        local list = engine.rules()
-                        for j = 1, #list do
-                            local d = list[j]
-                            for _, e in ipairs(d.wake or {}) do
-                                if e == event then engine.wake(d) end
-                            end
-                        end
-                    end)
-                end
-            end
-        end
-    end
-    wire_wakes()
+    -- Wake events (a rule asked at once when the thing it answers happens)
+    -- are the engine's: it subscribes as each rule is added.
 
     -- --- switches -------------------------------------------------------------
 
-    --- Always (1.32.0): the engine is the path, not an option. Kept as a
-    --- function because the rotation and the pet ask it.
+    --- The master switch (the Reactions page, "Use reactions in the
+    --- rotation"; 1.8.0). On, the reactions act and the rotation gives way
+    --- to them. Off, no reaction acts and none owns a spell: the rotation
+    --- runs by itself, with its own fixed sequence. The picture of the fight
+    --- is built either way (R.observing). Until 1.8.0 this always said yes:
+    --- "the engine is the path, not an option" (1.32.0); 1.8.0 put a switch
+    --- on the Reactions page, and on 2026-10-11 the switch went again (the
+    --- user: "reactions should automatically activate in PvP when PvP is
+    --- detected", not an option). Always yes; a saved react_active changes
+    --- nothing. The PvP reactions and the intelligence wake on the picture
+    --- (W.intel.active and its signs; env.pvp under it), not on a switch.
     ---@return boolean
     function R.active()
         return true
+    end
+
+    --- Is the picture of the fight (world.W) this tick's? The rotation's
+    --- scoring, its gates and the targeting read it only while it is.
+    ---@return boolean
+    function R.observing()
+        local W = world.W
+        return W ~= nil and W.player ~= nil and W.player.unit ~= nil
+            and math.abs(clock() - (W.now or -math.huge)) <= 0.25
     end
 
     --- Does a reaction own this spell right now? Other casters of it stand aside.
@@ -607,8 +749,13 @@ return function(P)
         return table.concat(parts, " | ")
     end
 
+    -- What the decide step leaves when the reactions are switched off.
+    local NO_DECISION = { cands = {}, holds = {}, rejected = {} }
+
     local function take_snapshot(W, d, sent)
+        d = d or NO_DECISION
         local s = {
+            off = not R.active(),
             at = W.now, mode = W.mode, context = W.context, mode_why = W.mode_why,
             mode_age = W.mode_age or 0,
             danger = math.floor((W.env.danger or 0) + 0.5), danger_reasons = {},
@@ -638,6 +785,14 @@ return function(P)
         do
             local ok, line = pcall(pvp_line, W)
             s.pvp = ok and line or nil
+        end
+        -- The intel picture's two rows, only while it is on (its lines are
+        -- the readout's rows, and the page has a fixed number).
+        if W.intel and W.intel.active then
+            local ok, lines = pcall(intel.lines)
+            s.intel = ok and lines or nil
+        else
+            s.intel = nil
         end
         -- The pet's taunt (petthreat.lua): its own row when there is no plan,
         -- else on the plan's second, so the readout keeps its 35 rows.
@@ -883,6 +1038,17 @@ return function(P)
             W.pvp = ok and V or nil
             if not ok then journal("error", "the PvP read failed: " .. tostring(V), "pvp_read") end
         end
+        -- The PvP picture (intel/state.lua): after W.pvp, before the
+        -- situations, so every rule and every later stage sees the same one.
+        -- A build that raises leaves last tick's table, marked off.
+        do
+            local ok, err = pcall(intel.update, W, now)
+            if not ok then
+                W.intel = intel.S
+                W.intel.off, W.intel.active = true, false
+                journal("error", "the intel build failed: " .. tostring(err), "intel_build")
+            end
+        end
         -- Forever: no combat log to say EVADE. A mob we attacked that is out
         -- of combat, alive, and getting its health back is going home.
         if no_combat_log then
@@ -997,17 +1163,20 @@ return function(P)
         end
         memory.set_state("escape", W.mode == "ESCAPE")
 
-        local y = engine.yielding(W)
+        local active = R.active()
+        local y = active and engine.yielding(W) or nil
         if y and not (yield_state and yield_state.name == y.name and (now - yield_state.at) <= 0.5) then
             journal("state", string.format("%s gives way: %s", y.name, y.why))
         end
         if y then y.at = now end
         W.yield, yield_state = y, y
 
-        -- Decide and act.
-        local d = engine.decide(W)
-        pet_skill_line(W, d, now)
-        local verdict = { gcd = false, fast = false, halt = false, mode = W.mode }
+        -- Decide and act -- with the reactions switched on (the Reactions
+        -- page). Off, the picture above is still built, for the rotation's
+        -- scoring, the targeting and the readouts, and nothing here acts.
+        local d = active and engine.decide(W) or NO_DECISION
+        if active then pet_skill_line(W, d, now) end
+        local verdict = { gcd = false, fast = false, halt = false, mode = W.mode, off = not active }
         for _, lane in ipairs({ "fast", "gcd", "pet" }) do
             local c = d[lane]
             if c and engine.execute(c, W) then
@@ -1046,16 +1215,15 @@ return function(P)
         -- Your own reactions keep what became of them, for the window's
         -- "why not" and their history (1.79.0).
         if R.custom and R.custom.after_decide then pcall(R.custom.after_decide, W, d, verdict) end
-        pcall(marks.capture, W, d, verdict)
 
         -- Still waiting for our last cast to start: the walk's global
         -- cooldown is not free yet, whatever the cast bar says.
-        if W.pending and not verdict.gcd then
+        if active and W.pending and not verdict.gcd then
             verdict.gcd = true
             verdict.waiting = W.pending.name
         end
 
-        pending_deferred = (not verdict.gcd and not verdict.halt) and d.deferred or nil
+        pending_deferred = (active and not verdict.gcd and not verdict.halt) and d.deferred or nil
         if wanted(now) then snap = take_snapshot(W, d, last_selected) end
         last_verdict = verdict
         if snap then
@@ -1074,6 +1242,71 @@ return function(P)
         idle_check(W, now)
         return verdict
     end
+
+    -- --- apart from the rotation (1.8.0) ------------------------------------------
+    --
+    -- The reactions run in a job of their own, just before the rotation's
+    -- (priority 60), on the snapshot the rotation shares (rotation.snapshot:
+    -- whichever asks first builds it), and publish a verdict for the tick.
+    -- The rotation reads the verdict -- a reaction took the global cooldown,
+    -- or something says stop attacking -- and gives way; it never calls in
+    -- here. A second job after the rotation's takes its pick for the readout
+    -- and sends the deferred reaction when the walk had nothing to press.
+
+    local tick_verdict = nil
+
+    local function rotation_running()
+        if P.opt and not P.opt("rot_enabled", false) then return false end
+        if P.rotation_active and not P.rotation_active() then return false end
+        return true
+    end
+
+    local function before_rotation()
+        tick_verdict = nil
+        if not rotation_running() then return end
+        local rot = P.rotation
+        if not (rot and rot.snapshot) then return end
+        local class_module, profile, s = rot.snapshot()
+        if not s then return end
+        local ok, result = pcall(R.tick, class_module, profile, s)
+        if ok and type(result) == "table" then
+            tick_verdict = result
+        elseif log and log.once then
+            log.once("warn", "react_tick_failed",
+                "the reactions failed this tick; the rotation runs by itself: " .. tostring(result))
+        end
+    end
+
+    local function after_rotation_job()
+        local v = tick_verdict
+        if not v or v.off then
+            pending_deferred = nil
+            return
+        end
+        local rot = P.rotation
+        if rot and rot.walked_this_tick and rot.walked_this_tick() then
+            R.after_rotation(rot.last_choice(), rot.last_candidates())
+        else
+            pending_deferred = nil
+        end
+    end
+
+    --- This tick's verdict for the rotation: { gcd, fast, halt, mode,
+    --- waiting? }, or nil when the reactions did not run this tick or are
+    --- switched off -- the rotation then runs by itself.
+    ---@return table|nil
+    function R.verdict()
+        local v = tick_verdict
+        if v and not v.off then return v end
+        return nil
+    end
+
+    if ctx and ctx.tick then
+        ctx.tick(before_rotation, { priority = 59 })
+        ctx.tick(after_rotation_job, { priority = 61 })
+    end
+    -- The two jobs by hand, for a bundle without a scheduler (the tests).
+    R._before_rotation, R._after_rotation = before_rotation, after_rotation_job
 
     --- After the priority walk: the rotation's own pick and its scored
     --- candidates, for the readout, and the low-priority reaction when the
@@ -1218,8 +1451,12 @@ return function(P)
         local out = {}
         local s = snap
         if not s then
-            out[1] = "Reactions: on -- waiting for the rotation to run (enable it, hold its key)."
+            out[1] = R.active() and "Reactions: on -- waiting for the rotation to run (enable it, hold its key)."
+                or "Reactions: OFF -- the rotation runs by itself (Reactions page, Use reactions in the rotation)."
             return out
+        end
+        if s.off then
+            out[#out + 1] = "Reactions: OFF -- the rotation runs by itself; the picture below still scores its choices"
         end
         out[#out + 1] = string.format("Reactions: %s%s   (%.1fs: %s)   danger %d%s",
             s.mode or "?", s.context and (" + " .. s.context) or "", s.mode_age, s.mode_why or "", s.danger,
@@ -1229,6 +1466,7 @@ return function(P)
         end
         if #s.sits > 0 then out[#out + 1] = "  situations: " .. table.concat(s.sits, ", ") end
         if s.pvp then out[#out + 1] = "  " .. s.pvp end
+        for i = 1, #(s.intel or {}) do out[#out + 1] = "  " .. s.intel[i] end
         -- The plan for the fight: the kill order, the pet's job, the race.
         for i = 1, math.min(#(s.plan or {}), 2) do out[#out + 1] = s.plan[i] end
 
@@ -1341,18 +1579,10 @@ return function(P)
         return out
     end
 
-    --- The journal, newest first.
+    --- The journal, newest first (the engine's).
     ---@param n integer
     ---@return string[]
-    function R.log_lines(n)
-        local out, now = {}, clock()
-        for i = #journal_rows, math.max(1, #journal_rows - (n or 10) + 1), -1 do
-            local row = journal_rows[i]
-            out[#out + 1] = string.format("%5.1fs  [%s] %s", now - row.at, row.kind, row.text)
-        end
-        if #out == 0 then out[1] = "(nothing yet)" end
-        return out
-    end
+    function R.log_lines(n) return engine.log_lines(n) end
 
     --- One line for the overview page.
     ---@return string
@@ -1360,7 +1590,8 @@ return function(P)
         local mode, context = behavior.current()
         local last = last_selected and string.format("   last: %s %.0fs ago", last_selected.name,
             clock() - (last_selected.at or 0)) or ""
-        return string.format("on, %s%s%s", mode, context and (" + " .. context) or "", last)
+        return string.format("%s, %s%s%s", R.active() and "on" or "off -- the rotation runs by itself",
+            mode, context and (" + " .. context) or "", last)
     end
 
     function R.stats()
@@ -1391,6 +1622,7 @@ return function(P)
         local s = snap
         if not s or (now - (s.at or now)) > 1.5 then return { "Rotation: " .. rotation_state(s, now) } end
         local out = {}
+        if s.off then out[#out + 1] = "Reactions OFF -- the rotation runs by itself" end
         out[#out + 1] = string.format("%s%s   danger %d", s.mode or "?",
             s.context and (" + " .. s.context) or "", s.danger)
         if s.plan_short then out[#out + 1] = s.plan_short end
@@ -1412,6 +1644,9 @@ return function(P)
             if pick then
                 out[#out + 1] = string.format("Rotation: %s  %.1f", pick.name, pick.score)
                 for i = 1, math.min(#pick.reasons, 2) do out[#out + 1] = "    " .. pick.reasons[i] end
+                -- And what came of it: "pressed X", or "last X 0.4s ago; next Y"
+                -- (the panel names the last press or the cast, not only the pick).
+                out[#out + 1] = "    " .. rotation_state(s, now)
             else
                 out[#out + 1] = "Rotation: " .. rotation_state(s, now)
             end
@@ -1503,11 +1738,12 @@ return function(P)
 
     --- Forgets everything, for the Debug page's reset button.
     function R.reset()
-        memory.reset()
+        engine.reset()           -- the memory and the journal
         detect.reset(clock())
         behavior.reset(clock())
         tactics.reset()
-        journal_rows, journal_seen, snap, last_selected, pending_start = {}, {}, nil, nil, nil
+        intel.reset()
+        snap, last_selected, pending_start = nil, nil, nil
     end
 
     return R

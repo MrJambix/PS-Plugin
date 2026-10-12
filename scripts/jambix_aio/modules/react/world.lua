@@ -310,7 +310,15 @@ return function(P, D, memory)
 
         -- --- the player ----------------------------------------------------------
         local player = s.player
-        if player ~= player_ref then
+        -- IDENTITY, NOT ~=. A game object compares through the client's own
+        -- __eq, which raises "Invalid game object!" when either side has gone
+        -- stale -- and the kept one has, after a loading screen. The raise
+        -- came before it could be replaced, so every tick after raised the
+        -- same way and the reactions were gone for the rest of the session
+        -- (Forever log, 2026-10-11: a zone change mid-pull). The combat-log
+        -- reader had the same fault (1.48.2); JCore keys its units by
+        -- identity too (units.lua's snap).
+        if not rawequal(player, player_ref) then
             player_ref = player
             player_guid_cache = player and units.guid(player) or nil
         end

@@ -269,6 +269,8 @@ local function bundle(opts)
     if opts.loot then P.ctx.loot = opts.loot end
     -- JCore's JSON, for sharing reactions (1.79.0).
     if opts.json then P.ctx.json = opts.json end
+    -- The framework is JCore's (1.8.0): one engine per owner, on the handle.
+    P.ctx.react = require("jcore/services/react")({}).for_owner("jambix.aio", P.ctx)
     G.React = fresh("jambix_aio/modules/react/init")(P)
 
     function G.fire(event, data)
@@ -374,8 +376,44 @@ T[#T + 1] = { "combat log: a stale player object after a loading screen is repla
     assert_eq(dealt("mob"), 22, "the new one's hits are")
 end }
 
+T[#T + 1] = { "world: a stale player object after a loading screen is replaced, never compared (Invalid game object!)", function()
+    local G = bundle()
+    -- The picture of the fight keeps the player's handle between ticks to
+    -- spare a guid read. After a loading screen the kept one is stale, and
+    -- the client's __eq raises on it (Forever log, 2026-10-11: a zone change
+    -- mid-pull stopped the reactions for the rest of the session).
+    local native = { __eq = function(a, b)
+        if a.stale or b.stale then error("Invalid game object!") end
+        return rawequal(a, b)
+    end }
+    local function fresh_player(guid, name)
+        local u = setmetatable(unit(G, guid, { name = name, hostile = false }), native)
+        function u.can_attack(_, other) return other ~= nil and other.hostile == true end
+        return u
+    end
+    setmetatable(G.player, native)
+    G.tick()
+    assert_eq(G.React.world.W.player.guid, "player", "the first tick reads our guid")
+
+    -- A loading screen: the old object is stale, the sweep hands out a new one.
+    G.player.stale = true
+    G.player = fresh_player("player", "Me")
+    local ok, err = pcall(G.tick)
+    assert(ok, "the builder must not compare the stale object: " .. tostring(err))
+    assert_eq(G.React.world.W.player.guid, "player", "and still knows who we are")
+    G.clock = G.clock + 0.1
+    ok, err = pcall(G.tick)
+    assert(ok, "nor on the tick after: " .. tostring(err))
+
+    -- A different character after a relog: its guid is read afresh.
+    G.player.stale = true
+    G.player = fresh_player("player-2", "Alt")
+    G.tick()
+    assert_eq(G.React.world.W.player.guid, "player-2", "the new character's guid")
+end }
+
 T[#T + 1] = { "latch: enters at one line, leaves only at the other, and does not chatter", function()
-    local L = fresh("jambix_aio/modules/react/latch")()
+    local L = require("jcore/services/react")({}).latch
     local l = L.new({ enter = 0.30, exit = 0.45, below = true })
     local now = 0
     local function feed(v) now = now + 0.1 return (l.update(v, now)) end
@@ -525,37 +563,8 @@ T[#T + 1] = { "interrupt: a harmless cast is kicked late, a dangerous one at onc
     assert_eq(H.sent("Kick"), 1, "a polymorph is kicked the moment it is seen")
 end }
 
-T[#T + 1] = { "interrupt in the world (1.85.0): the waiting kick is a mark under the caster, and the kick a ring under it", function()
-    local G = bundle()
-    G.known.Kick = true
-    G.target.pos = { x = 4, y = 0, z = 0 }
-    G.row = G.row_for(G.target, { casting = G.casting("Arcane Missiles", 2.6, 3.0) })
-    G.rows = { G.row }
-    G.tick()
-    local marks = G.React.marks
-    assert(marks, "the reactions carry their marks")
-    assert_eq(marks.stats().kicks, 1, "the kick it waits on is marked")
-    local rings = {}
-    G.P.draw = { ring_3d = function(...) rings[#rings + 1] = { ... } end, curtain_3d = function() end }
-    G.P.units.position = function(u) return u and u.pos end
-    marks.render()
-    assert_eq(#rings, 1, "one ring under the caster")
-    assert_eq(rings[1][1], G.target.pos, "at its feet")
-    assert(rings[1][3] > 0 and rings[1][3] < 1, "filling toward the kick, got " .. tostring(rings[1][3]))
-    G.clock = G.clock + 0.8
-    G.tick()
-    assert_eq(G.sent("Kick"), 1, "kicked")
-    rings = {}
-    marks.render()
-    local full, pulse = 0, 0
-    for i = 1, #rings do
-        if rings[i][1] == G.target.pos and rings[i][3] == 1 then
-            if rings[i][5].inner == 0.86 then pulse = pulse + 1 else full = full + 1 end
-        end
-    end
-    assert_eq(full, 1, "the chosen kick: a full ring")
-    assert_eq(pulse, 1, "and the ring opening out where it landed")
-end }
+-- "interrupt in the world (1.85.0)" tested react/marks.lua's kick ring; the
+-- module left with the Reactions page's *In the world* section on 2026-10-11.
 
 T[#T + 1] = { "interrupt: a spell that does not take the caster is passed over for the next (1.77.4)", function()
     local function paladin_bundle(kind)
@@ -1527,6 +1536,14 @@ local function rotation_bundle()
     local react = G.React
     P.rotation = make_rotation(P)
     P.react = react
+    -- The reactions' two jobs round the rotation's, as JCore's scheduler
+    -- runs them (1.8.0: priorities 59, 60, 61); this bundle has no scheduler.
+    local rotation_tick = P.rotation.tick
+    P.rotation.tick = function()
+        react._before_rotation()
+        rotation_tick()
+        react._after_rotation()
+    end
     P.rotation.classes.ROGUE = {
         key = "rogue", class_name = "ROGUE", power = "ENERGY",
         interrupts = { "Kick" }, defensives = { "Evasion" }, escapes = {},
@@ -1843,7 +1860,7 @@ T[#T + 1] = { "pet heal (1.66.0): a channel that turns dangerous gives way -- re
 end }
 
 T[#T + 1] = { "latch: the exit line is fixed when it turns on, so a moving threshold cannot flap it", function()
-    local L = fresh("jambix_aio/modules/react/latch")()
+    local L = require("jcore/services/react")({}).latch
     local l = L.new({ enter = 0.20, exit = 0.45, below = true })
     assert_eq((l.update(0.48, 1, 0.49, 0.74)), true, "on under a high line")
     assert_eq((l.update(0.36, 2, 0.10, 0.35)), true, "the line falls to 10%: still on (exit stays 74%)")
@@ -2275,6 +2292,14 @@ local function hunter_fight()
     P.catalog = require("jambix_aio/modules/catalog/init")(P)
     P.rotation = require("jambix_aio/modules/rotation")(P)
     P.react = G.React
+    -- The reactions' two jobs round the rotation's, as JCore's scheduler
+    -- runs them (1.8.0: priorities 59, 60, 61); this bundle has no scheduler.
+    local rotation_tick = P.rotation.tick
+    P.rotation.tick = function()
+        G.React._before_rotation()
+        rotation_tick()
+        G.React._after_rotation()
+    end
     local CS = {
         prefix = "rot_hunter_",
         opt = function(id, d) return P.opt("rot_hunter_" .. id, d) end,
@@ -2431,16 +2456,23 @@ T[#T + 1] = { "loot first (1.57.1): no new pull while auto-loot works a corpse; 
     assert_eq(G.P.rotation.may_engage_unit(G.target), true, "no world module: as before")
 end }
 
-T[#T + 1] = { "rotation: if the engine itself fails, the old fixed sequence still interrupts that tick", function()
+T[#T + 1] = { "rotation: if the reactions fail, there is no verdict and the rotation's own sequence still interrupts that tick", function()
     local G = rotation_bundle()
-    G.P.react = { tick = function() error("engine broke") end, gate = function() return nil end,
-                  active = function() return true end, after_rotation = function() end }
+    -- 1.8.0: the reactions' own job raises; the rotation reads no verdict
+    -- and runs by itself, with its own fixed sequence.
+    G.React.tick = function() error("engine broke") end
     G.row = G.row_for(G.target, { casting = G.casting("Greater Heal", 1.0, 3.0) })
     G.rows = { G.row }
     G.P.rotation.tick()
+    assert_eq(G.React.verdict(), nil, "no verdict for the tick")
     local n, request = G.sent("Kick")
-    assert_eq(n, 1, "kicked by the legacy path")
-    assert_eq(request.reason, "interrupt with Kick", "the legacy reason, not the engine's")
+    assert_eq(n, 1, "kicked by the rotation's own path")
+    assert_eq(request.reason, "interrupt with Kick", "the rotation's reason, not the engine's")
+    local said = false
+    for _, line in ipairs(G.lines) do
+        if line.text:find("the reactions failed this tick", 1, true) then said = true end
+    end
+    assert(said, "and the log says so once")
 end }
 
 -- --- the pet is the tank (1.36.0) -------------------------------------------------------------
@@ -2521,6 +2553,26 @@ T[#T + 1] = { "pet tank: a special that would push our threat over the line wait
     G.run(0.1)
     _, _, refuse = G.React.adapt(rule, row, G.React.world.W.s, { target = G.React.world.W.s.target })
     assert(refuse == nil or not refuse:find("pet", 1, true), "in a group the pet guard is off: " .. tostring(refuse))
+end }
+
+T[#T + 1] = { "a player is never the pet's mob: one leaving the pet for us gets no Disengage (a threat drop on Forever) and no Growl (live 2026-10-12, both at a player)", function()
+    local G = bundle()
+    G.dispatch = true
+    G.target.is_player = function() return true end
+    G.pet_alive, G.pet_target = true, G.target
+    G.row = G.row_for(G.target, { targeting_pet = true, dist = 3 })
+    G.rows = { G.row }
+    G.threat_pct = 40
+    G.known.Disengage, G.known.Growl = true, true
+    G.enemy_spells = { Disengage = true }
+    G.roles.threat_drop = { { name = "Disengage" } }
+    G.run(2.0)
+    G.row.targeting_pet, G.row.targeting_me = false, true
+    G.threat_pct = 112
+    G.run(1.0)
+    assert_eq(G.React.world.W.sit.pet_lost_aggro, false, "a player is not a mob the pet lost")
+    assert_eq(G.sent("Disengage"), 0, "no threat drop at a player")
+    assert_eq(G.sent("Growl"), 0, "no taunt at a player")
 end }
 
 T[#T + 1] = { "pet tank: a mob that leaves the pet for us gets Disengage, never the pet's Cower, and the log says so", function()
@@ -3457,6 +3509,43 @@ T[#T + 1] = { "hunter: Intimidation gives the pet its mob back when Growl cannot
     assert_eq(N.sent("Intimidation"), 0, "still on the pet: nothing to give back")
 end }
 
+-- 1.8.1: the user, Intimidation "when I really need a mob off me and
+-- Disengage is not available".
+T[#T + 1] = { "hunter: Disengage first -- Intimidation hands a mob back only when Disengage cannot (1.8.1)", function()
+    local HUNTER = { key = "hunter", class_name = "HUNTER", power = "MANA", interrupts = {}, defensives = {}, escapes = {} }
+    --- The pet's mob on you at `dist`, Growl cooling down, both trained.
+    local function on_me(dist, settings)
+        local G = bundle({ class = HUNTER })
+        hunter(G)
+        taunting(G)
+        G.known.Intimidation, G.known.Disengage = true, true
+        for k, v in pairs(settings or {}) do G.settings[k] = v end
+        G.pet_target = G.target
+        G.row = at(G, G.row_for(G.target, { targeting_me = true, dist = dist, hp = 0.6 }), 2, 0)
+        G.rows = { G.row }
+        G.ready_in.Growl = 4
+        G.tick()
+        return G
+    end
+    local G = on_me(3, { rot_hunter_disengage = true })
+    assert_eq(G.sent("Intimidation"), 0, "in melee with Disengage on and ready: Intimidation kept")
+    assert_eq(G.sent("Disengage"), 1, "Disengage hands it back")
+    -- Disengage on its cooldown now; the mob turns back a moment later.
+    G.unready.Disengage = true
+    G.clock = G.clock + 1
+    G.tick()
+    assert_eq(G.sent("Intimidation"), 0, "a second on: the Disengage is still working")
+    G.clock = G.clock + 1.5
+    G.tick()
+    assert_eq(G.sent("Intimidation"), 1, "still on you with Disengage spent: Intimidation")
+
+    local O = on_me(3)
+    assert_eq(O.sent("Disengage"), 0, "Disengage switched off: none")
+    assert_eq(O.sent("Intimidation"), 1, "so Intimidation")
+    local R = on_me(25, { rot_hunter_disengage = true })
+    assert_eq(R.sent("Intimidation"), 1, "out of Disengage's reach: Intimidation")
+end }
+
 -- --- the pet's own skills (react/rules/pet.lua, 1.69) ---------------------------------------
 
 local BEASTS = require("jambix_aio/modules/beasts_data").vanilla
@@ -3912,12 +4001,21 @@ T[#T + 1] = { "the built-in reactions: one switched off, or held to some places,
     go_to(G, "party", "Stratholme", 329)
     assert(drink(), "in a dungeon: the potion again")
     C.set_default_env("Emergency potion", nil)
+    -- 2026-10-11: the master switch is gone (the user: "reactions should
+    -- automatically activate in PvP when PvP is detected", not an option).
+    -- A saved "off" changes nothing: the engine is the path again (1.32.0).
     G.settings.react_active = false
-    assert(not drink(), "the master switch off: no reaction at all")
+    assert(drink(), "a saved 'off' changes nothing: the potion still comes")
     G.bail = true
     G.settings.hc_enabled = true
     G.tick()
-    assert(G.verdict.halt == true, "but the Hardcore bail-out still holds the attacks (its own switch)")
+    assert(G.verdict.off == false, "the verdict never says the reactions are off")
+    assert(G.verdict.halt == true, "the bail-out holds the attacks through the reactions")
+    assert(G.React.active() == true, "active() always says yes")
+    assert(not G.React.summary():find("^off"), "the overview never says off: " .. G.React.summary())
+    local lines = table.concat(G.React.debug_lines(), " / ")
+    assert(not lines:find("Reactions: OFF", 1, true), "the readout never says OFF: " .. lines)
+    G.settings.react_active = true
 end }
 
 -- --- dungeons and the open world (1.78.0) ----------------------------------------------

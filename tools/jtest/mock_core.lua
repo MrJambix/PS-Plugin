@@ -24,6 +24,9 @@ local M = {}
 M.time = 1000.0                 -- core.time(), seconds; advanced by frame()
 M.frame_dt = 1 / 60
 M.frame_no = 0
+-- frame() runs the render_window callbacks after render, as the loader
+-- paints its window pass over the game's frames. false: a loader without it.
+M.window_pass = true
 
 local cpu_counter = 0
 local function cpu_time_ns()
@@ -226,7 +229,7 @@ end
 -- --- the core table -----------------------------------------------------
 
 M.callbacks = {
-    update = {}, pre_tick = {}, render = {}, render_menu = {}, render_control_panel = {},
+    update = {}, pre_tick = {}, render = {}, render_window = {}, render_menu = {}, render_control_panel = {},
     spell_cast = {}, legit_spell_cast = {}, game_event = {},
 }
 
@@ -272,6 +275,7 @@ local function build_core()
     core.register_on_update_callback = registrar("update")
     core.register_on_pre_tick_callback = registrar("pre_tick")
     core.register_on_render_callback = registrar("render")
+    core.register_on_render_window_callback = registrar("render_window")
     core.register_on_render_menu_callback = registrar("render_menu")
     core.register_on_render_control_panel_callback = registrar("render_control_panel")
     core.register_on_spell_cast_callback = registrar("spell_cast")
@@ -634,6 +638,10 @@ function M.install()
     M.menu = build_menu()
     _G.core = M.core
     _G.menu = M.menu
+    -- JCore 1.8.1 runs no pass until a local player is valid (its world
+    -- gate). Most tests have no player, so the harness opens the gate; a
+    -- test of the gate sets this back to nil before require("jcore/main").
+    _G.JCORE_NO_WORLD_GATE = true
     return M
 end
 
@@ -644,8 +652,9 @@ local function run(list, ...)
 end
 
 --- Runs `n` frames (default 1): time advances, pending http completions
---- deliver, then every registered pre_tick, update and render callback runs
---- in that order, exactly as the loader would call them.
+--- deliver, then every registered pre_tick, update, render and (while
+--- M.window_pass) render_window callback runs in that order, exactly as the
+--- loader would call them.
 function M.frame(n)
     for _ = 1, n or 1 do
         M.frame_no = M.frame_no + 1
@@ -655,6 +664,7 @@ function M.frame(n)
         run(M.callbacks.pre_tick)
         run(M.callbacks.update)
         run(M.callbacks.render)
+        if M.window_pass then run(M.callbacks.render_window) end
         M.wheel = 0
     end
 end

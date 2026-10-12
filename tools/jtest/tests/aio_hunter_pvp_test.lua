@@ -11,9 +11,10 @@
 -- Feign Death meets a Polymorph in its last moment; a player attacking you
 -- while you shoot a mob becomes your target.
 --
--- At the end, the other hunter reaction a test of this kind holds: the AOE
--- melee weave's (1.7.6, ALPHA/TEST) move of the target from one mob to the
--- next for Serpent Sting (react/rules/hunter.lua).
+-- At the end, the other hunter reactions a test of this kind holds
+-- (react/rules/hunter.lua): Beast Mastery's move of the target to a mob still
+-- without its Serpent Sting (the AOE melee weave's, 1.7.6; 1.8.1), and
+-- Disengage when hit (1.8.1).
 
 if not jtest then package.path = "scripts/?.lua;" .. package.path end
 
@@ -259,6 +260,7 @@ local function bundle(opts)
     P.ctx.world = { client = function() return { forever = false, combat_log = true } end }
     package.loaded["jambix_aio/modules/pvphunter"] = nil
     P.pvphunter = require("jambix_aio/modules/pvphunter")(P)
+    P.ctx.react = require("jcore/services/react")({}).for_owner("jambix.aio", P.ctx)
     G.React = fresh("jambix_aio/modules/react/init")(P)
     P.react = G.React
 
@@ -588,17 +590,19 @@ T[#T + 1] = { "status: the class window's line says what it faces and what it la
 end }
 
 
--- --- the AOE melee weave's stings (1.7.6, ALPHA/TEST) ------------------------------
+-- --- Beast Mastery's stings (1.7.6 as the AOE melee weave's; 1.8.1) ---------------
 -- The user: "renew as many Serpent stings on Multiple target in combat with
 -- US!!! it can Swap through target automatically Aslong as its in combat with
--- us and Renew while we mvoe back in". Out of melee, once the target has its
--- sting, the target moves on to the next mob of the fight that needs one.
+-- us and Renew while we mvoe back in". Since 1.8.1 the rotation's spread
+-- stings every mob of the fight straight onto it; out of melee, once the
+-- target has its sting, a mob that has gone four seconds without one all the
+-- same becomes the target.
 
---- A fight with three mobs on the pet, out of melee, the weave running. The
---- stings are read through the rotation's helper: G.stings[guid] = seconds.
-local function aoe(G)
+--- A fight with three mobs on the pet, out of melee, Beast Mastery running.
+--- The stings are read through the rotation's helper: G.stings[guid] = seconds.
+local function bm_stings(G)
     G.settings.rot_hunter_pvp_alpha = false
-    G.class.aoe_running = function() return G.aoe ~= false end
+    G.class.weave_running = function() return G.weave ~= false end
     G.known["Serpent Sting"] = true
     G.stings = {}
     local h = G.P.rotation.helpers
@@ -618,68 +622,98 @@ local function aoe(G)
     return b, c
 end
 
-T[#T + 1] = { "AOE weave: the target stung, the target moves on to a mob of the fight without one", function()
+--- Four seconds of the rotation's own spread, then the reaction's turn.
+local function past_the_grace(G)
+    G.tick()
+    G.clock = G.clock + 4.1
+    G.tick()
+end
+
+T[#T + 1] = { "Beast Mastery stings: the rotation's spread first; after four seconds a mob still without one becomes the target", function()
     local G = bundle()
-    local b, c = aoe(G)
+    local b, c = bm_stings(G)
     G.stings[b.guid] = 12
     G.tick()
-    assert_eq(#G.switched, 1, "one switch")
+    assert_eq(#G.switched, 0, "at once: the rotation stings it straight on, your target kept")
+    G.clock = G.clock + 2
+    G.tick()
+    assert_eq(#G.switched, 0, "two seconds: still the spread's")
+    G.clock = G.clock + 2.1
+    G.tick()
+    assert_eq(#G.switched, 1, "four seconds without one: one switch")
     assert(G.switched[1] == c, "to the one with no sting")
 end }
 
-T[#T + 1] = { "AOE weave: the least sting left goes first -- none before one running out; the nearest of equals", function()
+T[#T + 1] = { "Beast Mastery stings: a mob stung meanwhile starts its wait again when its sting runs out", function()
     local G = bundle()
-    local b, c = aoe(G)
-    G.stings[b.guid], G.stings[c.guid] = 1.5, 0
+    local b, c = bm_stings(G)
+    G.stings[b.guid] = 12
     G.tick()
+    G.clock = G.clock + 3
+    G.stings[c.guid] = 12                             -- the spread got it
+    G.tick()
+    G.clock = G.clock + 2
+    G.stings[c.guid] = 0                              -- and it ran out again
+    G.tick()
+    assert_eq(#G.switched, 0, "a fresh wait, not the old one")
+    G.clock = G.clock + 4.1
+    G.tick()
+    assert(G.switched[1] == c, "then the switch")
+end }
+
+T[#T + 1] = { "Beast Mastery stings: the least sting left goes first -- none before one running out; the nearest of equals", function()
+    local G = bundle()
+    local b, c = bm_stings(G)
+    G.stings[b.guid], G.stings[c.guid] = 1.5, 0
+    past_the_grace(G)
     assert(G.switched[1] == c, "no sting before one running out")
 
     local H2 = bundle()
-    local b2, c2 = aoe(H2)
-    H2.tick()
+    local _, c2 = bm_stings(H2)
+    past_the_grace(H2)
     assert(H2.switched[1] == c2, "neither stung: the nearer (18 yd before 22)")
 
     local R = bundle()
-    local b3 = aoe(R)
+    local b3 = bm_stings(R)
     R.stings[b3.guid] = 1.5
     R.rows[3].engaged, R.rows[3].targeting_pet = false, false   -- the cat is not fighting us
-    R.tick()
+    past_the_grace(R)
     assert(R.switched[1] == b3, "running out: renewed")
 end }
 
-T[#T + 1] = { "AOE weave: nothing moves while the target still wants its own sting, in melee, or with the weave off", function()
+T[#T + 1] = { "Beast Mastery stings: nothing moves while the target still wants its own sting, in melee, in another profile, or with no mana", function()
     local G = bundle()
-    aoe(G)
+    bm_stings(G)
     G.stings[G.target.guid] = 0
-    G.tick()
+    past_the_grace(G)
     assert_eq(#G.switched, 0, "the target first: the rotation stings it")
 
     local M = bundle()
-    aoe(M)
+    bm_stings(M)
     M.distance, M.row.dist = 3, 3
-    M.tick()
+    past_the_grace(M)
     assert_eq(#M.switched, 0, "in melee: the burst's turn")
 
     local O = bundle()
-    aoe(O)
-    O.aoe = false
-    O.tick()
-    assert_eq(#O.switched, 0, "the weave off: nothing")
+    bm_stings(O)
+    O.weave = false
+    past_the_grace(O)
+    assert_eq(#O.switched, 0, "another profile than Beast Mastery: nothing")
 
     local L = bundle()
-    aoe(L)
+    bm_stings(L)
     L.power = 10
-    L.tick()
+    past_the_grace(L)
     assert_eq(#L.switched, 0, "a tenth of a bar: no sting is coming")
 end }
 
-T[#T + 1] = { "AOE weave: only mobs fighting you or the pet, in reach, outside the dead zone, not held, living for it", function()
+T[#T + 1] = { "Beast Mastery stings: only mobs fighting you or the pet, in reach, outside the dead zone, not held, living for it", function()
     local function only(setup, label)
         local G = bundle()
-        local b, c = aoe(G)
+        local b, c = bm_stings(G)
         G.stings[b.guid] = 12                         -- the bear is done: only the cat is asked about
         setup(G, G.rows[3], c)
-        G.tick()
+        past_the_grace(G)
         assert_eq(#G.switched, 0, label)
     end
     only(function(_, r) r.engaged, r.targeting_pet = false, false end, "not in the fight: left alone")
@@ -689,6 +723,63 @@ T[#T + 1] = { "AOE weave: only mobs fighting you or the pet, in reach, outside t
     only(function(G, _, c)
         G.P.combat.time_to_die = function(u) return u == c and 4 or 30 end
     end, "about to die: not worth a sting")
+end }
+
+-- --- Disengage when hit (1.8.1) ------------------------------------------------------
+-- The user: "add a button Turn it on if being attacked to disengage".
+-- Forever's Disengage is Classic's threat drop in melee range (its table's
+-- one effect, as Era's), so a mob hitting you is handed back to the pet.
+
+--- A mob of the fight hitting you in melee, the pet on it, Disengage known.
+local function hit_by_mob(G)
+    G.settings.rot_hunter_pvp_alpha = false
+    G.known["Disengage"] = true
+    local mob = unit(G, "Creature-0-1-2-3-4-9", { name = "Raptor" })
+    G.target, G.distance = mob, 3
+    G.row = G.row_for(mob, { dist = 3, targeting_me = true })
+    G.rows = { G.row }
+    G.pet_alive, G.pet_on = true, mob
+    return mob
+end
+
+T[#T + 1] = { "Disengage when hit: off by default -- a mob hitting you in melee gets nothing", function()
+    local G = bundle()
+    hit_by_mob(G)
+    G.run(1)
+    assert_eq(G.sent("Disengage"), 0, "the switch off: never")
+end }
+
+T[#T + 1] = { "Disengage when hit: on, a mob hitting you in melee that the pet fights goes back to it -- once a cooldown", function()
+    local G = bundle()
+    local mob = hit_by_mob(G)
+    G.settings.rot_hunter_disengage = true
+    G.tick()
+    assert_eq(G.sent("Disengage"), 1, "Disengage")
+    assert(G.casts[#G.casts].target == mob, "on the mob hitting you")
+    G.run(1)
+    assert_eq(G.sent("Disengage"), 1, "once, not every tick")
+end }
+
+T[#T + 1] = { "Disengage when hit: never with nobody to take the mob, at range, on a player, or not trained", function()
+    local function none(setup, label)
+        local G = bundle()
+        hit_by_mob(G)
+        G.settings.rot_hunter_disengage = true
+        setup(G)
+        G.run(0.5)
+        assert_eq(G.sent("Disengage"), 0, label)
+    end
+    none(function(G) G.pet_alive = false end, "no pet out, solo: the drop would leave it on you")
+    none(function(G)
+        G.pet_on = unit(G, "Creature-0-1-2-3-4-8", { name = "Other" })
+    end, "the pet on another mob: nothing to hand it back to")
+    none(function(G) G.row.dist, G.distance = 20, 20 end, "a mob at range: Disengage is melee")
+    none(function(G)
+        local p = unit(G, "Player-1-00000007", { name = "Rogue", player = true })
+        G.target, G.row = p, G.row_for(p, { dist = 3, targeting_me = true })
+        G.rows, G.pet_on = { G.row }, p
+    end, "a player: threat means nothing to one")
+    none(function(G) G.known["Disengage"] = nil end, "not trained")
 end }
 
 return T

@@ -489,11 +489,11 @@ return function(P, DATA)
     -- A live line under an option, from the module that knows (1.70.0).
     local NOTES = {
         assist = function() return P.assist and P.assist.status and P.assist.status() or "" end,
-        -- 1.7.6: the hunter's AOE melee weave (ALPHA/TEST).
-        hunter_aoe = function()
+        -- 1.8.1: Beast Mastery's melee weave (the AOE melee weave of 1.7.6).
+        hunter_weave = function()
             local rotation = P.rotation
             local class_module = rotation and rotation.active_class and rotation.active_class()
-            local fn = class_module and class_module.aoe_status
+            local fn = class_module and class_module.weave_status
             return type(fn) == "function" and fn() or ""
         end,
         -- 1.7.6: the PvP hunter (ALPHA/TEST).

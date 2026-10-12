@@ -21,7 +21,8 @@
 --   * The pet's mob turned on you, and Growl cannot bring it back (1.68.0):
 --     not ready within a second, or it went out at that mob and the mob
 --     stayed on you. Intimidation stuns it and hands the pet a large amount
---     of threat. Only for the mob the pet is on, within the pet's reach.
+--     of threat. Only for the mob the pet is on, within the pet's reach, and
+--     (1.8.1) only once it is on you and Disengage cannot hand it back.
 --
 --   * An add hitting you in melee that is not the target (1.58.0). Shots
 --     cannot land on it -- it is inside the dead zone -- and every swing it
@@ -30,10 +31,15 @@
 --     you: the plan says so), Wing Clip it; the kite then walks you out of
 --     its reach while the shots stay on the target.
 --
---   * The AOE melee weave (1.7.6, ALPHA/TEST): out of melee, once the
---     target carries its Serpent Sting, the target moves on to the next mob
---     fighting you or your pet whose sting is missing or running out, so the
---     rotation renews them all (classes/hunter.lua, the aoe_weave profile).
+--   * Beast Mastery's stings (1.7.6 as the AOE melee weave's; 1.8.1): out of
+--     melee, once the target carries its Serpent Sting, a mob of the fight
+--     that has gone four seconds without one all the same becomes the target,
+--     so the rotation stings it (classes/hunter.lua; the rotation's spread
+--     stings the rest straight onto them, your target kept).
+--
+--   * Disengage when hit (1.8.1, the class switch "Disengage when a mob hits
+--     you"): a mob hitting you in melee that the pet is fighting -- or, in a
+--     group, the tank -- is handed back with Disengage, a threat drop.
 --
 -- Hunter's Mark is one per hunter: marking a second mob takes it off the
 -- first. It is registered as a one-per-caster debuff, which is what lets the
@@ -54,6 +60,34 @@ return function(R, P, lib)
     R.unique("Hunter's Mark")
 
     local function H() return (P.rotation and P.rotation.helpers) or {} end
+
+    -- DISENGAGE FIRST, INTIMIDATION AFTER (1.8.1). The user: Intimidation
+    -- "should be used in a Burst, Interrupt (stun) or when I really need a mob
+    -- off me and Disengage is not available". Disengage is available with its
+    -- switch on (classes/hunter.lua, `disengage`), trained, ready, and the mob
+    -- in its melee reach.
+    local DISENGAGE = "Disengage"
+    local MELEE = 5                 -- yards, without the rotation's hitbox helper
+
+    local function disengage_on() return opt("rot_hunter_disengage", false) == true end
+
+    local function disengage_reaches(unit, dist)
+        if not unit or not disengage_on() then return false end
+        if not (book.known(DISENGAGE) and book.ready(DISENGAGE)) then return false end
+        local h = H()
+        return (h.in_melee and h.in_melee(unit, dist)) or (dist or 99) <= MELEE
+    end
+
+    -- A Disengage just pressed is still working: the mob turns back to the
+    -- pet a moment after the threat drops. Its cooldown makes it "not
+    -- available" at once, and without this Intimidation followed it on the
+    -- next tick, both spent on one mob.
+    local DISENGAGE_SETTLE = 2      -- seconds
+    local disengaged_at = -math.huge
+
+    local function disengage_settling(now)
+        return (now - disengaged_at) < DISENGAGE_SETTLE
+    end
     -- Our slows and roots, any of which keeps a mob from following.
     local HELD = { "Wing Clip", "Improved Wing Clip", "Concussive Shot", "Entrapment", "Frost Trap Aura" }
     local function held(unit)
@@ -205,7 +239,11 @@ return function(R, P, lib)
                 if S.list[i].held then e = S.list[i] break end
             end
             if not e or e.reach ~= true then return end
-            if e.kind ~= "on you" and not (e.kind == "turning" and (e.threat or 0) >= 95) then return end
+            -- Only a mob actually on you (1.8.1: "when I really need a mob off
+            -- me"), not one whose threat says it is about to turn; and not
+            -- while Disengage can hand it back -- its "Disengage when hit".
+            if e.kind ~= "on you" then return end
+            if disengage_reaches(e.obj, e.row and e.row.dist) or disengage_settling(W.now) then return end
             -- Growl first, when it is about to be ready: unless it already went
             -- out at this mob and the mob stayed on you.
             local last = S.last
@@ -219,12 +257,7 @@ return function(R, P, lib)
             c.e, c.growled = e, growled
         end,
         score = function(W, c)
-            local e = c.e
-            if e.kind == "on you" then
-                c:add(10, "it left the pet for you")
-            else
-                c:add(6, string.format("your threat %d%%: it is about to leave the pet", floor(e.threat or 0)))
-            end
+            c:add(10, "it left the pet for you")
             if c.growled then c:add(6, "a Growl did not bring it back") end
             if W.player.hp < 0.5 then c:add(6, string.format("you are at %d%%", floor(W.player.hp * 100 + 0.5))) end
         end,
@@ -265,25 +298,33 @@ return function(R, P, lib)
         end,
     })
 
-    -- THE AOE MELEE WEAVE'S STINGS (1.7.6, ALPHA/TEST). The user: "renew as
-    -- many Serpent stings on Multiple target in combat with US!!! it can Swap
-    -- through target automatically Aslong as its in combat with us and Renew
-    -- while we mvoe back in". The rotation stings the target; this moves the
-    -- target on once the sting is up there. Only out of melee (the way out
-    -- and the way back in), only a mob fighting you or your pet, in a shot's
-    -- reach and outside the dead zone, not held by control that damage
-    -- breaks, and with time to live for the sting. The one with the least
-    -- sting left goes first, the nearest of equals.
+    -- BEAST MASTERY'S STINGS (1.7.6 as the AOE melee weave's, ALPHA/TEST;
+    -- 1.8.1). The user: "renew as many Serpent stings on Multiple target in
+    -- combat with US!!! it can Swap through target automatically Aslong as
+    -- its in combat with us and Renew while we mvoe back in". The rotation
+    -- stings the target, and since 1.8.1 its spread stings every other mob
+    -- of the fight straight onto it, your target kept -- so the pet assisting
+    -- you stays on its mob and Auto Shot keeps its target. This moves the
+    -- target only to a mob that has gone FOUR SECONDS needing a sting all
+    -- the same (the spread off, or the client refusing the sting there):
+    -- the spread puts one on a mob within a global or two. Only while Beast
+    -- Mastery runs, only out of melee (the way out and the way back in),
+    -- only a mob fighting you or your pet, in a shot's reach and outside the
+    -- dead zone, not held by control that damage breaks, and with time to
+    -- live for the sting. The one with the least sting left goes first, the
+    -- nearest of equals.
     local STING = "Serpent Sting"
     local RENEW_AT = 2              -- seconds of sting left: renewed (H.dot_worth_it's line)
     local STING_REACH = 35          -- yards
     local MIN_RANGE = 8             -- the dead zone, edge to edge
     local STING_LIVES = 8           -- seconds a mob has to live for a sting (the fillers' line)
     local STING_MANA = 0.15         -- under this the rotation stings nothing
+    local SPREAD_GRACE = 4          -- seconds the rotation's spread has to sting a mob first
+    local needs_since = {}          -- guid -> when it was first seen needing a sting
 
-    local function aoe_weave_running()
+    local function weave_running()
         local class_module = P.rotation and P.rotation.active_class and P.rotation.active_class()
-        local fn = class_module and class_module.aoe_running
+        local fn = class_module and class_module.weave_running
         return type(fn) == "function" and fn() == true
     end
 
@@ -293,13 +334,13 @@ return function(R, P, lib)
     end
 
     R.add_rule({
-        name = "AOE weave: sting the next mob",
+        name = "Beast Mastery: sting the next mob",
         category = "utility", priority = 64, kind = "set_target", lane = "fast",
         needs = { "combat", "target" },
         every = 0.25,
         retry = { hold = 1.5 },
         propose = function(W, offer)
-            if not aoe_weave_running() then return end
+            if not weave_running() then return end
             if not (book.known(STING) and book.ready(STING)) then return end
             if (W.player.power_pct or 0) < STING_MANA then return end
             local h = H()
@@ -312,6 +353,7 @@ return function(R, P, lib)
 
             local list, n = W.enemies.list or {}, W.enemies.count or 0
             local best, best_left = nil, math.huge
+            local seen = {}
             for i = 1, n do
                 local r = list[i]
                 if r and r.obj and r.guid ~= tg.guid and not r.dead and (r.hp or 1) > 0
@@ -324,23 +366,96 @@ return function(R, P, lib)
                     if (edge or 0) > MIN_RANGE and left <= RENEW_AT then
                         local ttd = P.combat and P.combat.time_to_die and P.combat.time_to_die(r.obj) or nil
                         local lives = type(ttd) ~= "number" or ttd <= 0 or ttd >= STING_LIVES
-                        if lives and (left < best_left
-                            or (left == best_left and (r.dist or math.huge) < (best.dist or math.huge))) then
-                            best, best_left = r, left
+                        if lives and r.guid then
+                            seen[r.guid] = true
+                            needs_since[r.guid] = needs_since[r.guid] or W.now
+                            local waited = (W.now - needs_since[r.guid]) >= SPREAD_GRACE
+                            if waited and (left < best_left
+                                or (left == best_left and (r.dist or math.huge) < (best.dist or math.huge))) then
+                                best, best_left = r, left
+                            end
                         end
                     end
                 end
+            end
+            -- A mob stung since, gone, or out of reach starts its wait again.
+            for guid in pairs(needs_since) do
+                if not seen[guid] then needs_since[guid] = nil end
             end
             if not best then return end
             local who = (P.units and P.units.name and P.units.name(best.obj)) or "the next mob"
             local c = offer({
                 name = "Target " .. who, kind = "set_target", target = best.obj, target_kind = "enemy",
-                event_key = "aoe_sting:" .. tostring(best.guid), handled_for = 3,
+                event_key = "bm_sting:" .. tostring(best.guid), handled_for = 3,
                 why = best_left > 0 and string.format("%s: its sting runs out in %.0fs", who, best_left)
                     or (who .. " has no sting"),
             })
             c.who = who
         end,
         score = function(W, c) c:add(6, c.why or "the next mob for a sting") end,
+    })
+
+    -- DISENGAGE WHEN HIT (1.8.1). The user: "add a button Turn it on if
+    -- being attacked to disengage". Forever's Disengage is Classic's: the
+    -- client's own table gives it one effect, a threat drop (SpellEffect 63,
+    -- as Era's -405 at rank 3), melee range, a five-second cooldown -- not
+    -- the later leap. So "being attacked" is a mob hitting you in melee, and
+    -- what Disengage does about it is hand that mob back to whoever else is
+    -- on its threat: the pet fighting it, or a group's tank. With nobody
+    -- else on it the drop leaves the mob on you and wastes the global, so
+    -- then it waits. Players are left alone (threat means nothing to them).
+    -- Your target first, else the nearest. The switch (classes/hunter.lua,
+    -- `disengage`, off) is asked here and, through key_gated, by every other
+    -- path that might press Disengage.
+    local function is_player(unit)
+        local ok, yes = pcall(unit.is_player, unit)
+        return ok and yes == true
+    end
+
+    --- Is the pet fighting this mob? The picture's pet target: the client's
+    --- answer, else (Forever) the mob it was last sent at (react/world.lua).
+    local function pet_fights(W, guid)
+        return W.pet.alive == true and guid ~= nil and W.pet.target_guid == guid
+    end
+
+    R.add_rule({
+        name = "Disengage when hit",
+        category = "threat", priority = 76,
+        needs = { "combat" },
+        every = 0.1,
+        retry = { hold = 2 },
+        propose = function(W, offer)
+            if not disengage_on() then return end
+            if not (book.known(DISENGAGE) and book.ready(DISENGAGE)) then return end
+            local tank = W.group.in_group and W.group.tank_alive and not W.player.is_tank
+            local h = H()
+            local list, n = W.enemies.list or {}, W.enemies.count or 0
+            local best = nil
+            for i = 1, n do
+                local r = list[i]
+                if r and r.obj and r.targeting_me and not r.dead and (r.hp or 1) > 0
+                    and not r.control and not is_player(r.obj) then
+                    local close = (h.in_melee and h.in_melee(r.obj, r.dist)) or (r.dist or 99) <= MELEE
+                    if close and (tank or pet_fights(W, r.guid)) then
+                        if r.guid == W.target.guid then best = r break end
+                        if not best or (r.dist or 99) < (best.dist or 99) then best = r end
+                    end
+                end
+            end
+            if not best then return end
+            local who = (P.units and P.units.name and P.units.name(best.obj)) or "the mob"
+            local c = offer({
+                name = DISENGAGE, target = best.obj, target_kind = "enemy",
+                event_key = "disengage:" .. tostring(best.guid), handled_for = 5,
+                why = string.format("%s is hitting you: back to the %s", who, tank and "tank" or "pet"),
+            })
+            c.tank = tank
+        end,
+        score = function(W, c)
+            c:add(10, c.tank and "the tank holds it, not you" or "the pet holds it, not you")
+            if W.player.hp < 0.6 then c:add(6, string.format("you are at %d%%", floor(W.player.hp * 100 + 0.5))) end
+        end,
+        -- Intimidation's hand-back waits while it works (disengage_settling).
+        on_execute = function(W) disengaged_at = W.now end,
     })
 end

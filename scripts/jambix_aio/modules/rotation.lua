@@ -406,6 +406,10 @@ return function(P)
     --- unless I ask" has to mean never -- an ability that is held back in the
     --- rotation and then fired automatically while breaking contact is not
     --- held back.
+    ---
+    --- A class may gate one on a switch instead of a key (1.8.1, the
+    --- hunter's Disengage): a function there, asked, and only a plain true
+    --- lets it through.
     ---@param name string
     ---@return boolean
     function H.key_allows(name)
@@ -415,6 +419,10 @@ return function(P)
 
         local key = gated[name]
         if not key then return true end
+        if type(key) == "function" then
+            local ok, on = pcall(key)
+            return ok and on == true
+        end
 
         return P.key_armed ~= nil and P.key_armed(key)
     end
@@ -2047,6 +2055,22 @@ return function(P)
     -- --- the priority walk --------------------------------------------------
 
     local last_choice, last_fast
+    -- The tick counter the shared snapshot is keyed on, and the tick the
+    -- priority walk last ran in (1.8.0; the reactions' after-job asks). The
+    -- tick is counted by a job of its own, ahead of everything; without a
+    -- scheduler (a hand-built bundle in the tests) the clock stands in.
+    local epoch, walk_epoch = 0, -1
+    local counted = false            -- true once the counting job has run
+    if ctx and ctx.tick then
+        ctx.tick(function()
+            epoch = epoch + 1
+            counted = true
+        end, { priority = -990 })
+    end
+    local function tick_key()
+        if counted then return epoch end
+        return core.time()
+    end
 
     --- Resolves the unit a rule acts on.
     ---
@@ -2093,7 +2117,9 @@ return function(P)
     local function pet_target_guid()
         local pet = P.pet
         if not pet then return nil end
-        local held = pet.pet_target()
+        -- The pet module's reading (1.8.1): the client's answer, else the mob
+        -- it was sent at, for a client that does not say (Forever).
+        local held = (pet.fighting and pet.fighting()) or pet.pet_target()
         if not held then return nil end
         local ok, guid = pcall(held.get_guid, held)
         return ok and guid or nil
@@ -2149,8 +2175,20 @@ return function(P)
                     if not (P.pet and P.pet.alive()) then return "no pet" end
                 elseif need == "pet_on_target" then
                     if not target then return "no target" end
+                    -- CAST ON YOURSELF (1.8.1): Intimidation is, and lands
+                    -- on whatever the pet hits next. It was compared with
+                    -- YOUR guid, which the pet never attacks, so it was
+                    -- refused every time, by the rotation and by every
+                    -- reaction. On yourself the need is the pet on a mob;
+                    -- which mob is the rule's to say.
                     local ok, guid = pcall(target.get_guid, target)
-                    if not ok or not guid or pet_target_guid() ~= guid then return "pet not on target" end
+                    local ok_p, mine = false, nil
+                    if s.player then ok_p, mine = pcall(s.player.get_guid, s.player) end
+                    if target == s.player or (ok and ok_p and guid ~= nil and guid == mine) then
+                        if pet_target_guid() == nil then return "pet not on a mob" end
+                    elseif not ok or not guid or pet_target_guid() ~= guid then
+                        return "pet not on target"
+                    end
                 elseif need == "out_of_combat" then
                     -- Forever lets a hunter lay traps in combat (Icy Veins'
                     -- class overview and Mobalytics' levelling guide, 1.80.0);
@@ -2437,7 +2475,7 @@ return function(P)
         end
         if not (rule.fast or swing) and M.cast_gate_busy() then parts[#parts + 1] = "a cast is in flight" end
         local react = P.react
-        if react and react.gate and react.active and react.active() then
+        if react and react.gate and react.observing and react.observing() then
             local why = react.gate(name, target)
             if why then parts[#parts + 1] = "memory: " .. why end
         end
@@ -2462,7 +2500,7 @@ return function(P)
                     parts[#parts + 1] = "rule raised: " .. tostring(passes)
                 elseif not passes then
                     parts[#parts + 1] = "rule says no"
-                elseif react and react.adapt and react.active and react.active() and not rule.fixed then
+                elseif react and react.adapt and react.observing and react.observing() and not rule.fixed then
                     -- The rule says yes and the fight says wait (the pet's
                     -- threat, a cast on the move): the walk drops it, so say so.
                     local ok_a, _, _, refuse = pcall(react.adapt, rule, row, s, { target = target })
@@ -2570,9 +2608,23 @@ return function(P)
                     s.thp = units.health_fraction(other)
                     s.ttd = combat.time_to_die(other)
                     local ok2, passes2 = pcall(rule[2], s)
+                    -- ONE IT CAN REACH (1.8.1). The first mob the predicate
+                    -- took used to be the answer, and press() then found it
+                    -- out of reach -- an add in melee inside a hunter's dead
+                    -- zone, out of range, out of sight -- and the spell went
+                    -- nowhere, while the mobs it could reach waited. The
+                    -- user: "the Rotation doesn't automatically Look for All
+                    -- targets in combat with us and drop a Sting on them".
+                    -- So the next is asked. usable_on reads the snapshot's
+                    -- distance for the real target only: it is put back.
                     if ok2 and passes2 then
-                        ok, passes, target = true, true, other
-                        break
+                        s.target = restore
+                        local reach = rule.prefix or usable_on(rule[1], c.row, s, other)
+                        s.target = other
+                        if reach then
+                            ok, passes, target = true, true, other
+                            break
+                        end
                     end
                 end
             end
@@ -2655,6 +2707,7 @@ return function(P)
     local function run_rules(profile, s)
         reap_pending()
         reap_landings()
+        walk_epoch = tick_key()
 
         local chose_gcd, chose_fast = false, false
         last_choice, last_fast = nil, nil
@@ -2676,12 +2729,13 @@ return function(P)
             last_choice = looting_first() and "(holding fire: looting first)" or "(holding fire: target not engaged)"
         end
 
-        -- THE REACTION ENGINE (modules/react): its memory gates a press (a
-        -- spell a reaction pressed a moment ago, one the client keeps
-        -- refusing, a one-per-caster debuff on a flapping target), and its
-        -- picture of the fight scores the candidates.
+        -- THE PICTURE OF THE FIGHT (modules/react, built in its own pass
+        -- before this one, 1.8.0): its memory gates a press (a spell a
+        -- reaction pressed a moment ago, a one-per-caster debuff on a
+        -- flapping target), and the fight scores the candidates. Read only
+        -- while it is this tick's; the reactions themselves may be off.
         local react = P.react
-        local live = react ~= nil and react.active ~= nil and react.active()
+        local live = react ~= nil and react.observing ~= nil and react.observing()
         local gate = (live and react.gate) or nil
         local adapt = (live and react.adapt) or nil
 
@@ -2973,7 +3027,7 @@ return function(P)
     candidates = function(profile, s)
         local cands, named = {}, {}
         local react = P.react
-        local adapt = (react ~= nil and react.adapt ~= nil and react.active ~= nil and react.active())
+        local adapt = (react ~= nil and react.adapt ~= nil and react.observing ~= nil and react.observing())
             and react.adapt or nil
         for i = 1, #profile.rules do
             local rule = profile.rules[i]
@@ -3605,6 +3659,64 @@ return function(P)
 
     local warned_unsupported = false
 
+    -- ONE SNAPSHOT A TICK, SHARED (1.8.0). The reactions run in a job of
+    -- their own just before this module's (modules/react/init.lua, priority
+    -- 59 against 60) and read the same snapshot: whichever asks first builds
+    -- it, the other reuses it. S is one table, so the tick's re-target below
+    -- updates what both read. Nil when there is nothing to run: no rotation
+    -- for the class, no profile, dead, mounted.
+    local snap_epoch, snap_class, snap_profile, snap_s = -1, nil, nil, nil
+
+    ---@return table|nil class_module
+    ---@return table|nil profile
+    ---@return table|nil s
+    function M.snapshot()
+        local key = tick_key()
+        if snap_epoch == key then return snap_class, snap_profile, snap_s end
+        snap_epoch = key
+        snap_class, snap_profile, snap_s = nil, nil, nil
+
+        local class_module = M.active_class()
+        if not class_module then
+            -- Said once, not every frame. This is the whole point of the fix:
+            -- an unsupported class does nothing and SAYS so, instead of
+            -- silently running somebody else's priority list.
+            if not warned_unsupported then
+                warned_unsupported = true
+                local name = M.detect_class()
+                log.fmt("warn", "no rotation for %s; the rotation is idle",
+                    name or "an unknown class")
+            end
+            return nil
+        end
+
+        -- Profile FIRST: it decides which resource the snapshot reads, and a
+        -- druid reads mana, rage or energy depending on which one is active.
+        active_key = M.active_profile_key(class_module)
+        local profile = class_module.profiles[active_key]
+        if not profile then return nil end
+
+        local s = build_situation(class_module, profile)
+        if not s then return nil end
+        if s.player:is_dead() or s.player:is_mounted() then return nil end
+
+        -- Decided once per tick, before anything that could attack. Re-done
+        -- by the tick if the target changes.
+        s.hold_fire = not s.in_combat and not M.may_engage_unit(s.target)
+
+        snap_class, snap_profile, snap_s = class_module, profile, s
+        return class_module, profile, s
+    end
+
+    --- Did the priority walk run this tick? The reactions' after-job asks,
+    --- so the rotation's pick is read only when there was one.
+    ---@return boolean
+    function M.walked_this_tick() return walk_epoch == tick_key() end
+
+    --- The walk's last GCD choice: a spell name, or a "(...)" state.
+    ---@return string|nil
+    function M.last_choice() return last_choice end
+
     --- In a form for getting about (the class module's `travel_forms`), and
     --- out of combat or moving: the rotation leaves it be (1.7.5).
     local function travelling(class_module, s)
@@ -3624,59 +3736,25 @@ return function(P)
         if not P.opt("rot_enabled", false) then return end
         if not P.rotation_active() then return end
 
-        local class_module = M.active_class()
-        if not class_module then
-            -- Said once, not every frame. This is the whole point of the fix:
-            -- an unsupported class does nothing and SAYS so, instead of
-            -- silently running somebody else's priority list.
-            if not warned_unsupported then
-                warned_unsupported = true
-                local name = M.detect_class()
-                log.fmt("warn", "no rotation for %s; the rotation is idle",
-                    name or "an unknown class")
-            end
-            return
-        end
-
-        -- Profile FIRST: it decides which resource the snapshot reads, and a
-        -- druid reads mana, rage or energy depending on which one is active.
-        active_key = M.active_profile_key(class_module)
-        local profile = class_module.profiles[active_key]
-        if not profile then return end
-
-        local s = build_situation(class_module, profile)
+        local class_module, profile, s = M.snapshot()
         if not s then return end
-        if s.player:is_dead() or s.player:is_mounted() then return end
 
         -- The spell window's projection runs after this tick in the same job
         -- and reads this snapshot rather than building a second one. S is
         -- one table, so a re-target below updates what it will read.
         tick_s, tick_profile = s, profile
 
-        -- Decided once per tick, before anything that could attack. Re-done
-        -- below if the target changes.
-        s.hold_fire = not s.in_combat and not M.may_engage_unit(s.target)
-
-        -- THE REACTION ENGINE GOES FIRST (modules/react). It replaces the
-        -- fixed sequence below -- defensives, racials, the hardcore bail-out,
-        -- breaking contact, dispels, interrupts -- with one scored decision:
-        -- everything urgent proposes, the most important wins, and what was
-        -- just done is remembered. It is not optional (1.32.0); only if it
-        -- raises does the old sequence run, for that tick, so a bug in it can
-        -- never leave a character without its defensives.
+        -- THE REACTIONS COME FIRST, APART (1.8.0; modules/react on JCore's
+        -- framework). They ran in their own job just before this one, on
+        -- this same snapshot, and left a verdict: a reaction took the global
+        -- cooldown, or something says stop attacking (a hardcore bail-out,
+        -- easing off threat), and the rotation gives way. With them switched
+        -- off on the Reactions page there is no verdict, and the fixed
+        -- sequence below -- defensives, racials, the hardcore bail-out,
+        -- breaking contact, dispels, interrupts -- is the rotation's own.
         local react = P.react
-        local reacting = react ~= nil and react.tick ~= nil
-        local verdict = nil
-        if reacting then
-            local ok, result = pcall(react.tick, class_module, profile, s)
-            if ok and type(result) == "table" then
-                verdict = result
-            else
-                reacting = false
-                log.once("warn", "react_tick_failed",
-                    "reaction engine failed, using the fixed sequence: " .. tostring(result))
-            end
-        end
+        local verdict = (react ~= nil and react.verdict ~= nil) and react.verdict() or nil
+        local reacting = verdict ~= nil
 
         if not reacting then
             defensives(class_module, s)
@@ -3769,10 +3847,9 @@ return function(P)
         end
 
         run_rules(profile, s)
-
-        -- The rotation's own pick, for the reaction readout, and the
-        -- low-priority reaction when the walk had nothing to press.
-        if reacting then react.after_rotation(last_choice, M.last_candidates()) end
+        -- The reactions' after-job reads the walk's pick (last_choice,
+        -- last_candidates) for the readout and the deferred reaction; the
+        -- rotation does not call in there.
     end
 
     -- --- diagnostics --------------------------------------------------------

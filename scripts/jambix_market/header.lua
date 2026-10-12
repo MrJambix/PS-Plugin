@@ -7,7 +7,7 @@
 local plugin = {}
 
 plugin["name"] = "Jambix Market"
-plugin["version"] = "1.2.2"
+plugin["version"] = "1.2.5"
 plugin["author"] = "jambix"
 
 -- Boolean. The loader type-checks this key and reports a function as though

@@ -362,6 +362,25 @@ return function(rt)
             release = function() return walkmap.release(id) end,
         }, { __index = walkmap })
 
+        -- --- reactions ------------------------------------------------------
+        --
+        -- The reaction framework (1.8.0, services/react.lua): rules as data,
+        -- scored and selected per lane, with a memory of what was just done
+        -- and a journal of why. One engine per plugin, bound to this handle:
+        -- it casts, subscribes and logs as this plugin, and its rules go
+        -- with the plugin on unregister. Built on first access, so a plugin
+        -- that never reacts pays nothing.
+
+        local react_engine = nil
+        setmetatable(ctx, { __index = function(_, key)
+            if key ~= "react" then return nil end
+            if not react_engine then
+                react_engine = rt.react.for_owner(id, ctx)
+                rawset(ctx, "react", react_engine)
+            end
+            return react_engine
+        end })
+
         -- --- persistence ----------------------------------------------------
 
         --- A named table that loads itself and saves itself.
@@ -498,6 +517,17 @@ return function(rt)
             events.once("jcore.ready", fn, { owner = "jcore.on_ready" })
         end
 
+        --- False until a character has been in the world since JCore loaded
+        --- (1.8.1). Loaded at the character select screen, JCore runs no
+        --- pass until then, and a plugin should not start either: the game
+        --- has not loaded the tables a spell, map or zone name is read from,
+        --- and asking one there kills the client. jcore.world.open fires as
+        --- it turns true; it never turns false again.
+        ---@return boolean
+        function public.in_world()
+            return rt.in_world == nil or rt.in_world()
+        end
+
         -- Raw services, for the rare consumer that wants them without a
         -- context. Using them means no owner tagging and no lifecycle, so
         -- prefer register().
@@ -513,6 +543,7 @@ return function(rt)
         public.group     = rt.group
         public.inventory = rt.inventory
         public.geometry  = rt.geometry
+        public.sightguard = rt.sightguard
         public.missiles  = rt.missiles
         public.addons    = rt.addons
         public.input     = rt.input
@@ -528,9 +559,12 @@ return function(rt)
         public.loot      = rt.loot
         public.power     = rt.power
         public.dump      = rt.dump
+        public.faults    = rt.faults
+        public.faultlog  = rt.faultlog
         public.questdb   = rt.questdb
         public.telegraphs = rt.telegraphs
         public.gamelua   = rt.gamelua
+        public.react     = rt.react
         public.ui        = rt.ui
         public.image     = rt.image
         public.events    = events
@@ -567,7 +601,9 @@ return function(rt)
                 group     = rt.group.stats(),
                 inventory = rt.inventory.stats(),
                 missiles  = rt.missiles.stats(),
+                sightguard = rt.sightguard and rt.sightguard.stats() or nil,
                 telegraphs = rt.telegraphs and rt.telegraphs.stats() or nil,
+                react     = rt.react and rt.react.stats() or nil,
                 addons    = rt.addons.stats(),
                 input     = rt.input.stats(),
                 nav       = rt.nav.stats(),

@@ -711,4 +711,44 @@ T[#T + 1] = { "druid: Bear Form before Dire Bear Form is trained; Shifting Power
     assert_eq(W.ask("restoration", "Wild Growth", { ally = ally, ally_hp = 0.6 }), true, "three hurt: Wild Growth")
 end }
 
+T[#T + 1] = { "druid: a caster before Bear Form, a bear before Cat Form, then the cat (1.8.1)", function()
+    local W = class("jambix_aio/modules/classes/druid", true)
+    local points = { 0, 0, 0 }
+    local t = { points = function() return points[1], points[2], points[3] end }
+    -- The live level 1: Wrath and Healing Touch, nothing else.
+    W.ids = { ["Wrath"] = 5176, ["Healing Touch"] = 5185 }
+    assert_eq(W.class.suggest(t, false), "leveling_caster", "level 1: the caster")
+    assert(W.ask("leveling_caster", "Wrath"), "standing still: Wrath")
+    W.moving = true
+    assert_eq(W.ask("leveling_caster", "Wrath"), false, "no cast on the move")
+    assert_eq(W.ask("leveling_caster", "Healing Touch", { hp = 0.3 }), false, "no heal cast on the move either")
+    W.moving = false
+    assert_eq(W.ask("leveling_caster", "Healing Touch", { hp = 0.9 }), false, "healthy: no heal")
+    assert_eq(W.ask("leveling_caster", "Healing Touch", { hp = 0.3 }), true, "30%: Healing Touch on you")
+    assert_eq(W.ask("leveling_caster", "Healing Touch", { hp = 0.3, in_combat = false }), false,
+        "out of a fight it is the rest's")
+    assert_eq(W.ask("leveling_caster", "Rejuvenation", { hp = 0.6 }), true, "60%: Rejuvenation")
+    W.auras["Rejuvenation"] = true
+    assert_eq(W.ask("leveling_caster", "Rejuvenation", { hp = 0.6 }), false, "it is still ticking")
+    W.auras = {}
+    assert(at(W, "leveling_caster", "Healing Touch") < at(W, "leveling_caster", "Wrath"), "heals before Wrath")
+    assert_eq(W.class.profiles.leveling_caster.power, "MANA", "a caster reads mana")
+    assert_eq(W.class.profiles.leveling_caster.form, nil, "and holds no form")
+    -- 10: Bear Form, and the bear's rules.
+    W.ids["Bear Form"] = 5487
+    assert_eq(W.class.suggest(t, false), "leveling_bear", "level 10: the bear")
+    assert_eq(W.class.profiles.leveling_bear.power, "RAGE", "a bear reads rage")
+    assert(W.rule("leveling_bear", "Maul") and W.rule("leveling_bear", "Bear Form"), "the bear's rules")
+    -- 20: Cat Form.
+    W.ids["Cat Form"] = 768
+    assert_eq(W.class.suggest(t, false), "leveling", "level 20: the cat")
+    points = { 0, 21, 0 }
+    assert_eq(W.class.suggest(t, true), "feral_bear", "21 points and tanking: the tank, as before")
+    for _, key in ipairs({ "leveling_caster", "leveling_bear" }) do
+        local listed = false
+        for _, k in ipairs(W.class.profile_order) do listed = listed or k == key end
+        assert(listed, key .. " is in profile_order")
+    end
+end }
+
 return T

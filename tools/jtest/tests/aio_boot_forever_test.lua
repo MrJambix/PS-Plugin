@@ -99,7 +99,7 @@ T[#T + 1] = { "Forever: the recording holds the plugin's calls, its object metho
     assert(text and #text > 0, "Save now wrote the file")
     local data = require("jcore/lib/json").decode(text)
     assert_eq(data.client.version, "Forever", "client")
-    assert_eq(data.client.jcore, "1.7.9", "jcore version")
+    assert_eq(data.client.jcore, "1.8.1", "jcore version")
     assert_eq(data.format, 2, "one entry per function")
     local get_player = data.functions["object_manager.get_local_player"]
     assert(get_player and get_player.calls > 0, "the player lookup is recorded")
@@ -173,6 +173,11 @@ end }
 
 T[#T + 1] = { "Forever: switching the recorder off puts the originals back and the plugin runs on", function()
     b.mock.menu:set(PAGE, "record", false)
+    -- Jambix Debug 1.1.0: the Faults page's native watch keeps the wrappers
+    -- in with recording off; switching the watch off too puts them back.
+    assert(core.object_manager.get_local_player ~= real_player, "the watch keeps the wrapper")
+    b.mock.frame(5)
+    b.mock.menu:set("Jambix Debug/Faults", "watch", false)
     assert_eq(core.object_manager.get_local_player, real_player, "original restored")
     b.mock.frame(60)
     assert_eq(b.errors(), "", "core.log_error after the recorder stopped")

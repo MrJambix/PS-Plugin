@@ -6,7 +6,8 @@ Classic Era, Hardcore, Season of Discovery, TBC, Wrath, Mists and Retail. The
 rotations and the automation run on the Vanilla client (Era, Hardcore and
 Season of Discovery) and on Forever; see [Clients](#clients).
 
-**Requires:** JCore 1.0.0 or newer, loaded from `scripts/jcore/`.
+**Requires:** JCore 1.8.0 or newer (the reaction framework, `ctx.react`),
+loaded from `scripts/jcore/`. 1.7.8 ships with JCore 1.8.1.
 **Optional:** Questie, RestedXP Guides, Sentinel Navigation (for following the
 guide, 1.7.4). Each feature disappears when its addon is absent; none is
 required for anything else to work.
@@ -14,6 +15,11 @@ required for anything else to work.
 **Version numbers.** 1.7.4 follows local 1.89.0: from there the AIO's version
 follows project-sylvanas.net's numbering for it (plugin 1129, where the last
 upload reads 1.7.3). Sections tagged 1.89.0 and below keep their local numbers.
+1.8.0 (2026-10-11) puts the reactions apart from the rotation, on JCore's
+reaction framework; see *Reactions*. **1.8.0 and 1.8.1 were working labels,
+never uploaded: that work is released as 1.7.8** (2026-10-12). Where this README or the code's comments tag
+something 1.8.0 or 1.8.1 about the AIO, it is in 1.7.8; JCore's own 1.8.0
+and 1.8.1 are JCore's versions and stand.
 
 ---
 
@@ -689,15 +695,14 @@ yard less for each level you are above it and a yard more for each it is
 above you, 5 to 45 yd (Classic's rule; *Aggro range at your own level* is a
 setting, as Forever's may differ). It shows within 12 yd of its edge, fills
 as you close in and turns from amber to red; full and red, you are inside it.
-Neutral mobs are never ringed. An elite, rare or boss walking toward you gets
+Neutral mobs are never ringed, nor are players or their pets and minions
+(1.8.1): they notice nobody from a distance. An elite, rare or boss walking toward you gets
 a curtain (gold, silver, red); a rare a pulse the first time it is seen.
 
-**PvP marks and your reactions in the world (1.87.0, Reactions page).** A red
-curtain on the enemy player in reach lowest on health, a green one on players
-seen healing, your crowd control on them as rings emptying, and their PvP
-trinket (grey filling while down, gold when ready). Under *In the world*: a
-ring filling toward a reaction of yours that waits "for N s" to fire, and a
-blue curtain when the rotation acts on something that is not your target.
+The PvP marks, the PvP extras and the reactions' own world marks (the kick
+lined up, who a reaction acted on, your reactions' rings, the rotation's
+pick) left the plugin on 2026-10-11 with the Reactions page's old sections
+(see *Reactions*).
 
 **Beacons (1.87.0, Quests page).** Pillars of light you can see over a hill:
 RestedXP's next waypoint (gold), the nearest three quest areas from Forever's
@@ -715,7 +720,7 @@ your class does not have.
 | Profile | always | No selector since 1.33.0: from your talents and your group role |
 | Rotation | always | Enable, keybind (default X, ships **off**), opener, offensive cooldowns, trinkets |
 | Reading the fight | always | **Spread keybind (default C, ships on)** |
-| Reactions | always | Log every decision, on-screen decision panel -- the engine itself is not optional, see *Reactions* |
+| Reactions | -- | Nothing here since 1.8.0: the reactions are apart, on the Reactions page -- the switch, the decision panel and log, their marks, the readout |
 | Crowd control | always | **Fear keybind (default V, ships OFF)** -- nothing fires without it |
 | Tuning | always | Only count your own DoTs. Every threshold is derived; no sliders since 1.33.0 |
 | Targeting | always | Auto target, search range, switch margin, assist the tank (also in the class window, under Group) |
@@ -740,11 +745,24 @@ ESP does not stop the rotation and vice versa.
 
 ### Reactions
 
-*Use reactions in the rotation* (on) and the **Open Reactions UI** button,
-with four live lines (on or off, built-in and your own, where you are, the
-last one sent). The window is described under *Your own reactions: the
-Reactions tab*. The Rotation page's advanced Reactions section (the
-decision log and the on-screen panel) stays where it was.
+Apart from the rotation (1.8.0). No switch since 2026-10-11 (the user:
+"reactions should automatically activate in PvP when PvP is detected", not
+an option): the reactions run on their own, the PvP ones and the
+intelligence waking when PvP is detected, and the page's first live line
+says what is detected now (then built-in and your own, where you are, the
+last one sent); **Decisions** (*Show the
+decision on screen*, *Log every decision and every refusal*); **Advanced PvP
+Intelligence** (the PvP intelligence layer's switches, under *PvP
+intelligence* below); and the readout at the bottom, which says why the last
+decision was made. Nothing else is on this page: on 2026-10-11, at the
+user's request ("drop/delete old stuff and not get it confused"), the old
+*PvP* (the trinket's line), *PvP marks*, *PvP extras* and *In the world*
+sections were removed with their modules, and the **Open Reactions UI**
+button went the same day ("removed from being accessed by the player but
+leave it in the code for future"): the window described under *Your own
+reactions: the Reactions tab* is still in the plugin and still rendered, but
+nothing a player can reach opens it. The built-in reactions and any of your
+own already saved keep running from their saved state.
 
 ### World marks (1.89.0)
 
@@ -771,9 +789,6 @@ by default:
 | Who most needs a heal; a mob loose on someone not the tank | ESP, *Group and healing* (`party_heal_curtain`, `party_loose`) |
 | Round the tank | ESP, *Group extras* (`groupx_tank`) |
 | Your target in execute range | World marks, *Combat rings* (`cr_execute_curtain`, new) |
-| The rotation acting on something not your target | Reactions, *In the world* (`plays_rotation`) |
-| The enemy player lowest on health; enemy healers | Reactions, *PvP marks* (`pvp_kill_target`, `pvp_healers`) |
-| Where an enemy player vanished; one bursting on you | Rotation, *Reactions*, advanced (`react_curtain_vanish`, `react_curtain_burst`, new) |
 | A wall round a telegraph as it lands | ESP, *Telegraphs* (`tele_wall`) |
 | Boxes round mobs, when shown | ESP, *Box style* *Curtain* (the default is the corners again) |
 
@@ -808,8 +823,8 @@ measures it), and a kind with several steps outward:
 
 | Under | Lanes, from the inside out |
 |---|---|
-| An enemy player | aggro and cast (the ESP's), the kick lined up, time to die, the PvP trinket, your crowd control (three), diminishing returns (three), your timers (four), your reactions |
-| Anything else hostile | the same without the trinket, crowd control and diminishing returns: your timers and reactions move in where those would be |
+| An enemy player | aggro and cast (the ESP's), time to die, your timers (four); the lanes kept for the kick, the trinket, crowd control, diminishing returns and your reactions have stood empty since their marks left on 2026-10-11 |
+| Anything else hostile | the same: your timers move in where those lanes would be |
 | A party member | health, out of your heal range, a healer's mana, a missile landing on them |
 | You | your global cooldown, your swing, a missile landing on you |
 
@@ -863,20 +878,6 @@ read is 0, green or red by who each mob is hitting). Under each healer but you,
 a blue ring filling with their mana, red under a fifth. Stack and spread are
 not drawn: nothing JCore can read says them.
 
-**PvP extras** (Reactions page; `modules/pvpx.lua`). *Diminishing returns*:
-under each enemy player, a small ring per category of crowd control running
-(anyone's counts), empty while it is on and filling over the 18 s after it
-ends: amber, the next one is half; red, a quarter; grey, immune. The
-categories are Classic Era's (DRList-1.0's list: Kidney Shot alone, the stuns
-you aim, the stuns that proc, Polymorph with Sap, Gouge and the traps, fears,
-roots, proc roots, Mind Control, Frost Shock; Blind, Death Coil and the
-silences have none). Other modules can ask `P.pvpx.dr(unit, "Polymorph")`. In
-a battleground, a tall beacon on each flag carrier, red theirs, blue yours.
-While you are in Stealth, Prowl or Shadowmeld, a ring under each enemy player
-within 30 yd at the distance it would notice you (9 yd facing you at your
-level, a yard more per level it has over you, a third of that behind it), red
-once you are inside.
-
 **Route and services** (Quests page; `modules/routes.lua`). The stops of
 RestedXP's step after the one its gold beacon points at (up to *Guide stops
 after the next one*, 2), fainter and shorter, with a dashed line along the
@@ -907,13 +908,13 @@ nothing said why. An unsupported class is now idle and says so in the log.
 |---|---|
 | Warrior | Levelling Arms / Fury, Tank Arms / Fury / Full Prot |
 | Paladin | Levelling (Ret), Retribution, Protection, Holy |
-| Hunter | Levelling, Beast Mastery, Marksmanship, Survival; AOE melee weave (ALPHA/TEST) when its option is on; PvP (ALPHA/TEST) in a fight with a player, when its option is on |
+| Hunter | Levelling, Beast Mastery (with the melee weave, 1.8.1), Marksmanship, Survival; PvP (ALPHA/TEST) in a fight with a player, when its option is on |
 | Rogue | Levelling, Combat, Assassination, Subtlety |
 | Priest | Levelling (Shadow), Shadow, Holy, Discipline |
 | Shaman | Levelling (Enh), Enhancement, Elemental, Restoration |
 | Mage | Levelling (Frost), Frost, Fire, Arcane |
 | Warlock | Levelling (drain tank), Affliction, Destruction, Demonology |
-| Druid | Levelling (Feral), Feral Cat, Feral Bear, Balance, Restoration |
+| Druid | Levelling (Caster) before Bear Form, Levelling (Bear) before Cat Form, Levelling (Feral), Feral Cat, Feral Bear, Balance, Restoration |
 
 Death Knight, Monk, Demon Hunter and Evoker have no rule set: they do not exist
 in Classic Era or TBC, which is what this targets.
@@ -934,12 +935,16 @@ form maintenance, deadlock breaker. A class file in `modules/classes/` supplies
 only data — its profiles, its interrupt/defensive/escape lists, and how to pick
 a profile from talents.
 
-In front of the priority walk sits `modules/react/`, the reaction engine
-(1.31.0): interrupts, defensives, potions, mana, the pet, threat, crowd
-control, escapes and the hardcore bail-out are weighed together by score, with
-a memory of what was just done. See *Reactions* below. Since 1.32.0 it is the
-only path; the old fixed sequence runs only on a tick where the engine itself
-fails.
+Apart from the priority walk run the reactions, `modules/react/` (1.31.0;
+apart since 1.8.0): interrupts, defensives, potions, mana, the pet, threat,
+crowd control, escapes and the hardcore bail-out are weighed together by
+score, with a memory of what was just done, in a job of their own just
+before the rotation's, on the snapshot the two share. They leave a verdict
+the rotation reads -- a reaction took the global cooldown, or something
+says stop attacking -- and gives way to; the rotation never calls into them.
+See *Reactions* below. Switched off (the Reactions page), the rotation runs
+by itself: its own fixed sequence -- defensives, racials, the Hardcore
+page's bail-out, breaking contact, dispels, interrupts -- as before 1.32.0.
 
 **Resource is per profile, not per class.** A druid reads mana in caster form,
 rage in bear and energy in cat, so the profile declares which.
@@ -976,17 +981,41 @@ game reads  ->  world state  ->  situations  ->  behaviour state
 | `world.lua` | **Observe.** One shared table per tick: player, pet, target, every hostile, the group, the encounter. Built almost entirely from data already in hand (the rotation snapshot, JCore's enemy rows and threat boards); rules never read the game themselves |
 | `detect.lua` | **Understand.** What the numbers mean — low health, a dangerous cast, threat about to pull — each a situation with two lines (`latch.lua`); the danger level, 0–100 |
 | `behavior.lua` | **What kind of moment.** NORMAL → DEFENSIVE → EMERGENCY → ESCAPE, RECOVERY on the way back; and BOSS / AOE / PVP |
-| `engine.lua` | **Decide and act.** Candidates, scores, selection per lane, validation, execution |
-| `memory.lua` | **Re-evaluate.** What was asked for, what was sent, what the client said, which events are already answered |
+| JCore's `ctx.react` (`jcore/services/react.lua`, 1.8.0) | **Decide, act and re-evaluate.** The framework: the rules, candidates, scores, selection per lane, validation, execution, the memory of what was asked for, sent, confirmed or refused and which events are already answered, the latch and the journal. This folder's `engine.lua`, `memory.lua` and `latch.lua` until 1.8.0; `init.lua` now tells it about the AIO's world (`engine.configure`: the spellbook by name, the catalogue's word on a target, the rotation's gates, and the AIO's own action kinds -- the pet, the bag, an aspect, a target switch) |
 | `pvp.lua` | **The other player** (1.81.0): what controls you, what each enemy player is immune to or bursting with, which worn trinket breaks what (`W.pvp`) |
 | `rules/core.lua`, `rules/pet.lua`, `rules/pvp.lua`, `rules/hunter.lua` | **The reactions**, as data |
 
-It runs first in the rotation's tick, with the snapshot the rotation just
-built. A reaction on the global cooldown means the priority walk does not run
-that tick; an off-GCD reaction (a potion, Evasion) and a pet order (its own
-lane) leave the walk alone. If the engine ever raises, that tick falls back to
-the old fixed sequence and the log says so once; there is no switch to choose
-the old sequence any more.
+**Apart from the rotation (1.8.0).** The user: "Reactions themselves I wanna
+separate completely from Rotations... Reactions will become Specifics you
+set if you need the rotations to adjust for some reason but apart". The
+reactions run in a job of their own, just before the rotation's (JCore's
+scheduler, priorities 59 and 60), on the snapshot the two share
+(`rotation.snapshot()`: whichever asks first builds it, the other reuses
+it), and publish a verdict for the tick (`react.verdict()`). The rotation
+reads the verdict and gives way: a reaction on the global cooldown means the
+priority walk does not run that tick; a hold (the hardcore bail-out, easing
+off threat) means nothing offensive runs; an off-GCD reaction (a potion,
+Evasion) and a pet order (its own lane) leave the walk alone. The rotation
+never calls into the reactions, and whatever a reaction sends outranks the
+rotation in the cast arbiter anyway. A second job after the rotation's takes
+its pick for the readout and sends the deferred reaction when the walk had
+nothing to press. If the reactions' job ever raises there is no verdict for
+that tick, the rotation runs by itself, and the log says so once.
+
+**No switch (2026-10-11).** The engine is "the path, not an option" again
+(1.32.0). From 1.8.0 until 2026-10-11 the Reactions page had *Use reactions
+in the rotation*: off, no reaction acted, nothing owned a spell, the verdict
+was empty and the rotation ran by itself with its own fixed sequence
+(defensives, racials, the Hardcore page's bail-out through
+`hardcore.should_stop_fighting`, breaking contact, dispels, interrupts), and
+the readouts opened with *Reactions: OFF*. The user then said reactions
+should activate on their own in PvP when it is detected, not by an option:
+`R.active()` and `custom.master_on()` always say yes, a value saved for the
+old switch changes nothing, and the rotation's own fixed sequence is only
+the fallback for a tick without a verdict. The reactions outside PvP
+(interrupts, defensives, the pet, the stings) run as they did with the
+switch on; the PvP reactions and the intelligence wake on the picture's PvP
+signs, which the Reactions page's first live line reports.
 
 ### The rotation changes with the fight (1.33.0)
 
@@ -1098,7 +1127,12 @@ the session, and nothing more was measured. The core log showed it every
 three seconds from 14:17 on. It is an identity check now (`rawequal`, the
 way JCore keys its units), and the guid is read again whenever the object
 changes. Test: `aio_react_test` ("a stale player object after a loading
-screen").
+screen"). The picture of the fight (`react/world.lua`) kept the player's
+object the same way, and compared it the old way, until 1.8.1: after a
+loading screen every reactions tick raised, the log said so once, and the
+rotation ran without them for the rest of the session (Forever, 2026-10-11).
+Identity there too now; the test is beside the first ("world: a stale player
+object after a loading screen").
 
 ### Standing still (1.33.1)
 
@@ -1750,7 +1784,8 @@ the threat panel and the low-health banner.
 
 ### Adding a reaction
 
-A reaction is a table handed to `P.react.add_rule`; nothing in the engine
+A reaction is a table handed to `P.react.add_rule` (JCore's `ctx.react`
+underneath, 1.8.0: the same shape works in any plugin); nothing in the engine
 changes. The simple shape:
 
 ```lua
@@ -1781,9 +1816,15 @@ the hearthstone) and *Hearthstone as a last resort*.
 
 ### Your own reactions: the Reactions tab (1.76.0)
 
-The **Reactions** page holds one switch, *Use reactions in the rotation*
-(on), and the **Open Reactions UI** button. Off, no reaction acts except the
-Hardcore page's bail-out and hearthstone, which keep their own switches.
+The **Reactions** page has no switch since 2026-10-11: the reactions are
+automatic (the 1.8.0 *Use reactions in the rotation* switch, under which the
+rotation ran by itself, is gone, and a value saved for it changes nothing);
+the PvP reactions and the intelligence wake when PvP is detected (a player
+targeted or on you, an enemy player within 40 yd, a player's control on you,
+a battleground, an arena, a duel). The **Open Reactions UI** button that opened the window
+below left the page on 2026-10-11: the window is kept in the code
+(`P.reactwin.open(tab)`) and rendered, out of the player's reach, for a
+later day. What follows describes it as it is.
 
 **The window** (`modules/reactwin.lua`, laid out anew in 1.77.0). Move it
 by its title bar and resize it by its bottom-right corner; it keeps its
@@ -2148,13 +2189,12 @@ clear its line: Blink (a stun or a root, pressed while stunned), Berserker Rage
 (roots and snares; one it is not already in), Blessing of Freedom, the
 felhunter's Devour Magic (anything Magic) — 15; Will of the Forsaken (fear,
 charm, sleep), Escape Artist (roots, snares) — 15; a Living Action Potion
-(stun, root, snare) — 35; **the trinket last, at the Reactions page's line**:
-
-| *Use the PvP trinket* | Line | What that means |
-|---|---|---|
-| Only to stay alive | 60 | a stun or a fear while you are hit and under 50%; a stun or a fear on the flag carrier |
-| Balanced (default) | 40 | a stun or a fear while you are hit (2.7 s or more left); a root or a snare on the flag carrier; not a sheep nobody is using |
-| Break any control | 1 | anything worth more than nothing |
+(stun, root, snare) — 35; **the trinket last, at the Balanced line, 40**: a
+stun or a fear while you are hit (2.7 s or more left); a root or a snare on
+the flag carrier; not a sheep nobody is using. (The *Use the PvP trinket*
+dropdown, with its *Only to stay alive* line at 60 and *Break any control*
+at 1, left the Reactions page on 2026-10-11 with the old PvP sections; the
+PvP intelligence layer's cooldown economy is to own that choice.)
 
 A cheaper breaker's line is never above the trinket's, so the trinket is never
 spent while something cheaper would have gone. A control nothing you carry
@@ -2194,6 +2234,250 @@ worth 30, the trinket needs 40 (balanced)").
 second enemy's crowd control chained after yours (diminishing returns are not
 tracked); the flag carrier as a target priority; a rogue's poisons; reading an
 enemy's class to guess what it will do before it does it.
+
+### PvP intelligence: the picture (Phase 2, 1.8.1)
+
+The brief behind `PVP_INTEL_PLAN.md` asks for a layer that evaluates a PvP
+fight the way an experienced player does: threat, cooldown economy, what the
+opponent is likely to do, baits, crowd-control plans, positioning, kill
+windows, team fights. Its first piece is the picture everything later reads,
+`W.intel` (`modules/react/intel/state.lua`), built once a tick right after
+`W.pvp` and before the situations, and kept honest in one way: every field
+is one of three kinds.
+
+| Kind | How it looks | Example |
+|---|---|---|
+| **Observed** | a plain field, from a documented call the client answered | `foe.dist`, `foe.class` (`get_class`), `foe.casting.name`, `me.control.name` |
+| **Inferred** | `{ v, conf, why }`; a rule reads it through `intel.sure(x, threshold)` and gets nil below the threshold | `foe.inferred.role` = melee at 0.9 for a rogue, caster at 0.6 for a priest not seen healing, healer at 0.9 once it has; `me.velocity` from a position trail; the mode `duel` |
+| **Unknown** | an inferred entry at confidence 0 saying which call would answer; `S.unavailable` (this client leaves it out); `S.unknown` (no client says it) | a player's specialisation; cooldowns before one is seen; on Forever the combat log by source and threat |
+
+What it carries: you (health and its slope, power, what controls you and
+whether the read was an aura with its caster or the client's own word, the
+cast on your bar, your abilities by what they are for -- defensives,
+escapes, controls, slows, interrupts, each known, ready or on cooldown --
+position, rotation, velocity, target, focus, mouseover, the flag); the pet
+(and whether its target is a player under a control that damage breaks);
+each enemy player within 40 yd, nearest first, up to ten (distance,
+health, whom it targets, closing and motion, the cast on its bar, the
+control on it, class and form, `pvp.lua`'s immunities and bursts, whether
+it faces you, and the last twelve abilities seen from it: its cast events
+by unit token, its aura records, on Era the combat log's cast lines); the
+group's members with role, health and distance; the ground (the class's
+ranges, the target's band -- melee, the dead zone, ranged, far -- and line
+of sight through `geometry.sight`, true, false or unknown, at most twice a
+second); the mode (battleground or arena observed, a duel inferred from
+`DUEL_REQUESTED` and one player fighting you, world PvP from any sign,
+solo / party / raid) and one answer to "is this PvP" with every sign that
+says so.
+
+The Reactions page's readout gains two rows while the picture is on:
+
+```
+Intel: world_pvp (solo) | 1 player(s) in 40 yd, 1 on you | target ROGUE melee (0.90), 3 yd melee, facing you, LOS yes | you: stun 4.0s (Kidney Shot, a player's) | ready: 0/0 defensives, 1/1 escapes, 0/1 controls
+Intel: 2 cast(s), 1 aura(s), 0 log line(s) seen | last cast Sprint 1.2s ago | not on Forever: combat log by source, threat, a player's mana maximum
+```
+
+Nothing acts on it yet: the later phases propose through the one reaction
+engine, and Phase 13 puts the switches on this page. The budgets are at the
+top of `state.lua`; the model reads nothing the reactions did not already
+pay for, except the nearest four players' facing every quarter second, one
+sight ray every half second, the group twice a second and the instance type
+once a second. Tests: `aio_intel_state_test`, `aio_forever_class_hunter_intel_test`.
+
+**The threat read (Stage 2).** On that picture, `intel/threat.lua` scores
+how much danger is coming on detect.lua's 0..100 scale, into
+`W.intel.threat`: a burst up on a player on you, a dangerous cast at you or
+at an ally, a melee player about to reach you, standing inside the reach of
+a control its class throws, a player on the healer, a gap closer just used,
+several players on you, rooted with a melee player near, no escape ready,
+dying by the field's race, under 30% and hit, a player vanished beside you.
+Each indicator carries its points, the seconds until it lands, the
+reliability of the read and words; urgency, health, having nothing to
+answer with, and what a defensive of ours already covers scale them
+(`intel/score.lua`, every weight with its reason; `intel/data.lua`, every
+name and reach with where it came from). The level -- CRITICAL, HIGH,
+MODERATE, LOW, INFORMATIONAL -- has two lines and a dwell, and the band's
+top adds every unknown against you: missing information is never read as
+safety. Your reactions read it as *PvP threat level*, *PvP threat score*,
+*A dangerous cast is coming at me*, *Target used a gap closer or sprint*,
+*Target has a defensive up* (`fight.threat`, `fight.threat_score`,
+`fight.incoming_cast`, `target.mobility`, `target.defensive`). Test:
+`aio_intel_threat_test`.
+
+**The cooldown ledger (Stage 3).** `intel/cooldowns.lua` keeps, per enemy
+player, every ability seen from it (a cast event, the buff a cooldown
+leaves, on Era the combat log's line), with when it was seen, how sure, and
+-- from the clients' own tables, `modules/pvp_data.lua`, generated by
+`tools/jcheck/pvp_extract.js` for Era and Forever -- when it is back, a
+shared category holding its sisters down and the estimate fading once the
+cooldown has run out. A spell never seen is unknown, never ready. It answers
+the brief's economy questions: whether a protection of yours already covers
+a burst (then *PvP: answer the burst* and *Defensive cooldown* hold a second
+defensive, never under critical health), the cheapest ready answer by
+cooldown, and what to keep (the last control for a melee player closing,
+the last defensive for a burst the ledger says is back soon). Your reactions
+read it as *Target was seen using*, *Seconds until the target's ability is
+back*, *A defensive of mine already covers me* (`enemy_cd_seen`,
+`enemy_cd_ready_in`, `me.protected`). Test: `aio_intel_cooldowns_test`.
+
+**The state, the move and the words (Stage 4).** `intel/states.lua` names
+the moment with the brief's eighteen tactical states (DISENGAGE, ANTI_BURST,
+DEFENSIVE, INTERRUPT_OPPORTUNITY, CONTROL_DISTANCE, RESET_FIGHT,
+CROWD_CONTROL_SETUP, PROTECT_ALLY, PEEL_ENEMY, KILL_WINDOW, COUNTER_ATTACK,
+OBJECTIVE_CONTROL, OPENING, SUSTAINED_PRESSURE, RANGED_PRESSURE,
+RESOURCE_RECOVERY, PREPARATION, BAIT_OPPONENT), each with its actions, what
+to avoid, what to keep, its rank and its confidence; an emergency takes over
+at once, anything else waits 0.8 s while the state in force still holds.
+`intel/position.lua` says where a hunter should stand -- hold, increase,
+reduce, regain or keep out of sight, stay near the allies, avoid the
+reinforcements, do not pursue -- with the direction, the yards and the
+reason: slow an unslowed melee player before running, step out once it is
+slowed, keep out of a warrior's 8-25 yd Charge and Intercept band unless the
+ledger says Intercept is down, wait for Auto Shot's aim. Nothing in it moves
+you. The one reaction the layer presses so far is the aspect for the moment
+(Monkey with a melee player on you), through the Aspects window's own
+switch. `intel/explain.lua` keeps the tick's summary for the readout's third
+row and says each new state or move once on screen (`intel_alerts`). Your
+reactions read *PvP tactical state*, *PvP move advice*, *My target is inside
+my minimum ranged distance*, *A safe escape is available* (`fight.tactic`,
+`fight.advice`, `me.dead_zone`, `me.safe_escape`). Test:
+`aio_intel_tactics_test`.
+
+**On the page and in the window (Stage 5).** The Reactions page's
+*Advanced PvP Intelligence* section holds the layer's emergency switch, the
+alerts, and one switch per module (threat, cooldowns, tactics, positioning,
+kill windows, teamfight awareness; the four not built yet under advanced,
+each naming its stage); a module off reads calm. The Reactions window's
+Try-it bench has a *PVP INTELLIGENCE* group whose fields build a made-up
+picture, so every intel condition can be tried without a fight (the
+situation *PvP: a warrior bursting on me* has them set), and *From the
+fight now* copies the live one; its Live view shows the state, the threat,
+the next action and the move as tiles, with their reasons, the abilities
+seen from the target, what was kept back and what is unknown. Three more
+conditions: *A kill window on my target*, *Seconds left on the control on my
+target*, *My pet is on a player held by a control that damage breaks*
+(`fight.kill_window`, `target.cc_left`, `pet.breaks_cc`). Test:
+`aio_intel_window_test`.
+
+**The control plan (Stage 6, `react/intel/ccplan.lua`).** Every control on
+every enemy player: its name, kind and seconds left; whose it is (the aura's
+caster, "yours" at 0.6 when the list carries none, "not yours" when another
+unit's); what the player could break it with (its trinket as seen used, its
+class's breakers as the ledger saw them); who of ours would break it (the pet
+on it, a sting or a fire trap of ours ticking); what keeping it is worth, in
+the order a fight asks (survive, stop_heal, stop_burst, kill, peel, distance,
+reset, none); the trap to follow a Scatter Shot. Diminishing returns are
+counted per category from the aura events and the row read: on Classic Era
+by DRList's list and rule (full, half, quarter, immune; 18 s from the end of
+the last), on Forever by the client's own `DiminishType` column with the
+multiplier UNKNOWN -- nothing there claims a halved duration. The hunter's
+trap rules ask it (Era's "immune" holds the trap back). One reaction, *Intel:
+keep the control on your target*: a hold on the rotation's presses while a
+breakable control with a global cooldown left is worth keeping, or the trap
+could follow; none with a tick of ours on it. The pet's recall is pet.lua's;
+the plan says why. `pvphunter.held` checks the caster: another hunter's trap
+is not ours. Conditions: *The control on my target is worth keeping for*,
+*Diminishing returns: what my next control on the target gets*, *The
+control on my target is mine* (`target.cc_value`, `target.dr_next`,
+`target.cc_ours`). Switch: *Crowd control planning*. Test:
+`aio_intel_ccplan_test`.
+
+**Opponent prediction (Stage 7, `react/intel/predict.lua`; reworked on
+review 2026-10-12).** What each player tends to do, counted per player this
+session. Every pattern is a question with a chance, a hit, a miss and an
+attribution (`data.lua` `PATTERNS` spells them out): closes the gap when
+slowed, a defensive at about N% health (an episode under 60%: it pops one or
+falls under 15% without), saves cooldowns until low, interrupts your casts
+(observed when an interrupt was seen cast, inferred at half weight else;
+an Aimed Shot let through is the miss), escapes control at once, stacks
+bursts, goes for your pet, the same opener, backs off under pressure;
+chasing through bad terrain is listed as not built. A chance the player
+could not answer -- its ability seen down by the ledger, its class without
+it -- is skipped and said; a miss is recorded only once the input it rests
+on (enemy casts, auras, our interrupted casts, its target, its movement)
+was seen live this session, else the chance is unverified (the Live view's
+*Inputs* line says what has been seen). Two numbers: the rate `p` (blended
+with a prior that weighs two chances, so one sighting reads 0.67 and is
+never a prediction) and the evidence `reliability` (two chances read 0.5,
+LOW whatever the rate; moderate from about three, high from six). Two
+clocks: this fight with the player (a 60 s half-life) and the session (600
+s); when they disagree by 0.35 the player is *adapting*, the prediction is
+withdrawn and the baits stand down. Every forecast is scored when made,
+weak ones too (a Brier score and bands per pattern), never rewritten; a
+sure one that fails lowers the prior. A zone change forgets the player;
+nothing is persisted. Each prediction carries its consequence, the hunter's
+response and a fallback, and reaches the third intel row, the Live view's
+*Predict* lines, one banner per player and pattern (rate, reliability and
+count), and the window: *Target's surest pattern this session*, its rate %
+and the evidence behind it % (`target.pattern`, `target.pattern_conf`,
+`target.pattern_reliability`), and `prediction_confidence("...")` /
+`prediction_reliability("...")` in Lua. Switches: *Opponent prediction*,
+*Opponent pattern learning*. Test: `aio_intel_predict_test`.
+
+**Bait detection (Stage 8, `react/intel/bait.lua`).** The first stage to
+act on a prediction, through `intel.sure` only, with the counter ready and
+never while the threat is HIGH. Four baits on the target: *mobility* (it
+closes when slowed and is not on you: Concussive Shot with the trap, Scatter
+Shot or the clip ready), *defensive* (your burst held while its defensive is
+unseen, or while it is within 15% of the health the predictor says it pops
+at; said for the burst's gate, advice until it reads it), *interrupt* (it
+interrupts your casts and its interrupt reaches you: show Aimed Shot and
+stop it -- advice, nothing is cancelled here), *trinket* (it breaks a
+control at once: Concussive Shot first, the trap after, the threat at most
+MODERATE). Gates: you not controlled, no control of yours being kept on it,
+its defensive not up. One reaction, *Intel: the bait*, presses the Concussive
+Shot a mobility or a trinket bait asks for, under the survival and escape
+bands, once per player per 10 to 15 s. The third intel row, the Live view's
+*Bait* line and the condition *PvP bait on my target* (`fight.bait`) carry
+it. Switch: *Cooldown baiting*. Test: `aio_intel_bait_test`.
+
+**Fight debriefs (`react/intel/debrief.lua`).** Each fight with a player,
+from its first tick to its end (won, lost, fled, reset, draw): who was in
+it, what each side used, the controls on you, your lows, the threat's
+peak, the states, the baits, the holds, the moments; and the lessons --
+what stayed ready that could have turned it (a defensive through danger, a
+slow never cast, the trap never laid, a kill window that got away, your
+own control broken by your hit, a cast not stopped), what beat you, what
+held, the forecasts' score -- each naming the seconds and the names it
+rests on. The log, a banner, the Reactions page's *Fight debriefs and the
+shared network* section, and `scripts_data/jambix.aio.fights.json` (the
+last 50, your own file). Test: `aio_intel_debrief_test`.
+
+**Decision episodes (`react/intel/episodes.lua`; `CENTRAL_NETWORK.md`
+§10).** A bounded window round each tactical moment (a charge, a rogue's
+opener, a Blink, a burst, a root under pressure, the dead zone, the pet on
+a control, a kill window, a defence changing, several on you) with the
+state before and after, the prediction and the recommendation as they
+stood, what you did, and three outcomes by written rule: the prediction's
+(hit, miss, censored, invalid, none), the recommendation's (followed, not
+followed, unknown, with the reason) and the result (survival improved,
+position improved, control successful, damage opportunity created,
+cooldown saved, objective progress, situation worsened, no measurable
+change, unknown). Duplicates, inferred triggers, missing feeds, cut windows
+and test data are flagged and never counted as lessons. Each fight's
+summary and candidate lessons (confidence from comparable episodes, never
+from one) are on the page and travel in the batch. Switch: *Decision
+episodes*. Test: `aio_intel_episodes_test`.
+
+**The shared network (`react/intel/central.lua`; `CENTRAL_NETWORK.md`).**
+Off until you turn it on: *Contribute my fights* queues each fight's
+forecast observations and lesson, stripped of every name, under a random
+identifier, and sends them between frames with backoff (never in a combat
+tick's way); *Download the network's learning* fetches the published
+model (a manifest with schema and plugin range; a withdrawn version is
+dropped) whose reliable entries seed a new opponent's prior in the
+predictor; two buttons delete the queue or ask for your records' deletion
+and replace the identifier. The service is the GitHub repository itself
+(issues filed by an Action into a data branch, the model read off it) or
+`tools/fightlog_server`. What the service learns is per game and per
+learning group (your class and theirs, your level bracket, the encounter,
+1v1 or outnumbered, down to the class and the game alone); a new
+opponent's prior comes from the narrowest group with a reliable rate, and
+the reason names it. A model reaches you only after release gates on
+fights it never saw, the first versions as a canary to a share of
+players; its tactical findings show as associations, never as rules
+(`CENTRAL_NETWORK.md` §11). Tests: `aio_intel_central_test`, and the Node
+suites under `tools/fightlog_server`.
 
 ---
 
@@ -2556,6 +2840,24 @@ it looks.
 - In code: `modules/guidewalk.lua` (P.guidewalk). `rotation.may_engage_unit` returns true for `guidewalk.pulling(target)` (only once it stands in range), and out of combat `targeting.better_target` takes `guidewalk.pull_target()`. `quests.lua` reads RestedXP while the walk is on with *Enable RestedXP ESP* off too (`is_guide_target` still follows that switch; `guide_goal` does not), and has `quest_people(id)` and `quest_name(id)`. The reward choice moved, unchanged, from `forever_npc.lua` to `modules/rewards.lua`. main.lua: `rxp_follow` in `ESP_ONLY_OFF`.
 - Tests: `aio_guidewalk_test` (34), `aio_guidewalk_hooks_test` (3, the whole plugin as Era), `aio_guide_waypoint_test` (13: placing the waypoint, the route, the spawn seeds); `rxp_follow` joins the boot suites' acting switches.
 
+**The RestedXP ESP acts as you walk up (1.8.1).** The user: "let's make
+RestedExp ESP - Allow Quest Grab, allow the Combat System to work with it and
+Turn in quests". A second switch in the RestedXP section, *Act on the guide's
+marks as you walk up to them*, off by default, for playing by the ESP without
+Sentinel: you move, by the guide's marks, its panel and its line, and nothing
+walks you or holds a key. What it does when you get there:
+
+| You | It |
+|---|---|
+| stand within 5 yards of the npc (or the object) the step's quest goes back to or comes from | talks to it and answers its windows as the walk does: the hand-in first, then the pick-up, **the step's quests only**, with the reward the guide names or the one `rewards.lua` chooses. *Pick up the step's quests* and *Hand in the step's quests* turn each half off; a half that is off is neither asked for nor answered. |
+| come within pull range of a mob the step wants killed (26 yards for a caster or a hunter, melee for the rest) | hands it to the rotation: out of combat automatic targeting takes it (`guidewalk.pull_target`) and the rotation may open on it (`guidewalk.pulling`, through `rotation.may_engage_unit`). It is never selected, faced or hit by this; with the rotation off the line says to switch it on. *Let the rotation fight what the step wants killed* turns it off. Resting, low health and hardcore's no-pull hold it, as they hold the walk. |
+
+- Nothing else: no quest object is used, nothing is looted (auto-loot does), and it never gets you off your mount (it says to). Steering never pauses it; the actions gate still waits while you move, so a quest giver you run past is not talked to until you stop.
+- The guide panel's first row says what it is doing ("> walk up to Marshal McBride to hand in (12 yd)", "> Kobold Vermin in range: the rotation's to open on", "> follow the line to Northshire Abbey (80 yd)"). The Quests page's first line reads *Guide ESP:* in this mode; the Overview's *Guide walk* line is on for either switch.
+- Both switches on: the walk wins; it does all of this and moves you too. Switching one for the other mid-walk stops the walk's route and lets go. Not on an ESP-only client, like the walk.
+- In code: `guidewalk.lua` -- `mode()` ("walk" | "act"), `wants_of()` (which kinds this mode looks for; `talk_quest` and `scan` read it), `talk_here` (the walk's talk, by the npc) and `pull_gate` (its rest, hardcore and health checks) shared with `act_talk`, `act_fight` and `act_tick`; `wanted_ids` answers nothing for a kind whose switch is off; `M.active()`; `stats().switch`. `quests.lua` reads RestedXP while it is on and its panel shows the line. main.lua: `rxp_act` in `ESP_ONLY_OFF`.
+- Tests: 7 new in `aio_guidewalk_test` (41); `aio_guidewalk_hooks_test` boots with it on; `rxp_act` joins the boot suites' acting switches.
+
 Paths follow the ground by sampling terrain height along their length. Each
 sample is accepted only if it is a plausible continuation of the one before it,
 which is what stops a mark ending up on a tent roof; samples are cached per
@@ -2631,7 +2933,8 @@ jambix_aio/
       panels.lua         proximity alerts, threat panel, off-screen arrows
       init.lua           the package, and the old esp_units surface
     quests.lua           quest index, quest paths, RestedXP, guide panel
-    guidewalk.lua        follows RestedXP with Sentinel Navigation and does the steps (1.7.4)
+    guidewalk.lua        follows RestedXP with Sentinel Navigation and does the steps (1.7.4);
+                         or does them as you walk up yourself (1.8.1)
     rewards.lua          which quest reward to take; forever_npc.lua and guidewalk.lua (1.7.4)
     spellbook.lua        name -> highest known rank. No hard-coded spell ids.
     rank_order.lua       the rank lines out of id order, per client. GENERATED.
@@ -2639,18 +2942,18 @@ jambix_aio/
     questxp_data.lua     what each quest pays: QuestieDB's quest xp table (1.7.6). GENERATED.
     xpbar.lua            the two experience bars on Forever's ESP (1.7.6)
     rotation.lua         the class-agnostic priority engine
-    react/               the reaction engine, ahead of the priority walk
-      init.lua           wiring, the rotation's hooks, readout, journal, overlay
+    react/               the reactions, apart from the priority walk (1.8.0), on JCore's framework
+      init.lua           the picture of the fight, JCore's engine configured for the AIO,
+                         the two jobs round the rotation's and its verdict, the readouts, the overlay
       world.lua          one shared world state per tick
-      detect.lua         situations and the danger level
-      latch.lua          two-line thresholds
+      detect.lua         situations and the danger level (JCore's latch: two-line thresholds)
       behavior.lua       NORMAL / DEFENSIVE / EMERGENCY / ESCAPE / RECOVERY
-      engine.lua         propose, score, select, validate, execute
       adapt.lua          the rotation, scored by the fight and by what each skill does
       damage.lua         what each skill deals: the combat log, the tooltip until then
       learn.lua          what the fights taught: immunities, real range edges, evading mobs
-      memory.lua         attempts, outcomes, handled events, back-off
       rules/*.lua        the reactions. Data only.
+      (propose, score, select, validate, execute, the memory and the journal are
+       jcore/services/react.lua since 1.8.0)
     pet.lua              pet mode, designation, growl, pet spells
     rest.lua             out-of-combat food and drink
     sense.lua            stealth and PvP awareness. Decides what is TRUE.
@@ -2662,9 +2965,9 @@ jambix_aio/
     worldlayer.lua       every world mark goes through it: lanes, budget, look, wall fade (1.89.0)
     calibration.lua      the World marks page's test pattern (1.89.0)
     aurora.lua           the aurora around you (1.86.0)
-    pull.lua timers.lua party.lua beacons.lua pvpmarks.lua plays.lua
+    pull.lua timers.lua party.lua beacons.lua
                          the 1.87.0 world marks
-    combatrings.lua tracks.lua groupextras.lua pvpx.lua routes.lua nodememory.lua
+    combatrings.lua tracks.lua groupextras.lua routes.lua nodememory.lua
                          the 1.89.0 world marks
     talents.lua          Classic tree scan, spec detection, profile suggestion
 
@@ -2681,11 +2984,10 @@ Six jobs, one frame, in priority order:
 |---|---|
 | 100 | the ESP — draws units and nodes, fills the threat, corpse and node lists |
 | 110 | the aurora around you |
-| 111 | world marks — pull safety, fight timers, combat rings, missiles and facing, your group, group extras, PvP marks, PvP extras |
+| 111 | world marks — pull safety, fight timers, combat rings, missiles and facing, your group, group extras |
 | 113 | beacons, route and services (after the ESP's node lists) |
 | 114 | node memory and the bobber |
 | 120 | telegraphs |
-| 125 | the reactions' marks and the rotation's pick |
 | 150 | alerts (5 Hz) — reads threats |
 | 189 | the calibration pattern |
 | 190 | the world layer draws every mark kept since 110 (1.89.0) |
@@ -2763,7 +3065,7 @@ know that spell.
 
 | Capability | Notes |
 |---|---|
-| **Racial abilities** | Resolved by name, so no race detection. Defensive racials (Stoneform, Will of the Forsaken, Escape Artist, War Stomp…) fire at the defensive threshold; offensive ones (Blood Fury, Berserking, Arcane Torrent) fire with cooldowns. Whichever your race has is the one that resolves. |
+| **Racial abilities** | Resolved by name, so no race detection. Defensive racials (Stoneform, Will of the Forsaken, Escape Artist, War Stomp…) fire at the defensive threshold; offensive ones (Blood Fury, Berserking, Arcane Torrent, and Forever's Night Elf Elune's Light) fire with cooldowns. Whichever your race has is the one that resolves. |
 | **On-use trinkets** | Both equipped slots. No item list — a stat-stick reports not-usable and is skipped, which is exactly the filter wanted. Off by default. |
 | **Eat and drink** | Between pulls, under *Automation → Rest*. Drinks before eating when both are low, because mana decides how soon the next pull can happen. Found by **flag** through the shipped inventory helper, so this one works on any locale. |
 | **Pet interrupts** | Through the pet's own spellbook and `pet_cast_target_spell`. For a warlock this is the *only* interrupt the class has. |
@@ -2994,6 +3296,38 @@ twice inside one window.
 The window is a **state**, not an instant, which is what lets the priority list
 behave differently for its duration instead of each rule re-deciding. Class
 rules ask `H.bursting()`.
+
+**A class may hold the window back (1.8.1).** The module names why it would
+open (`losing`, `pack` for three or more, `elite`, or `freely`: a fight long
+enough, the levelling case) and asks the class's `burst_veto(s, kind,
+lasting)`; a reason back keeps it shut and is the readout's reason.
+
+### The hunter's burst (1.8.1)
+
+The user asked when a hunter should burst in PvE and what goes in it, from the
+guides. None of the Forever guides has a cooldown section yet (read
+2026-10-11): wowtbc.gg's level-60 list says "Cast Rapid Fire, Bestial Wrath,
+and any on-use effects" then "Cast Intimidation"; Mobalytics keeps Rapid Fire
+solo for "harder encounters" because "It's going to generate a lot of threat for
+you quickly, and might pull enemies off your pet", and calls it "better used in
+group play or Dungeons"; Icy Veins' Classic guide stacks Rapid Fire, trinkets
+and Berserking "together on pull" with a tank and says "do not give up extra
+uses of a cooldown by delaying it". The user chose Mobalytics' rule.
+
+- **What:** Rapid Fire, Bestial Wrath, Intimidation (only with the pet on the
+  mob), then the offensive racial (Blood Fury, Berserking, Elune's Light) and
+  the on-use trinkets. Rapid Fire, Bestial Wrath and Intimidation are pressed
+  nowhere else in the PvE rotation; their rules only catch a window whose
+  sequence went by before they could go. The hawks stay rotational, as in every
+  guide; no guide uses a damage potion.
+- **When, solo:** a harder fight only -- an elite, a rare or a boss, three or
+  more mobs, a fight you are losing, or a mob that lives 20 s or more -- and
+  only once the pet holds the mob (it is on the pet, or already on you), so
+  Rapid Fire's threat does not pull it to you. Not the ordinary levelling mob.
+- **When, with a tank:** as the module decides for everyone, freely on any
+  fight long enough.
+- Intimidation also stops a dangerous cast and takes a mob off you when
+  Disengage cannot (see *Intimidation* in the hunter's section).
 
 ### The shape of a burst: the whole set, then fillers
 
@@ -3785,72 +4119,132 @@ swing, Concussive Shot as early as it is available. It is loaded from
 from then on its only job is the step out above. Both have toggles under
 Hunter options.
 
-**Beast Mastery (1.7.6).** The Forever guides' rotation (Icy Veins, wowtbc.gg,
-Mobalytics; read 2026-10-10). It runs for every hunter whose talents lead
-with Beast Mastery, from the first point and with none spent yet; under 20
-points, Levelling keeps the hunters led by Marksmanship or Survival. It shipped
-first as an ALPHA behind its own option; the user then made it the Beast
-Mastery rotation and the option went. The guides agree on this order:
+**Beast Mastery (1.7.6; the melee weave in it since 1.8.1).** The Forever
+guides' rotation (Icy Veins, wowtbc.gg, Mobalytics; read 2026-10-10). It runs
+for every hunter whose talents lead with Beast Mastery, from the first point
+and with none spent yet; under 20 points, Levelling keeps the hunters led by
+Marksmanship or Survival. It shipped first as an ALPHA behind its own option;
+the user then made it the Beast Mastery rotation and the option went. On
+2026-10-11 the AOE melee weave (below) went into it the same way: "add AOE
+melee weave into our Normal Beast master rotation no longer alpha/test". The
+order:
 
 1. Hunter's Mark, and the pet sent in.
 2. **The pet hits first.** Every shot waits for it, Auto Shot included
-   (Levelling fires Auto Shot at once). The wait ends at the pet's first hit:
-   the mob turning onto the pet, losing health with the pet beside it, or a
-   second with the pet beside it. Forever has no combat log to say so outright.
-   No wait in a group, with no pet out, with the pet off or held on a focus,
-   or once the mob is on you. The pet module gets 2 s to send the pet, and a
-   pet not there 5 s after it was sent is not waited for.
-3. Auto Shot, Serpent Sting, and two hawks out (Summon Hawk).
-4. Aimed Shot on its cooldown, at Forever's 2 s cast, when it lands before the
-   mob does. Multi-Shot instead on a pack: the two share one cooldown on
-   Forever. On one mob, Multi-Shot only when the aim would not land in time.
-5. Intimidation once the pet is on the mob, and Bestial Wrath, as before.
-6. A mob that reaches you is fought with Raptor Strike, Mongoose Bite and the
-   plain swing while the pet takes it back. Mobalytics says this, and the
-   user chose it over Icy Veins' Disengage.
+   (Levelling fires Auto Shot at once), and so do Rapid Fire and the hawks. The
+   wait ends at the pet's first hit: the mob turning onto the pet, losing
+   health with the pet beside it, or a second with the pet beside it. Forever
+   has no combat log to say so outright. No wait in a group, with no pet out,
+   with the pet off or held on a focus, or once the mob is on you. The pet
+   module gets 2 s to send the pet, and a pet not there 5 s after it was sent
+   is not waited for. The wait is for the pull only: the other mobs of the
+   fight never wait for it (1.8.1, see the sting below).
+3. **Multi-Shot first with two or more mobs where it lands**, standing at
+   range, and **never on one mob** (1.8.1: the weave's rule, "Neither PvP or AoE
+   meele wave should Multishot if its not 2+ enemy mobs", is Beast Mastery's
+   now; the one-mob quick shot when the aim would not land is gone). Multi-Shot
+   and Aimed Shot share one cooldown on Forever.
+4. Auto Shot, and on both sides of the dead zone: **two hawks at all times**
+   (Summon Hawk has no minimum range; a bar that is refilling still keeps two).
+   **Rapid Fire** (on Forever it speeds melee too), **Bestial Wrath** and
+   **Intimidation** go out in a burst window only (see *The hunter's burst*
+   below).
+5. **Serpent Sting on every mob fighting you or your pet** (the default of
+   *Serpent Sting on* since 1.8.1), straight onto each, your target kept.
+6. Aimed Shot on its cooldown, at Forever's 2 s cast, when it lands before the
+   mob does, and only with one mob where Multi-Shot would land.
+7. **In melee, the burst:** Immolation Trap at your feet (Explosive Trap with
+   two or more round you; Forever lays traps in a fight), Raptor Strike,
+   Mongoose Bite, Strider Kick, Counterattack, Lacerate on a mob that lives
+   12 s, and the plain swing -- at a mob that came to you, and at one on the
+   pet you walked up to.
+
+**You walk in and out yourself**; the rotation reads which side of the dead
+zone you stand on. Once the pet levels have begun (Tame Beast trained) the step
+out and the run-and-shoot stand aside while Beast Mastery runs; before them the
+run-and-shoot is still the kite module's (a hunter with no points reads as
+Beast Mastery). Auto Shot is pressed again the moment you are back out, because
+a strike or the swing switches it off.
 
 With the pet out there is no Concussive Shot on a charging mob and no Wing
 Clip; a mob running away is still dazed. With no pet out, Levelling's slow and
 clip come back. Arcane Shot goes only before Summon Hawk is trained. Kill
 Command and Steady Shot (Era's runes) stay in the list for Era; Forever has
-neither. The mana rules (*Mana for extra shots*) hold as everywhere else. Keep
-Aspect of the Hawk up in a fight for Deadly Aspects: aspects are yours, in the
-Aspects window.
+neither. The mana rules (*Mana for extra shots*) hold as everywhere else: on an
+empty bar nothing costs mana, and nothing that costs mana goes at a mob about
+to die (the plain swing still does). Keep Aspect of the Hawk up in a fight for
+Deadly Aspects: aspects are yours, in the Aspects window.
 
-**AOE melee weave (1.7.6, ALPHA/TEST).** A hunter option, off by default, in
-the class window and under Hunter options. It has not been tried in game. It
-replaces the melee weave on a key, which ran the hunter in and out by itself
-between Auto Shots and is gone, with its key and its option. Here **you walk
-in and out yourself**; the rotation reads which side of the dead zone you
-stand on. While the option is on this profile runs in place of your talents'
-(a fight with a player still runs the PvP hunter), and the step out and the
-run-and-shoot stand aside.
+The line in the class window (where the weave's switch was) says which side
+you are on, how many mobs carry a sting and how many hawks are out, or that
+Beast Mastery is not your rotation.
 
-- **Both sides:** two hawks at all times (Summon Hawk has no minimum range; a
-  bar that is refilling still keeps two), Rapid Fire once the fight is worth it
-  (two or more mobs, or one that lives 10 s; on Forever it speeds melee too),
-  Intimidation and Bestial Wrath as in Beast Mastery.
-- **In melee, the burst:** Immolation Trap at your feet (Explosive Trap with two
-  or more round you; Forever lays traps in a fight), Raptor Strike, Mongoose
-  Bite, Strider Kick, Counterattack, Lacerate on a mob that lives 12 s, and the
-  plain swing.
-- **Out of melee:** Multi-Shot on its cooldown as soon as you stand still, but
-  only with two or more mobs where it lands, and then ahead of everything (the
-  user: "if its 2+ mobs it should be priority to multishot", then "Neither PvP
-  or AoE meele wave should Multishot if its not 2+ enemy mobs"). Serpent Sting
-  is renewed on every mob fighting you or your pet, with no cap,
-  while you walk out and while you walk back in. Once your target carries its
-  sting, a reaction (*AOE weave: sting the next mob*) moves the target on to
-  the next mob of the fight whose sting is missing or has 2 s or less left:
-  the least left first, then the nearest. It only picks mobs within 35 yd,
-  outside the dead zone, not under control that damage breaks, and living 8 s
-  or more. Auto Shot is pressed again the moment you are back out, because a
-  strike or the swing switches it off.
+*Where it came from: the AOE melee weave (1.7.6, ALPHA/TEST).* A hunter option
+that ran its own profile in place of your talents', replacing the melee weave
+on a key (which ran the hunter in and out by itself and is gone). The user's
+design: "When in meele range u can still cast summon hawk, immolation trap and
+other Meele skilss to burst down dmg same as Rapid fire ... We manually Move out
+and when we move out we use Multi-shot! ... renew as many Serpent stings on
+Multiple target in combat with US!!! ... at all times keep 2 hawks up". Since
+1.8.1 the option and the profile are gone; a value the option saved changes
+nothing.
 
-The mana rules hold: on an empty bar nothing costs mana, and nothing that costs
-mana goes at a mob about to die (the plain swing still does). The line under
-the option in the class window says which side you are on, how many mobs carry
-a sting and how many hawks are out.
+**The stings, and the target swap (1.8.1).** The weave moved your target from
+mob to mob to sting each one. That moved Auto Shot and the assisting pet along
+with it. Now the rotation's spread puts the sting straight onto every mob of
+the fight, your target kept. The reaction *Beast Mastery: sting the next mob*
+(formerly *AOE weave: sting the next mob*) is what is left of the swap: out of
+melee, once your target carries its sting, a mob of the fight that has gone
+**4 s needing one all the same** (the spread switched off, or the client
+refusing the sting there) becomes the target. The least sting left goes first,
+then the nearest. It only picks mobs within 35 yd, outside the dead zone, not
+under control that damage breaks, and living 8 s or more, and only while Beast
+Mastery runs.
+
+**Disengage when a mob hits you (1.8.1).** A hunter option, off by default, in
+the class window and under Hunter options. The user: "add a button Turn it on
+if being attacked to disengage". Forever's Disengage is Classic's: the
+client's own table (`SpellEffect`) gives all three ranks one effect, a threat
+drop (effect 63, as Era's -141/-281/-406), melee range and a 5 s cooldown --
+not the later leap. So the switch means: a mob hitting you in melee that your
+pet is fighting (in a group, the tank) is handed back with Disengage (the
+reaction *Disengage when hit*, your target first, else the nearest). With
+nobody else on the mob the drop would leave it on you and waste the global, so
+then it waits; players are left alone. It is a reaction, so it needs Reactions
+on (the Reactions page). Off, **nothing ever presses Disengage for you**: not
+the threat reaction (*Shed threat*), not the escapes, not the hardcore
+bail-out. The class gates it through `key_gated` (`rotation.lua`,
+`H.key_allows`, which every one of those paths asks); `key_gated` takes a
+function since 1.8.1 as well as a key.
+
+**Intimidation (fixed in 1.8.1).** The user: "what about intimidation? I learned
+it recently from my talents but i dont see it being used". It had never been
+pressed, on any client. Its catalogue row needs the pet on the target, and it
+is cast on yourself (it lands on whatever the pet hits next), so the gate
+compared your own guid with the pet's target and refused it every time -- the
+rotation and the three Intimidation reactions alike. On yourself the need is
+now "the pet is on a mob". And Forever does not say what the pet is attacking
+(1.73.1): Intimidation and Bestial Wrath read the pet module's answer now,
+`P.pet.fighting()` -- the client's, else the mob the pet was last sent at while
+it lives, for 30 s, as the reactions already did.
+
+It is a cooldown to spend, not a filler. The user: "it stunts target and next
+sucess full attack gains 100% critical chance and Generate high threat so it
+should be used ina Burst, Interrupt (stunt) or when I really need a mob off me
+and Disengage is not available". So:
+
+- **In a burst.** It is in the hunter's burst sequence after Bestial Wrath (the
+  pet's next hit a sure crit inside the window), skipped while the pet is on
+  nothing or the mob is held by crowd control. The rotation's own rule presses
+  it only inside a burst window, for a window whose sequence went by before the
+  pet reached the mob; never on a mob about to die.
+- **To stop a cast.** *Stop the cast with crowd control*: Scatter Shot first,
+  Intimidation when the pet is on the caster.
+- **A mob off you.** *Intimidation: give the pet its mob back*: the pet's mob is
+  on you, Growl cannot bring it back, and Disengage cannot either (its switch
+  off, not trained, on its cooldown, or the mob out of melee reach). It waits
+  2 s after a Disengage, which needs that moment to turn the mob.
+- *Intimidation: save the pet* (the pet about to die under its mob) stays.
 
 **PvP hunter (1.7.6, ALPHA/TEST).** A hunter option, off by default, in the
 class window and under Hunter options. It has not been tried in game. Nobody
@@ -3922,8 +4316,10 @@ reactions' existing reads.
 *Nothing breaks your own control.*
 - A player in your Freezing Trap or Scatter Shot (or anyone's sheep) takes no
   shot, sting or hawk.
-- The pet is not sent at it; one already on it goes for whoever is hitting you,
-  else it is called back (this holds outside PvP too).
+- The pet is not sent at it and no pet skill is aimed there; one already on it
+  goes to your target if that is free, else whoever is hitting it or you, else
+  it is called back (this holds outside PvP too, for any mob held by control
+  that damage breaks, whoever sent the pet: 1.8.1).
 - No burst window opens on it.
 - Forever fires Auto Shot once per press, so not pressing stops it. On Era the
   attack is stopped once (a guess: that stop-attack ends Auto Shot).
@@ -3973,16 +4369,25 @@ reads its dungeon bosses as elites, so on Era *Bosses only* marks world and raid
 bosses, and *Elites and bosses* is the one for a dungeon. The pull does not
 need the mark: Auto Shot and the Aimed Shot opener start a fight without it.
 
-**Serpent Sting on** (same places): *My target only*, *Up to 2 mobs*, or *Up to
-3 mobs* (default). With more than one mob in the fight, once your target has
+**Serpent Sting on** (same places): *My target only*, *Up to 2 mobs*, *Up to
+3 mobs*, or *Every mob fighting you* (the default since 1.8.1; *Up to 3 mobs*
+before). With more than one mob in the fight, once your target has
 its sting the rule is asked about each other engaged mob in turn
 (`spread`, the engine's DoT spread, as the warlock's Corruption), and a sting
 goes on the first that is worth one, until that many carry yours. Each must
 live long enough for the sting on its own time to die, and the bar has to
-afford it (the spend tiers above); a mob the pet has not taken yet waits for it,
-like the target does. The engine sets `s.spreading` while it asks about a mob
-other than the target, which is how the cap is told apart from the target's own
-sting.
+afford it (the spend tiers above). Only the target waits for the pet; the
+other mobs are in the fight already (1.8.1: the wait was asked about each of
+them with one clock, so each add restarted it for the next, and while the
+target was not yet on the pet or on you two adds were never stung). Never a
+mob held by crowd control that damage breaks, and never one inside the dead
+zone: the next mob is asked. The engine also skips a mob the spell cannot
+reach -- out of range, inside its minimum range, out of sight -- and asks the
+next (1.8.1, `rotation.lua` `ask`, for every class's spread: the first mob the
+rule liked used to be the answer, and a press there failed, so one add hitting
+you in melee kept the sting off every other). The engine sets `s.spreading`
+while it asks about a mob other than the target, which is how the cap is told
+apart from the target's own sting.
 
 ## Healing the pet
 
@@ -4146,6 +4551,13 @@ before a hit lands: the switch moves out of Cheetah (or Pack) into the aspect
 you last fought in -- Hawk, else Monkey -- and the cast goes out at once, in the
 defensive band. The window's line says what happened: *Out of Cheetah: Boar
 reaches you in 0.8s.*
+
+Only with **Auto swap aspects** on (1.7.6; `rot_hunter_auto_aspect`, off by
+default): the switch under the aspect switches in the Hunter window, also on
+the Rotation page. Off, no aspect is ever swapped for you -- neither caller
+below acts, and Cheetah stays up through the hit. The aspect you switched on is
+still put back after a death or a dismount; that keeps your choice, it swaps
+nothing.
 
 What counts as a hit about to land (`aspects.lua`, `M.incoming`, read from
 JCore's enemies rows and missiles -- no reads of its own):

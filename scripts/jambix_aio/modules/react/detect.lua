@@ -242,9 +242,13 @@ return function(P, L)
             sit.aggro_pulled = true
         end
 
-        -- The mob the pet was holding has turned on us.
+        -- The mob the pet was holding has turned on us. A player is never
+        -- "held": it has no threat table, and seen live on 2026-10-12 the
+        -- PvE answers (Shed threat's Disengage, a threat drop on Forever;
+        -- Intimidation "give the pet its mob back") went at a player.
         sit.pet_lost_aggro = pet.alive and W.target.unit ~= nil and W.target.targets_me
             and pet.target_guid ~= nil and pet.target_guid == W.target.guid
+            and W.target.player ~= true
 
         return changes
     end

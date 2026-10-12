@@ -237,23 +237,25 @@ DATA.OPTIONS = {
     },
     HUNTER = {
         toggle("rot_hunter_kite", "Run and shoot before there is a pet", false),
-        toggle("rot_hunter_step_out", "Step out of melee once clipped", true),
+        toggle("rot_hunter_step_out", "Step out of melee once clipped", true,
+            "Not in Beast Mastery once you have a pet (1.8.1): its melee weave is yours to walk in and out of, and a step out would undo the walk in."),
         -- 1.84.0
         dropdown("rot_hunter_mark_on", "Hunter's Mark on",
             { "Every target", "Elites and bosses", "Bosses only", "Never" }, 1,
             "Bosses only: dungeon and raid bosses, by the client's own boss flag. Era has no such flag and reads its dungeon bosses as elites: take Elites and bosses there."),
         dropdown("rot_hunter_sting_spread", "Serpent Sting on",
-            { "My target only", "Up to 2 mobs", "Up to 3 mobs" }, 3,
-            "With more than one mob on you, the sting goes on each in turn, as long as it will live long enough for the sting to pay."),
+            { "My target only", "Up to 2 mobs", "Up to 3 mobs", "Every mob fighting you" }, 4,
+            "With more than one mob on you, the sting goes on each in turn, as long as it will live long enough for the sting to pay. Straight onto each mob: your target, Auto Shot and the pet stay where they are. Never a mob held by crowd control (a sheep, a sap, your trap)."),
+        -- 1.8.1: Disengage, when a mob hits you (react/rules/hunter.lua).
+        toggle("rot_hunter_disengage", "Disengage when a mob hits you", false,
+            "A mob hitting you in melee that your pet is fighting (in a group, the tank's) is handed back with Disengage. On Forever, as on Era, Disengage is a threat drop in melee range (5 s cooldown), not a leap: with nobody else on the mob it would do nothing, so then it waits. A reaction: it needs Reactions on (the Reactions page). Off: nothing ever presses Disengage for you, not the threat reaction and not the escapes."),
         -- 1.7.4
         dropdown("rot_hunter_mana_use", "Mana for extra shots",
             { "Spend freely", "Balanced", "Save for regen" }, 2,
             "Every special stops mana regeneration for five seconds. Balanced: under half a bar only the essentials go out (the opener, the mark, a sting on a long fight, one hawk, Multi-Shot on a pack) until spirit has the bar back to 80%, and the fillers (Multi-Shot on one mob, Arcane Shot) only above 80%. Save for regen: the same from 70% to 95%. Spend freely: as before 1.7.4."),
-        -- 1.7.6: the AOE melee weave. The line under it says which side of
-        -- the weave you stand on and what that side does.
-        toggle("rot_hunter_aoe_weave", "AOE melee weave (ALPHA/TEST)", false,
-            "ALPHA/TEST: not yet tried in game. You walk in and out yourself; the rotation reads which side you are on. In melee, the burst: Raptor Strike, Mongoose Bite, Strider Kick, Counterattack, Lacerate, the swing, and Immolation Trap at your feet (Explosive Trap with two or more round you). Out of melee: Multi-Shot as soon as you stand, first of all, but only with two or more mobs where it lands (never on one), and Serpent Sting renewed on every mob fighting you or your pet, the target moved from one mob to the next, on the way out and on the way back in. Both sides: two hawks at all times, Rapid Fire, Intimidation and Bestial Wrath. Runs in place of your talents' rotation (a fight with a player still runs the PvP hunter); the step out and the run-and-shoot stand aside."),
-        note("hunter_aoe"),
+        -- 1.8.1: the AOE melee weave is Beast Mastery's (no switch). The line
+        -- says which side of the weave you stand on and what that side does.
+        note("hunter_weave"),
         -- 1.7.6: the PvP hunter (modules/pvphunter.lua). The line under it
         -- says whether PvP mode is on, what it faces and what it last did.
         toggle("rot_hunter_pvp_alpha", "PvP hunter (ALPHA/TEST)", false,

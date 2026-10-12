@@ -61,12 +61,16 @@ function head(r, what) {
     if (r.fight !== undefined && r.fight !== null && !isHex(r.fight, 16, 64)) return 'fight must be 16 to 64 hex characters';
     if (!r.client || typeof r.client !== 'object') return 'client missing';
     if (!isStr(r.client.plugin, 32) || !isStr(r.client.game, 32) || !isStr(r.client.build, 48)) return 'client.plugin, game, build must be short strings';
+    // The model version the client ran under (the rollout's monitoring); optional.
+    if (r.client.model !== undefined && r.client.model !== null && !isStr(r.client.model, 16)) return 'client.model must be a short string';
     if (!r.me || typeof r.me !== 'object' || !CLASSES.has(String(r.me.class))) return 'me.class must be a class';
     if (r.me.level !== undefined && r.me.level !== null && !isInt(r.me.level, 1, 80)) return 'me.level out of range';
+    if (r.me.spec !== undefined && r.me.spec !== null && !isStr(r.me.spec, 24)) return 'me.spec must be a short string';
     if (!r.encounter || typeof r.encounter !== 'object') return 'encounter missing';
     if (!ENCOUNTERS.has(String(r.encounter.type))) return 'encounter.type unknown';
     if (!isInt(r.encounter.duration, 0, 3600)) return 'encounter.duration out of range';
     if (!OUTCOMES.has(String(r.encounter.outcome))) return 'encounter.outcome unknown';
+    if (r.encounter.enemies !== undefined && r.encounter.enemies !== null && !isInt(r.encounter.enemies, 0, 40)) return 'encounter.enemies out of range';
     const f = forbiddenKey(r, what);
     if (f) return `forbidden field ${f}`;
     return null;

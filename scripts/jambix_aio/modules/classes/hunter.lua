@@ -173,8 +173,22 @@ return function(P, H, CS)
     -- this caps how many carry one (the class option, default three). Each
     -- one still has to live long enough for the sting, on that mob's own
     -- time to die, and the bar has to afford it (the tiers above).
-    local STING_SPREAD = { "My target only", "Up to 2 mobs", "Up to 3 mobs" }
-    local STING_CAP = { 1, 2, 3 }
+    -- EVERY MOB FIGHTING YOU (1.8.1), and that is the default now. The user:
+    -- "the Rotation doesn't automatically Look for All targets in combat with
+    -- us and drop a Sting on them how come?" Three was the most there was.
+    local STING_SPREAD = { "My target only", "Up to 2 mobs", "Up to 3 mobs", "Every mob fighting you" }
+    local STING_CAP = { 1, 2, 3, math.huge }
+    local STING_EVERY = 4
+
+    --- Held by crowd control that damage breaks (anyone's sheep or sap, our
+    --- trap or Scatter Shot): nothing of ours goes at it (react/init.lua's
+    --- out_of_fight).
+    local function cc_held(unit)
+        local react = P.react
+        if not (unit and react and react.out_of_fight) then return false end
+        local ok, yes = pcall(react.out_of_fight, unit)
+        return ok and yes == true
+    end
 
     local function stung(s)
         local list, n = s.engaged_units, 0
@@ -188,16 +202,14 @@ return function(P, H, CS)
         return n
     end
 
-    --- Asked about another mob (the engine's `spread`): under the cap?
+    --- Asked about another mob (the engine's `spread`): under the cap, and
+    --- not a mob someone holds with crowd control (1.8.1: a sheep the
+    --- sting would wake).
     local function spread_ok(s)
         if not s.spreading then return true end
-        local cap = STING_CAP[CS and CS.opt("sting_spread", 3) or 3] or 1
+        if cc_held(s.target) then return false end
+        local cap = STING_CAP[CS and CS.opt("sting_spread", STING_EVERY) or STING_EVERY] or 1
         return cap > 1 and stung(s) < cap
-    end
-
-    local function sting_wanted(s)
-        if not spread_ok(s) then return false end
-        return H.dot_worth_it(s, "Serpent Sting", Sting_ttd[spend_tier(s)])
     end
 
     --- A hunter's damage comes from Auto Shot, and every special that is not
@@ -222,6 +234,16 @@ return function(P, H, CS)
         return s.target ~= nil and gap(s.target) > MIN_RANGE
     end
 
+    --- Serpent Sting on the target and, the engine's spread asking, on the
+    --- other mobs of the fight.
+    local function sting_wanted(s)
+        if not spread_ok(s) then return false end
+        -- Not inside the dead zone (1.8.1): an add hitting you in melee is
+        -- not stung, and the spread asks the next mob.
+        if not at_range(s) then return false end
+        return H.dot_worth_it(s, "Serpent Sting", Sting_ttd[spend_tier(s)])
+    end
+
     local function standing(s)
         return not s.player:is_moving()
     end
@@ -234,34 +256,30 @@ return function(P, H, CS)
         return not ok or here == nil or here == targeting.SOLO
     end
 
-    -- THE AOE MELEE WEAVE (1.7.6, ALPHA/TEST). Its class option runs the
-    -- `aoe_weave` profile (below); you walk in and out yourself. Read this
+    -- BEAST MASTERY'S MELEE WEAVE (1.8.1; the AOE melee weave of 1.7.6,
+    -- which had a switch and a profile of its own). You walk in and out
+    -- yourself; Beast Mastery reads which side you are on (below). Read this
     -- early because Auto Shot needs it: a strike or the swing in melee stops
     -- Auto Shot, so its first press back at range goes at once.
-    local AOE_WEAVE = "aoe_weave"
-
-    local function aoe_weave_on()
-        return CS ~= nil and CS.opt(AOE_WEAVE, false) == true
-    end
-
     local function forecast()
         return H.forecasting ~= nil and H.forecasting() == true
     end
 
     local melee_seen_at, restarted_at = -math.huge, -math.huge
 
-    --- In melee with the target. With the AOE weave on, the moment is kept
-    --- (not by the spell window's forecast, which asks about other mobs).
-    local function aoe_in_melee(s)
+    --- In melee with the target, and the moment kept (not by the spell
+    --- window's forecast, which asks about other mobs). Only Beast
+    --- Mastery's melee rules ask this, so only its melee restarts Auto Shot.
+    local function weave_in_melee(s)
         local inside = in_melee(s)
-        if inside and aoe_weave_on() and not forecast() then melee_seen_at = core.time() end
+        if inside and not forecast() then melee_seen_at = core.time() end
         return inside
     end
 
-    --- Auto Shot is owed a press straight back from melee: true once per
-    --- trip out, while the AOE weave is on.
-    local function aoe_back()
-        if not aoe_weave_on() or forecast() or melee_seen_at <= restarted_at then return false end
+    --- Auto Shot is owed a press straight back from Beast Mastery's melee:
+    --- true once per trip out.
+    local function weave_back()
+        if forecast() or melee_seen_at <= restarted_at then return false end
         restarted_at = core.time()
         return true
     end
@@ -299,9 +317,13 @@ return function(P, H, CS)
 
     --- Is the pet on our target? Intimidation stuns whatever the PET is
     --- hitting, so firing it while the pet is still running in stuns nothing.
+    -- THE PET MODULE'S READING (1.8.1): the client's answer, else the mob it
+    -- was sent at (P.pet.fighting). Forever does not say what the pet is
+    -- attacking (1.73.1), so this was false there for every mob, and
+    -- Intimidation and Bestial Wrath never went out.
     local function pet_on_target(s)
         if not s.target or not pet_alive() then return false end
-        local held = P.pet.pet_target()
+        local held = (P.pet.fighting and P.pet.fighting()) or P.pet.pet_target()
         if not held then return false end
         local ok_a, a = pcall(held.get_guid, held)
         local ok_b, b = pcall(s.target.get_guid, s.target)
@@ -411,10 +433,19 @@ return function(P, H, CS)
         return sent > PET_LEAD_PATIENCE
     end
 
+    -- THE WAIT IS FOR THE PULL, NOT FOR THE PACK (1.8.1). A spread rule (the
+    -- sting) is asked about every other mob of the fight too, and the wait
+    -- was asked about each of them: about whether the pet had hit a mob it
+    -- was never sent at, with one clock for every mob, so each add restarted
+    -- it for the next. With two adds it never ran out, and no add got a
+    -- sting -- the user: "the Rotation doesn't automatically Look for All
+    -- targets in combat with us and drop a Sting on them". Those mobs are in
+    -- the fight already (on you or the pet), so nothing waits for them.
+
     --- Wraps a damage predicate so it waits for the pet to have the mob,
     --- and (1.7.4) is not spent on a mob about to die.
     local function lead(pred)
-        return function(s) return pet_leads(s) and not dying(s) and pred(s) end
+        return function(s) return (s.spreading or pet_leads(s)) and not dying(s) and pred(s) end
     end
 
     --- Our mark on another mob of this fight, one that will live a while
@@ -700,9 +731,10 @@ return function(P, H, CS)
         end
         eligible_since = eligible_since or now
 
-        -- BACK FROM MELEE (1.7.6, the AOE melee weave): a strike or the swing
-        -- stopped Auto Shot, so the press goes now, not a swing later.
-        local back = aoe_back()
+        -- BACK FROM MELEE (1.7.6; Beast Mastery's weave since 1.8.1): a
+        -- strike or the swing stopped Auto Shot, so the press goes now, not a
+        -- swing later.
+        local back = weave_back()
         if back and auto_shot.restart then auto_shot.restart() end
 
         local period = ranged_period(s)
@@ -741,7 +773,7 @@ return function(P, H, CS)
             -- no shot after it -- Auto Shot is plainly not running -- and the
             -- flag still reads on, out here past the minimum range, it is
             -- melee: stop it, and the START goes through (at the latest, the
-            -- next retry). Straight back from the AOE weave's melee it is
+            -- next retry). Straight back from Beast Mastery's melee it is
             -- melee for certain (1.7.6).
             if client.auto_start_melee and (back or (not fresh and not after_shot)) and s.player then
                 local ok_m, melee = pcall(s.player.is_auto_attacking, s.player)
@@ -798,20 +830,40 @@ return function(P, H, CS)
 
     -- --- the pet's part -----------------------------------------------------
 
+    -- INTIMIDATION IS A COOLDOWN TO SPEND, NOT A FILLER (1.8.1). The user:
+    -- "it stunts target and next sucess full attack gains 100% critical
+    -- chance and Generate high threat so it should be used ina Burst,
+    -- Interrupt (stunt) or when I really need a mob off me and Disengage is
+    -- not available". So the rotation presses it only inside a burst window
+    -- (the burst sequence fires it too, after Bestial Wrath, see `burst`
+    -- below; this catches a window whose ramp went by before the pet was on
+    -- the mob). The stun on a dangerous cast and the mob taken off you are
+    -- the reactions' (react/rules/hunter.lua: "Stop the cast with crowd
+    -- control", "Intimidation: give the pet its mob back" once Disengage
+    -- cannot), as is a dying pet ("Intimidation: save the pet").
+
+    --- Intimidation in a burst window, the pet on our mob, the fight on, the
+    --- mob not about to die and not held by crowd control.
     local function intimidation_wanted(s)
-        if not s.in_combat then return false end
-        return pet_on_target(s)
+        if not s.in_combat or dying(s) or not H.bursting() then return false end
+        return pet_on_target(s) and not cc_held(s.target)
     end
 
-    --- Bestial Wrath on cooldown while levelling, the way the guide has it:
-    --- a two-minute cooldown against fights every half a minute is back
-    --- before it is wanted again, so holding it is waste. The fight still
-    --- has to last long enough to use some of it, and a burst window the
-    --- burst module opened always counts.
+    --- The burst sequence's veto (modules/burst.lua `when`): the pet on our
+    --- mob and nothing holding it that the stun would waste.
+    local function intimidation_burst(s)
+        return s ~= nil and s.in_combat == true and pet_on_target(s) and not cc_held(s.target)
+    end
+
+    -- BESTIAL WRATH IN THE BURST WINDOW ONLY (1.8.1). It went on cooldown
+    -- while levelling (Icy Veins' Classic guide: "use whenever possible").
+    -- The user chose the burst window for it, with Rapid Fire and
+    -- Intimidation, and the window solo for a harder fight only (burst_veto
+    -- below); with a tank the window opens freely. The burst sequence fires
+    -- it; this catches a window whose sequence went by first.
     local function bestial_wrath_wanted(s)
-        if H.bursting() then return pet_alive() end
-        if not s.in_combat or not pet_on_target(s) then return false end
-        return s.ttd > 8 or (s.melee or 0) >= 2
+        if not H.bursting() or not s.in_combat then return false end
+        return pet_alive() and not dying(s)
     end
 
     -- --- the shots ----------------------------------------------------------
@@ -985,6 +1037,9 @@ return function(P, H, CS)
     --   its cooldown, Multi-Shot instead on a pack (one shared cooldown);
     --   Intimidation once the pet is on the mob, for its threat; a mob that
     --   comes to you anyway is fought in melee while the pet takes it back.
+    --   (Since 1.8.1 Intimidation goes the user's way, not the guides': a
+    --   burst, a stopped cast, a mob off you when Disengage cannot -- see
+    --   "Intimidation is a cooldown to spend" above.)
     --
     -- It shipped first as an ALPHA behind its own switch. The user, the same
     -- day: "make it the new Rotation for beast master ... then Remove the
@@ -1003,7 +1058,27 @@ return function(P, H, CS)
     --   dazed. With no pet out, Levelling's slow and clip come back.
     --   FOREVER'S TWO-SECOND AIMED SHOT, from the catalogue (Era: three).
     --   No Arcane Shot once the hawks are trained (the user's choice, 1.7.5),
-    --   no Disengage (they prefer Mobalytics' melee, 2026-10-09).
+    --   no Disengage in the list (they prefer Mobalytics' melee, 2026-10-09;
+    --   since 1.8.1 a class switch presses it, react/rules/hunter.lua).
+    --
+    -- THE MELEE WEAVE IS PART OF IT (1.8.1). The user, 2026-10-11: "add AOE
+    -- melee weave into our Normal Beast master rotation no longer alpha/test
+    -- so take those considerations and apply it to the already Integrated
+    -- beast master for maximizing DPS!" The AOE melee weave's switch and
+    -- profile are gone; what it did is Beast Mastery's (see "Beast
+    -- Mastery's melee weave" below): you walk in and out yourself, the
+    -- profile reads which side you are on. Its considerations came with it:
+    --   MULTI-SHOT ONLY ON TWO OR MORE, and then before everything else. The
+    --   one-mob Multi-Shot (the quick shot when the aim would not land) is
+    --   gone: the user's rule for the weave ("Neither PvP or AoE meele wave
+    --   should Multishot if its not 2+ enemy mobs") is Beast Mastery's now.
+    --   Aimed Shot gives the shared cooldown to it from two mobs, not three.
+    --   TWO HAWKS AT ALL TIMES, the refill included.
+    --   IN MELEE, THE BURST: a fire trap at your feet, the strikes, Lacerate,
+    --   and the swing at whatever you walked up to, on you or on the pet.
+    --   RAPID FIRE on a pack or a mob that lives a while, in melee or out.
+    --   THE STING ON EVERY MOB OF THE FIGHT (the class option's default).
+    --   NOTHING MOVES YOU: the step out stands aside (kite.lua).
 
     local PET_REACH = 5             -- yards, centre to centre: the least a pet strikes from
     local FIRST_HIT_BEAT = 1.0      -- seconds in reach: by then its first swing has landed
@@ -1099,10 +1174,11 @@ return function(P, H, CS)
         return false, string.format("waiting for the pet's first hit (sent %.1fs ago)", sent)
     end
 
-    --- Wraps a damage predicate so it waits for the pet's first hit.
+    --- Wraps a damage predicate so it waits for the pet's first hit; never
+    --- for another mob of the fight (1.8.1, "the wait is for the pull").
     local function first(pred)
         return function(s)
-            return pet_hit_first(s) and pred(s)
+            return (s.spreading or pet_hit_first(s)) and pred(s)
         end
     end
 
@@ -1118,26 +1194,25 @@ return function(P, H, CS)
     end
 
     --- Aimed Shot on its cooldown: standing at range, the cast landing
-    --- before the mob does, not on a pack (Multi-Shot has the cooldown
-    --- there). While the bar refills (tier 1), one a fight.
+    --- before the mob does, not with two or more where Multi-Shot lands
+    --- (it has the shared cooldown there, 1.8.1). While the bar refills
+    --- (tier 1), one a fight.
     local function bm_aimed(s)
-        if not at_range(s) or not standing(s) or on_pack(s) then return false end
+        if not at_range(s) or not standing(s) or H.spread(s, 2) then return false end
         local tier = spend_tier(s)
         if tier < 1 or dying(s) then return false end
         if tier < 2 and H.since_cast("Aimed Shot") < 15 then return false end
         return cast_safe(s, aimed_cast())
     end
 
-    --- Multi-Shot on a pack whenever the bar allows anything; on one mob
-    --- only when Aimed Shot's cast would not land first and the bar is
-    --- fine: the shared cooldown's quick shot.
+    --- Multi-Shot only with two or more mobs where it lands (H.spread
+    --- counts what it would hit round the target, and none beside a mob held
+    --- by control that damage breaks), standing at range, whenever the bar
+    --- allows anything; never on one mob (1.8.1, the weave's rule).
     local MULTI_CAST = 0.5
     local function bm_multi(s)
-        if not at_range(s) or dying(s) then return false end
-        local tier = spend_tier(s)
-        if on_pack(s) then return tier >= 1 end
-        if tier < 2 or not standing(s) then return false end
-        return not cast_safe(s, aimed_cast()) and cast_safe(s, MULTI_CAST)
+        if not at_range(s) or not standing(s) or dying(s) then return false end
+        return spend_tier(s) >= 1 and H.spread(s, 2)
     end
 
     --- Is the target running off? The awareness row's word for it; without
@@ -1164,11 +1239,12 @@ return function(P, H, CS)
         return not pet_alive() and clip_wanted(s)
     end
 
-    --- The plain swing at a mob that came to us (Mobalytics: "finish them
-    --- off with Raptor Strike/Mongoose Bite and Melee Swings"). A START: it
-    --- cannot switch a running swing off.
+    --- The plain swing in melee (Mobalytics: "finish them off with Raptor
+    --- Strike/Mongoose Bite and Melee Swings"): at a mob that came to us,
+    --- and since the weave (1.8.1) at one we walked up to on the pet. A
+    --- START: it cannot switch a running swing off.
     local function bm_swing(s)
-        if not in_melee(s) or not on_me(s) then return false end
+        if not weave_in_melee(s) then return false end
         if P.kite and P.kite.active and P.kite.active() then return false end
         return H.melee_start_wanted ~= nil and H.melee_start_wanted(s) == true
     end
@@ -1323,10 +1399,14 @@ return function(P, H, CS)
         if not f or not f.melee then return false end
         if H.debuff_up(s.target, "Serpent Sting") or H.debuff_up(s.target, "Viper Sting") then return false end
         if hawks_out() > 0 and H.since_cast("Summon Hawk") < HAWK_LASTS then return false end
-        -- Not a player the next trap would not hold (diminishing returns).
-        local pvpx = P.pvpx
-        if pvpx and pvpx.dr then
-            local ok, mult = pcall(pvpx.dr, s.target, "incapacitate")
+        -- Not a player the next trap would not hold: the PvP intelligence's
+        -- control plan (react/intel/ccplan.lua, Stage 6) says what the next
+        -- incapacitate gets -- on Era by DRList's rule, on Forever UNKNOWN,
+        -- so there the trap is laid and only "immune" ever holds it back.
+        local I = P.react and P.react.intel
+        local IS = I and I.S
+        if I and I.cc and IS and IS.active and not IS.off then
+            local ok, mult = pcall(I.cc.next, IS, units.guid(s.target), "incapacitate")
             if ok and mult == 0 then return false end
         end
         return trap_soon()
@@ -1541,137 +1621,148 @@ return function(P, H, CS)
         return spend_tier(s) >= 1
     end
 
-    -- --- the AOE melee weave (1.7.6, ALPHA/TEST) ----------------------------
+    -- --- Beast Mastery's melee weave (1.8.1) --------------------------------
     --
-    -- The user, 2026-10-10, in place of the melee weave on a key (which ran
-    -- the hunter in and out by itself between Auto Shots, and is gone): "When
-    -- in meele range u can still cast summon hawk, immolation trap and other
-    -- Meele skilss to burst down dmg same as Rapid fire (this is both meele
-    -- and rnage).... We manually Move out and when we move out we use
+    -- The AOE melee weave (1.7.6, ALPHA/TEST), which ran behind its own switch
+    -- in place of the talents' profile. The user, 2026-10-10: "When in meele
+    -- range u can still cast summon hawk, immolation trap and other Meele
+    -- skilss to burst down dmg same as Rapid fire (this is both meele and
+    -- rnage).... We manually Move out and when we move out we use
     -- Multi-shot! At this time We also renew as many Serpent stings on
-    -- Multiple target in combat with US!!! it can Swap through target
-    -- automatically Aslong as its in combat with us and Renew while we mvoe
-    -- back in!! again at all times keep 2 hawks up For maximized DPS!"
+    -- Multiple target in combat with US!!! ... again at all times keep 2
+    -- hawks up For maximized DPS!" Then, 2026-10-11, into Beast Mastery with
+    -- no switch and no ALPHA tag (see "Beast Mastery" above).
     --
-    -- Its class option (`aoe_weave`, off) runs this profile in place of the
-    -- talents' (PvP mode still comes first). Nothing here moves you: the step
-    -- out and the run-and-shoot stand aside while it runs (kite.lua). Which
-    -- side of the dead zone you stand on says what goes out:
+    -- Nothing here moves you: the step out and the run-and-shoot stand aside
+    -- while Beast Mastery runs once the pet levels have begun (kite.lua).
+    -- Which side of the dead zone you stand on says what goes out:
     --
     --   BOTH SIDES. Two hawks at all times (Summon Hawk has no minimum
-    --   range); Rapid Fire (on Forever +40% ranged AND melee attack speed);
-    --   Intimidation and Bestial Wrath as in Beast Mastery.
+    --   range). In a burst window (1.8.1: solo, a harder fight only), Rapid
+    --   Fire (on Forever +40% ranged AND melee attack speed), Bestial Wrath
+    --   and Intimidation.
     --   IN MELEE, THE BURST. Explosive Trap at your feet with two or more
     --   mobs round you, Immolation Trap otherwise (Forever lays traps in a
     --   fight); Raptor Strike, Mongoose Bite, Strider Kick, Counterattack,
     --   Lacerate on a mob that lives for it, and the swing.
-    --   OUT. Multi-Shot on its cooldown as soon as you stand, and Serpent
-    --   Sting renewed on every mob in the fight -- no cap -- on the way out
-    --   and on the way back in. Multi-Shot only with two or more mobs where
-    --   it lands, and then before everything (the user: "if its 2+ mobs it
-    --   should be priority to multishot", then "Neither PvP or AoE meele
-    --   wave should Multishot if its not 2+ enemy mobs"). Its reaction (react/rules/hunter.lua, "AOE
-    --   weave: sting the next mob") moves the target on to the next mob whose
-    --   sting is missing or running out, only among mobs fighting you or your
-    --   pet; the rule's spread does it from here where that reaction is not
-    --   loaded. Auto Shot is pressed again the moment you are back out.
+    --   OUT. Multi-Shot first with two or more where it lands, and never on
+    --   one; Serpent Sting on every mob of the fight, straight onto each
+    --   without moving your target (the spread); Aimed Shot on its cooldown.
+    --   Auto Shot is pressed again the moment you are back out. Where a mob
+    --   of the fight goes without a sting all the same, the reaction "Beast
+    --   Mastery: sting the next mob" (react/rules/hunter.lua) moves the target
+    --   to it.
     --
     -- The mana rules (1.7.4) still hold: the refill keeps to tier 1, and
     -- nothing that costs mana goes at a mob about to die.
 
-    local AOE_RAPID_TTD = 10        -- seconds: one mob worth Rapid Fire
-    local AOE_TRAP_TTD = 6          -- seconds: a mob worth a fire trap
-    local AOE_LACERATE_TTD = 12     -- seconds: a mob worth Lacerate's 21 s bleed
+    local WEAVE_TRAP_TTD = 6        -- seconds: a mob worth a fire trap
+    local WEAVE_LACERATE_TTD = 12   -- seconds: a mob worth Lacerate's 21 s bleed
 
-    --- Is the AOE weave the profile running: its option on, and no PvP.
-    local function aoe_running()
-        return aoe_weave_on() and not pvp_mode()
+    -- The profile `suggest` last named: the rotation asks it every tick.
+    local suggested = nil
+
+    --- Is Beast Mastery the profile running (and no PvP)? The kite stands
+    --- aside, and the sting's reaction moves the target, only then.
+    local function weave_running()
+        return suggested == "beast_mastery" and not pvp_mode()
     end
 
-    local function engaged_count(s)
-        local list, n = s.engaged_units, 0
-        if type(list) ~= "table" then return s.target and 1 or 0 end
-        for i = 1, #list do
-            local unit = list[i]
-            if unit:is_valid() and not unit:is_dead() then n = n + 1 end
+    -- WHEN THE BURST WINDOW OPENS, SOLO (1.8.1). The user asked when a hunter
+    -- should burst in PvE and what goes in it, from the guides. None of the
+    -- Forever guides has a cooldown section yet (read 2026-10-11). wowtbc.gg
+    -- puts "Cast Rapid Fire, Bestial Wrath, and any on-use effects" then
+    -- "Cast Intimidation" near the top of its list -- the burst sequence
+    -- (`burst` below, with the racial and the trinkets, modules/burst.lua).
+    -- Mobalytics, solo: Rapid Fire "on harder encounters, but keep in mind
+    -- It's going to generate a lot of threat for you quickly, and might pull
+    -- enemies off your pet ... better used in group play or Dungeons". Icy
+    -- Veins (Classic Era), with a tank: everything "together on pull ... do
+    -- not give up extra uses of a cooldown by delaying it". The user took
+    -- Mobalytics' rule. So, solo:
+    --   A HARDER FIGHT ONLY: an elite, a rare or a boss, three or more mobs,
+    --   a fight we are losing -- the burst module's own reasons -- or a mob
+    --   that lives SOLO_LONG_FIGHT seconds; not the ordinary levelling mob
+    --   the module's "burst freely" took.
+    --   THE PET HOLDS THE MOB FIRST: the mob on the pet (or on you already,
+    --   where there is nothing left to pull).
+    -- With a tank (a group) the module decides as before: freely.
+    local SOLO_LONG_FIGHT = 20      -- seconds: a mob this long-lived is a harder fight
+
+    --- The burst module's veto (modules/burst.lua): a reason to wait, or nil.
+    ---@param s table the rotation's snapshot
+    ---@param kind string losing | pack | elite | freely
+    ---@param lasting number the fight's measured length, seconds
+    local function burst_veto(s, kind, lasting)
+        if not solo() then return nil end
+        if kind == "freely" and (lasting or 0) < SOLO_LONG_FIGHT then
+            return string.format("solo: kept for a harder fight (elite, 3+ mobs, losing, or %d s+; this one %.0f s)",
+                SOLO_LONG_FIGHT, lasting or 0)
         end
-        return n
+        if pet_alive() then
+            local mode = P.pet.mode and P.pet.mode() or nil
+            if mode ~= P.pet.OFF and mode ~= P.pet.FOCUS and s and s.target and not on_pet(s) and not on_me(s) then
+                return "solo: waiting for the pet to hold the mob (Rapid Fire's threat would pull it to you)"
+            end
+        end
+        return nil
     end
 
-    --- Rapid Fire in melee or at range, once the fight is worth it: a pack,
-    --- a mob that lives a while, or a burst window.
-    local function aoe_rapid_fire(s)
+    --- Rapid Fire in melee or at range, inside a burst window only (1.8.1:
+    --- the user chose one rule for the five-minute cooldown, the burst's;
+    --- the weave fired it on any pack or 10 s mob before). The burst
+    --- sequence presses it first; this catches a window it went by.
+    local function weave_rapid_fire(s)
         if not s.in_combat or not s.target or dying(s) or spend_tier(s) < 1 then return false end
-        if H.bursting() then return true end
-        return engaged_count(s) >= 2 or (s.ttd or 0) >= AOE_RAPID_TTD
+        return H.bursting()
     end
 
-    --- Two hawks out at all times, in melee or out of it.
-    local function aoe_hawk(s)
+    --- Two hawks out at all times, in melee or out of it, the refill too.
+    local function weave_hawk(s)
         if not s.target or not s.in_combat or dying(s) or spend_tier(s) < 1 then return false end
         return hawks_out() < 2
     end
 
-    local function aoe_burst(s)
-        return aoe_in_melee(s) and s.in_combat and not dying(s) and spend_tier(s) >= 1
+    local function weave_burst(s)
+        return weave_in_melee(s) and s.in_combat and not dying(s) and spend_tier(s) >= 1
     end
 
     --- Explosive Trap at your feet, in melee with two or more round you.
-    local function aoe_explosive(s)
-        return aoe_burst(s) and H.spread(s, 2)
+    local function weave_explosive(s)
+        return weave_burst(s) and H.spread(s, 2)
     end
 
     --- Immolation Trap at your feet, in melee, on a mob that lives to burn.
-    local function aoe_immolation(s)
-        return aoe_burst(s) and (s.ttd or 0) >= AOE_TRAP_TTD
+    local function weave_immolation(s)
+        return weave_burst(s) and (s.ttd or 0) >= WEAVE_TRAP_TTD
     end
 
-    --- The strikes, in melee, on anything not about to die.
-    local function aoe_strike(s)
-        return aoe_in_melee(s) and not dying(s)
+    --- The strikes, in melee, on anything not about to die; not while the
+    --- pre-pet run-and-shoot has the legs.
+    local function weave_strike(s)
+        if not weave_in_melee(s) or dying(s) then return false end
+        return not (P.kite and P.kite.active and P.kite.active())
     end
 
     --- Lacerate (Forever's melee bleed), on a mob that lives for it.
-    local function aoe_lacerate(s)
-        if not aoe_burst(s) or H.debuff_up(s.target, "Lacerate") then return false end
-        return (s.ttd or 0) >= AOE_LACERATE_TTD
+    local function weave_lacerate(s)
+        if not weave_burst(s) or H.debuff_up(s.target, "Lacerate") then return false end
+        return (s.ttd or 0) >= WEAVE_LACERATE_TTD
     end
 
-    --- The swing in melee. A START: it cannot switch a running swing off.
-    local function aoe_swing(s)
-        if not aoe_in_melee(s) then return false end
-        return H.melee_start_wanted ~= nil and H.melee_start_wanted(s) == true
-    end
-
-    --- Multi-Shot out of melee, on its cooldown, as soon as you stand, and
-    --- only with two or more mobs where it lands. H.spread counts what this
-    --- Multi-Shot would hit round the target, and none beside a mob we hold
-    --- with control that damage breaks.
-    local function aoe_multi(s)
-        if not at_range(s) or not standing(s) or dying(s) then return false end
-        return spend_tier(s) >= 1 and H.spread(s, 2)
-    end
-
-    --- Serpent Sting out of melee, moving or not: renewed on the target and
-    --- (the engine's spread) on every other mob in the fight, with no cap.
-    local function aoe_sting(s)
-        if not at_range(s) then return false end
-        return H.dot_worth_it(s, "Serpent Sting", Sting_ttd[spend_tier(s)])
-    end
-
-    --- One line for the class window: off, or which side of the weave you
-    --- stand on and what that side does.
-    local function aoe_status()
-        local tag = "AOE melee weave (ALPHA/TEST): "
-        if not aoe_weave_on() then return tag .. "off" end
-        if pvp_mode() then return tag .. "on; a fight with a player runs PvP instead" end
+    --- One line for the class window: which side of the weave you stand on
+    --- and what that side does, or why the weave is not running.
+    local function weave_status()
+        local tag = "Beast Mastery weave: "
+        if pvp_mode() then return tag .. "a fight with a player runs the PvP hunter" end
+        if not weave_running() then return tag .. "not running (your talents lead with another tree)" end
         local combat = P.combat
         local target = combat and combat.target and combat.target() or nil
         local fighting = combat and combat.in_combat and combat.in_combat() == true
-        if not target or not fighting then return tag .. "on, waiting for a fight" end
+        if not target or not fighting then return tag .. "waiting for a fight" end
         local hawks = hawks_out()
         if in_melee({ target = target }) then
-            return string.format("%sin melee: traps, strikes, Rapid Fire; hawks %d/2. Move out for Multi-Shot", tag, hawks)
+            return string.format("%sin melee: traps, strikes; hawks %d/2. Move out for the shots", tag, hawks)
         end
         local list = P.field and P.field.by_weakest and P.field.by_weakest() or { target }
         local n, stung_n = 0, 0
@@ -1682,8 +1773,19 @@ return function(P, H, CS)
                 if H.debuff_remaining(unit, "Serpent Sting") > 2 then stung_n = stung_n + 1 end
             end
         end
-        local multi = n >= 2 and "Multi-Shot; " or "one mob, no Multi-Shot; "
+        local multi = n >= 2 and "Multi-Shot; " or "one mob, Aimed Shot; "
         return string.format("%sout: %sSerpent Sting on %d of %d; hawks %d/2", tag, multi, stung_n, n, hawks)
+    end
+
+    -- DISENGAGE WHEN HIT (1.8.1). The user: "add a button Turn it on if
+    -- being attacked to disengage". Forever's Disengage is Classic's (its
+    -- table's effect is a threat drop, as Era's: no leap), so the switch
+    -- means: a mob hitting you in melee is handed back to the pet or the
+    -- tank (react/rules/hunter.lua, "Disengage when hit"). Off, nothing
+    -- presses Disengage for you -- not the threat rule, not the escapes:
+    -- the class's key_gated below is the gate all of them ask.
+    local function disengage_on()
+        return CS ~= nil and CS.opt("disengage", false) == true
     end
 
     local profiles = {}
@@ -1720,8 +1822,13 @@ return function(P, H, CS)
         },
     }
 
-    -- The guides' order (see "Beast Mastery" above). Everything that hits
-    -- the mob from range waits for the pet's first hit. Kill Command and
+    -- The guides' order (see "Beast Mastery" above) with the melee weave in
+    -- it (1.8.1): Multi-Shot first with two or more where it lands; the
+    -- hawks on both sides, and Rapid Fire, Bestial Wrath and Intimidation in a
+    -- burst window (solo, a harder fight only: burst_veto); the
+    -- burst in melee; the sting on every mob and Aimed Shot from range. What
+    -- hits the mob from range (and Rapid Fire, and the hawks) waits for the
+    -- pet's first hit; once you walk in, nothing waits. Kill Command and
     -- Steady Shot are Era's runes, kept from the old list; Forever has
     -- neither, so there they never go.
     profiles.beast_mastery = {
@@ -1730,24 +1837,36 @@ return function(P, H, CS)
         rules = {
             { "Hunter's Mark", mark_wanted, upkeep = 5 },
             { "Mend Pet", mend_pet_wanted, self = true, upkeep = 8 },
+            { "Auto Shot", first(auto_shot_rule), upkeep = 1, direct = true },
+            -- Out, with two or more where it lands: Multi-Shot first.
+            { "Multi-Shot", first(bm_multi) },
+            -- Both sides of the weave.
+            { "Rapid Fire", first(weave_rapid_fire), self = true, upkeep = 5 },
             { "Intimidation", intimidation_wanted, self = true, upkeep = 5 },
             { "Bestial Wrath", bestial_wrath_wanted, self = true, upkeep = 5 },
+            { "Summon Hawk", first(weave_hawk), upkeep = 1 },
+            -- A runner is dazed; with no pet out, the charge and the clip too.
             { "Concussive Shot", bm_slow, upkeep = 4 },
             { "Wing Clip", bm_clip, upkeep = 3 },
-            { "Auto Shot", first(auto_shot_rule), upkeep = 1, direct = true },
             { "Kill Command", first(afford(function(s) return s.in_combat and not dying(s) end)), upkeep = 1 },
+            -- In melee: the burst.
+            { "Explosive Trap", weave_explosive, self = true, upkeep = 20 },
+            { "Immolation Trap", weave_immolation, self = true, upkeep = 20 },
+            { "Raptor Strike", weave_strike },
+            { "Mongoose Bite", weave_strike },
+            { "Strider Kick", weave_strike, upkeep = 1 },
+            { "Counterattack", weave_strike, upkeep = 1 },
+            { "Lacerate", weave_lacerate, upkeep = 2, dot = true },
+            { "Attack", bm_swing, direct = true, fast = true, upkeep = 1 },
+            -- Out: the sting on every mob of the fight, Aimed Shot on its
+            -- cooldown.
             { "Serpent Sting", first(sting_wanted),
               upkeep = 2, dot = true, spread = true },
-            { "Summon Hawk", first(hawk_wanted), upkeep = 1 },
             { "Aimed Shot", first(bm_aimed) },
-            { "Multi-Shot", first(bm_multi) },
             -- Before the hawks (under 25) the instant still has a place;
             -- arcane_wanted gives it up once Summon Hawk is trained.
             { "Arcane Shot", first(arcane_wanted) },
             { "Steady Shot", first(afford(at_range)) },
-            { "Raptor Strike", melee_stuck },
-            { "Mongoose Bite", melee_stuck },
-            { "Attack", bm_swing, direct = true, fast = true, upkeep = 1 },
         },
     }
 
@@ -1794,43 +1913,6 @@ return function(P, H, CS)
             { "Mongoose Bite", melee_stuck },
             { "Strider Kick", melee_stuck, upkeep = 1 },
             { "Raptor Strike", melee_stuck },
-        },
-    }
-
-    -- The AOE melee weave (1.7.6, ALPHA/TEST; see its section above).
-    -- Multi-Shot first, and only, when two or more mobs are where it lands;
-    -- then both sides, the burst in melee, and what goes out from range.
-    -- Only the pull's shots wait for the pet's first hit, as in Beast
-    -- Mastery; once you walk in, nothing waits.
-    profiles.aoe_weave = {
-        label = "AOE melee weave (ALPHA/TEST)",
-        power = "MANA",
-        rules = {
-            { "Hunter's Mark", mark_wanted, upkeep = 5 },
-            { "Mend Pet", mend_pet_wanted, self = true, upkeep = 8 },
-            -- Out, with two or more where it lands: Multi-Shot first.
-            { "Auto Shot", first(auto_shot_rule), upkeep = 1, direct = true },
-            { "Multi-Shot", first(aoe_multi) },
-            -- Both sides of the weave.
-            { "Rapid Fire", aoe_rapid_fire, self = true, upkeep = 5 },
-            { "Intimidation", intimidation_wanted, self = true, upkeep = 5 },
-            { "Bestial Wrath", bestial_wrath_wanted, self = true, upkeep = 5 },
-            { "Summon Hawk", aoe_hawk, upkeep = 1 },
-            -- In melee: the burst.
-            { "Explosive Trap", aoe_explosive, self = true, upkeep = 20 },
-            { "Immolation Trap", aoe_immolation, self = true, upkeep = 20 },
-            { "Raptor Strike", aoe_strike },
-            { "Mongoose Bite", aoe_strike },
-            { "Strider Kick", aoe_strike, upkeep = 1 },
-            { "Counterattack", aoe_strike, upkeep = 1 },
-            { "Lacerate", aoe_lacerate, upkeep = 2, dot = true },
-            { "Wing Clip", bm_clip, upkeep = 3 },
-            { "Attack", aoe_swing, direct = true, fast = true, upkeep = 1 },
-            -- Out: the stings on every mob.
-            { "Serpent Sting", first(aoe_sting),
-              upkeep = 2, dot = true, spread = true },
-            { "Concussive Shot", bm_slow, upkeep = 4 },
-            { "Arcane Shot", first(arcane_wanted) },
         },
     }
 
@@ -1895,15 +1977,22 @@ return function(P, H, CS)
         -- the rule itself would press it.
         toggle_status = { ["Auto Shot"] = auto_shot_status },
         -- Only what moves the character is left to choose (1.33.0): the
-        -- pull, the opener, the fillers, Intimidation, Bestial Wrath and the
-        -- slows are decided by the fight.
+        -- pull, the opener, the fillers and the slows are decided by the
+        -- fight; Rapid Fire, Bestial Wrath and Intimidation by the burst
+        -- window (solo, a harder fight), Intimidation also for a stopped cast
+        -- and a mob off you (1.8.1).
         settings = function(s, P)
             s:label("The pull is yours: attack (right-click, Attack, Auto Shot) and the")
-            s:label("opener, fillers, Intimidation, Bestial Wrath and slows follow the fight.")
+            s:label("opener, fillers and slows follow the fight. Rapid Fire, Bestial Wrath and")
+            s:label("Intimidation go in a burst window: solo only on a harder fight (an elite, 3+")
+            s:label("mobs, losing, a mob living 20 s+) once the pet holds the mob; in a group freely.")
+            s:label("Intimidation also stops a dangerous cast, and takes a mob off you when")
+            s:label("Disengage cannot.")
             s:label("These two move your character:")
             -- Off by default since 1.64.1 (the user, 2026-10-04).
             s:toggle("kite", "Run and shoot before there is a pet", false)
             s:toggle("step_out", "Step out of melee once the mob is clipped or on the pet", true)
+            s:label("(Not in Beast Mastery once you have a pet: there you walk in and out yourself.)")
             -- 1.7.6: the one aspect swap made for you (modules/aspects.lua),
             -- off by default (the user, 2026-10-10). Also in the Hunter window.
             s:toggle("auto_aspect", "Auto swap aspects", false)
@@ -1914,24 +2003,27 @@ return function(P, H, CS)
             s:dropdown("mark_on", "Hunter's Mark on", MARK_ON, MARK_EVERY)
             s:label("Bosses only: dungeon and raid bosses (on Era, whose dungeon bosses")
             s:label("read as elites, take Elites and bosses for those).")
-            s:dropdown("sting_spread", "Serpent Sting on", STING_SPREAD, 3)
+            s:dropdown("sting_spread", "Serpent Sting on", STING_SPREAD, STING_EVERY)
+            s:label("Every mob fighting you (1.8.1): each mob on you or your pet gets its own")
+            s:label("sting, straight onto it, your target kept; never one held by crowd control.")
+            -- 1.8.1: Disengage, when a mob hits you (react/rules/hunter.lua).
+            s:toggle("disengage", "Disengage when a mob hits you", false)
+            s:label("Disengage when a mob hits you: in melee, a mob your pet is fighting (or, in")
+            s:label("a group, the tank's) is handed back with Disengage, a threat drop on Forever")
+            s:label("as on Era. Off: nothing ever presses Disengage for you.")
             -- 1.7.4: how much of the bar the extra shots may have.
             s:dropdown("mana_use", "Mana for extra shots", MANA_USE, MANA_BALANCED)
             s:label("Balanced: under half a bar only the essentials, until spirit has it")
             s:label("back to 80%; the fillers (Multi-Shot on one mob, Arcane Shot) above 80%.")
             s:label("Save for regen: the same from 70% to 95%. Spend freely: as before 1.7.4.")
-            -- 1.7.6: Beast Mastery is the Forever guides' rotation.
-            s:label("Beast Mastery: the Forever guides' rotation. The pet hits first, then Auto")
-            s:label("Shot, Serpent Sting, two hawks, Aimed Shot on its cooldown (Multi-Shot on a")
-            s:label("pack); a mob that reaches you is meleed while the pet takes it back. Keep")
-            s:label("Aspect of the Hawk up in a fight (Deadly Aspects).")
-            -- 1.7.6: the AOE melee weave. You move; it picks the side's spells.
-            s:toggle(AOE_WEAVE, "AOE melee weave (ALPHA/TEST)", false)
-            s:label("AOE melee weave (ALPHA/TEST): you walk in and out yourself. In melee: Raptor")
-            s:label("Strike, Mongoose Bite, Strider Kick, Lacerate, Immolation Trap (Explosive Trap")
-            s:label("round a pack). Out: Multi-Shot first, and only, with 2+ mobs where it lands;")
-            s:label("Serpent Sting renewed on every mob fighting you, the target moved from one")
-            s:label("to the next. Both: two hawks, Rapid Fire.")
+            -- 1.7.6: Beast Mastery is the Forever guides' rotation; 1.8.1:
+            -- with the melee weave in it. You move; it picks the side's spells.
+            s:label("Beast Mastery: the Forever guides' rotation with the melee weave. The pet")
+            s:label("hits first, then Auto Shot. You walk in and out yourself. Out: Multi-Shot")
+            s:label("first with 2+ mobs where it lands (never on one), Serpent Sting on every mob,")
+            s:label("Aimed Shot on its cooldown. In melee: Raptor Strike, Mongoose Bite, Strider")
+            s:label("Kick, Lacerate, Immolation Trap (Explosive Trap round a pack), the swing.")
+            s:label("Both: two hawks. Keep Aspect of the Hawk up in a fight (Deadly Aspects).")
             -- 1.7.6: the PvP hunter (modules/pvphunter.lua, rules/hunter_pvp.lua).
             s:toggle(PVP_ALPHA, "PvP hunter (ALPHA/TEST)", false)
             s:label("PvP hunter (ALPHA/TEST): while your target is an enemy player, or one is on")
@@ -1943,11 +2035,16 @@ return function(P, H, CS)
             s:label("Fear, a switch to the player who attacks you.")
         end,
         -- The class window's lines under the switches (classwin.lua NOTES).
-        aoe_status = aoe_status,
+        weave_status = weave_status,
         pvp_status = pvp_status,
-        -- Is the AOE melee weave the profile running? The kite stands aside
-        -- (kite.lua) and its reaction moves the target (react/rules/hunter.lua).
-        aoe_running = aoe_running,
+        -- Is Beast Mastery (and its melee weave) the profile running? The
+        -- kite stands aside (kite.lua) and the sting's reaction may move the
+        -- target (react/rules/hunter.lua).
+        weave_running = weave_running,
+        -- Abilities fired only while a switch says so (rotation.lua,
+        -- H.key_allows: the rotation, the reactions and the escapes all ask).
+        -- Disengage only with its switch on (1.8.1).
+        key_gated = { ["Disengage"] = disengage_on },
         -- This class has something that hits more than one target, so the
         -- field module may plan an AoE. Declared rather than inferred: a rule
         -- predicate is a closure and cannot be asked what it would do.
@@ -1957,9 +2054,16 @@ return function(P, H, CS)
         -- pulls the trinkets and the offensive racial into the same few
         -- seconds so they multiply each other instead of landing on three
         -- different mobs. `duration` is what the window is held open for.
+        -- WHEN: modules/burst.lua decides; solo, only a harder fight and only
+        -- once the pet holds the mob (burst_veto, 1.8.1).
+        burst_veto = burst_veto,
         burst = {
             { spell = "Rapid Fire", duration = 15 },
             { spell = "Bestial Wrath", duration = 18 },
+            -- 1.8.1: the stun and the pet's next hit a sure crit, into Bestial
+            -- Wrath; only with the pet on the mob (a burst is where the user
+            -- wants it, with a stopped cast and a mob taken off you).
+            { spell = "Intimidation", duration = 3, when = intimidation_burst },
         },
 
         class_name = "HUNTER",
@@ -1976,21 +2080,25 @@ return function(P, H, CS)
         -- damage it adds.
         default_pet_mode = 2,
         profiles = profiles,
-        profile_order = { "leveling", "beast_mastery", "marksmanship", "survival", AOE_WEAVE, PVP },
+        profile_order = { "leveling", "beast_mastery", "marksmanship", "survival", PVP },
         suggest = function(t)
             -- 1.7.6: a fight with a player runs the PvP profile, whatever
-            -- the talents, while its switch is on; then the AOE melee weave,
-            -- while its switch is on.
-            if pvp_mode() then return PVP end
-            if aoe_weave_on() then return AOE_WEAVE end
-            local bm, mm, surv = t.points()
-            local total = bm + mm + surv
-            -- 1.7.6: Beast Mastery from the first point (and with none);
-            -- under twenty, Levelling keeps the hunters led by the other two.
-            if bm >= mm and bm >= surv then return "beast_mastery" end
-            if total < 20 then return "leveling" end
-            if mm >= surv then return "marksmanship" end
-            return "survival"
+            -- the talents, while its switch is on. (The AOE melee weave's
+            -- switch came next until 1.8.1; the weave is Beast Mastery's now,
+            -- and a value that switch saved changes nothing.)
+            local function pick()
+                if pvp_mode() then return PVP end
+                local bm, mm, surv = t.points()
+                local total = bm + mm + surv
+                -- 1.7.6: Beast Mastery from the first point (and with none);
+                -- under twenty, Levelling keeps the hunters led by the other two.
+                if bm >= mm and bm >= surv then return "beast_mastery" end
+                if total < 20 then return "leveling" end
+                if mm >= surv then return "marksmanship" end
+                return "survival"
+            end
+            suggested = pick()
+            return suggested
         end,
     }
 end

@@ -179,14 +179,16 @@ return function(P, ctx)
             if ok then text = value end
         end
         local parsed = D.parse(text)
-        prior_cache[id] = parsed or false
+        -- Spell data loads late: an empty answer is asked again next time.
+        if parsed or (type(text) == "string" and text ~= "") then prior_cache[id] = parsed or false end
         return parsed
     end
 
-    -- A new rank, a new tooltip.
-    if ctx and ctx.on then
-        ctx.on("jambix.aio.spells_changed", function() prior_cache = {} end)
-    end
+    -- Kept by id, so a new rank (a new id) reads its own tooltip; nothing is
+    -- forgotten on SPELLS_CHANGED. It used to be, and the client fires that
+    -- often: every cast re-read the tooltip, and Forever's own Rend Flesh
+    -- (1309069) asserts inside GetSpellDescription ("applied variance
+    -- twice"), each a report and a hitch, three in 75 s on 2026-10-11.
 
     --- What one cast of this spell is worth against a target with `ttd`
     --- seconds to live: the measured average once it exists, the tooltip

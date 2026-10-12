@@ -8,7 +8,10 @@ over them.
 **Requires:** `core` API 2.058 or later (the declarative `_G.menu` host, and
 `core.register_on_game_event_callback`).
 
-**Version numbers:** 1.7.9 is the build that was numbered 1.13.1 here. JCore was
+**Version numbers:** 1.8.1 (2026-10-11) paints the screen UI over the game's
+own frames (see *Drawing*), and runs nothing until a character is in the
+world (2026-10-12, see *Connecting*). 1.8.0 (2026-10-11) adds the reaction framework,
+`ctx.react` (see *Reactions*). 1.7.9 is the build that was numbered 1.13.1 here. JCore was
 renumbered on 2026-10-09 to continue the line on project-sylvanas.net (plugin 1128,
 which showed 1.7.8). Version tags in brackets elsewhere in this README and in the code,
 from 1.5.15 to 1.13.1, are the old local numbers and predate 1.7.9.
@@ -50,15 +53,24 @@ local function start(JCore)
     -- everything else goes here
 end
 
-if _G.JCore then
+-- Not before a character is in the world (JCore 1.8.1); an older core has
+-- no in_world and starts you at once.
+local function in_world(J)
+    return type(J.in_world) ~= "function" or J.in_world()
+end
+
+if _G.JCore and in_world(_G.JCore) then
     start(_G.JCore)
 else
     local deadline, started = core.time() + 15.0, false
     core.register_on_update_callback(function()
         if started then return end
-        if _G.JCore then
-            started = true
-            start(_G.JCore)
+        local J = _G.JCore
+        if J then
+            if in_world(J) then
+                started = true
+                start(J)
+            end
         elseif core.time() > deadline then
             started = true
             core.log_error("[MyPlugin] JCore never loaded; plugin inactive")
@@ -69,6 +81,21 @@ end
 
 A package that sits inside the JCore tree can use `require("jcore/main")`
 instead. The global is the portable door; both return the same table.
+
+**The world gate (1.8.1).** The loader can start the plugins at the
+character select screen. The game has not loaded its world tables there,
+and a native that reads one (a spell, item, map or zone name) kills the
+client with `ASSERT(IsLoaded())` in `WowClientDB2.cpp`, which no `pcall`
+survives. This happened on 2026-10-12, 0.2 s after a load at that screen.
+So JCore runs no pass and forwards no game event until a local player is
+valid. Only its update callback asks, once a frame. Once open, the gate
+stays open: a loading screen or a logout later runs as it always has.
+
+`JCore.in_world()` answers it, and `jcore.world.waiting` and
+`jcore.world.open` mark it. Start your plugin behind it, as above, and do
+no game reads at file load. The offline harness has no player, so
+`mock.install()` sets `JCORE_NO_WORLD_GATE`; `jcore_world_gate_test` sets
+it back.
 
 `examples/jcore_example_plugin/` is a complete working consumer.
 
@@ -152,6 +179,8 @@ Core events:
 | Event | Payload |
 |---|---|
 | `jcore.ready` | the public table |
+| `jcore.world.waiting` | — loaded at the character select screen: no pass runs yet (1.8.1) |
+| `jcore.world.open` | — a character is in the world; the passes start (once, 1.8.1) |
 | `jcore.combat.enter` | — |
 | `jcore.combat.leave` | duration in seconds |
 | `jcore.target.changed` | new target, previous guid |
@@ -502,6 +531,118 @@ us, whoever it is targeting holds it (`inferred = true` on the entry), so the
 board is never empty mid-fight. Still unverified: that `threat_percent` is the
 scaled figure (Tiny Threat's default) rather than the raw one; if it is raw, ranks
 order the same except across the 110% / 130% thresholds.
+
+### Reactions (1.8.0)
+
+"Several things are happening; which matters most?" A priority list answers
+"what is the best press right now"; it was never the right tool for an
+interrupt, a defensive, a potion, a pet heal and a hardcore bail-out all
+valid in the same frame. The reaction framework answers that: every rule
+proposes, everything is scored, one per lane is validated and sent, and
+what was just done is remembered so nothing is done twice for one event.
+Until 1.8.0 it was Jambix AIO's `modules/react` engine; it is the core's now,
+so any plugin can register reactions, and the AIO's are one consumer.
+
+```lua
+local R = ctx.react                  -- this plugin's engine, built on first access
+
+R.configure({                        -- what the engine needs to know about your world
+    spells = { known = f, ready = f, id = f },   -- your spellbook, by name (ids by default)
+    target_kind = f,                 -- "self" | "pet" | "ally" | "enemy" | nil, from a catalogue
+    key_allows = f, channel_active = f, press_blocked = f,   -- gates a press passes
+    kinds = { potion = { validate = f, execute = f, target_kind = "self", answer = "done" } },
+    band = f, filter = f, explain = f, trace = f, log = t, on_refused = f, units = t,
+})
+
+R.add_rule({                         -- a reaction is DATA; the engine does the rest
+    name = "Interrupt", category = "interrupt", priority = 90, lane = "gcd",
+    needs = { "combat", "target" }, every = 0.2, wake = { "jcore.enemy.casting" },
+    retry = { hold = 2 }, owns = { "Counter Shot" },
+    condition = function(W) return W.target.casting end,
+    action = "Counter Shot", target = "enemy",
+    score = function(W, c) c:add(25, "cast ends soon") end,
+    validate = function(W, c) return nil end,
+})
+R.remove_rule(name) / R.set_enabled(name, on) / R.rule(name) / R.rules()
+R.filter = function(def, W) ... end  -- the player's switches: false keeps a rule out
+
+local d = R.decide(W)                -- { cands, gcd, fast, pet, deferred, holds, rejected }
+for _, lane in ipairs({ "fast", "gcd", "pet" }) do
+    if d[lane] then R.execute(d[lane], W) end
+end
+R.owns(spell, W) / R.yielding(W) / R.wake(def) / R.unique(name)
+R.memory                             -- what was asked for, sent, confirmed, refused, handled
+R.latch.new / R.latch.debounce       -- a threshold with two lines; a boolean that must settle
+R.journal(kind, text, key) / R.journal_due(key) / R.log_lines(n) / R.reset() / R.stats()
+```
+
+**The pipeline, one tick.** `decide(W)`: every enabled rule that is due looks
+at `W` and offers zero or more candidates, each with the event it answers
+(`event_key`). Each is scored -- its base priority, the rule's own `score`,
+what the mode (`W.mode`: NORMAL, RECOVERY, DEFENSIVE, EMERGENCY, ESCAPE) and
+the context (`W.context`: BOSS, AOE, PVP) add or take away, and a mark-down
+for a name the client refused lately; every point carries its reason. Then
+one winner per lane (`gcd`, `fast`, `pet`): highest score first, the first
+that passes validation. A `hold` is not an action and takes no lane: it is
+listed in `holds` for a rotation to stop on. A candidate that scores under
+`ROTATION_SCORE` (40) is never pressed over a rotation; the first such for
+the global cooldown comes back as `deferred`, for a tick on which the
+rotation had nothing to press. `execute(c, W)` sends it: a spell through
+`ctx.cast` in the band its category earns (survival, bail-out, escape and
+defensive in EMERGENCY; interrupt in INTERRUPT; crowd control in DEFENSIVE;
+the pet, threat, utility and resource in UTILITY; a buff just over
+ROTATION), anything else through the `execute` of its kind.
+
+**Validation** refuses, in this order: an offensive rule while `W.hold_fire`
+or during a bail-out (`W.bailout` without `W.fight_on`); an event already
+handled; a name inside its `retry.hold`; a name backed off after refusals;
+the wrong kind of target (an enemy spell with no enemy target would
+self-cast; a self spell aimed elsewhere; a dead or friendly "enemy"); for a
+spell: not known, the catalogue's word (`target_kind`), its key, not ready,
+its channel running, `press_blocked`, a cast of ours still starting
+(`W.pending`), a reaction of ours in progress that scored higher (unless
+`W.yield` says it gives way); for any other kind, its own `validate`; then
+the rule's own `validate`.
+
+**The memory** is fed by the game on its own, through this handle:
+`jcore.cast.sent` for this owner, `UNIT_SPELLCAST_SUCCEEDED` / `FAILED` /
+`INTERRUPTED`, `UI_ERROR_MESSAGE`, the channel events, and
+`jcore.combat.leave`. An attempt is `requested`, then `sent`, then `ok`,
+`failed`, `lost` (never sent: it lost arbitration) or `unknown` (silence,
+which only counts against a reaction, and only for a name the client has
+confirmed before). Two refusals of a name inside six seconds back it off for
+1.5 s, doubling to 4 s; a success clears it. Only a refusal that will repeat
+counts (`persistent_error`: out of range, facing, line of sight, too close,
+a bad target, immune); "not ready yet" is recorded and never counted. A
+rotation's own presses arrive through `jcore.cast.sent` too, so the memory
+knows every press, not only the reactions. `handle(key, ttl)` marks an event
+answered; a refused answer releases it. `attacked(guid, window)`,
+`sent_recently(window)`, `since(name)`, `waiting(name)`, `failures(name)`,
+`in_progress(spell_id)`, `applied(name)` (a one-per-caster debuff declared
+with `unique`), the target trail (`target_seen`, `flaps`, `stable_for`), the
+health trail (`sample_hp`, `damage_taken`) and named states (`set_state`,
+`state`) are the questions it answers.
+
+**The picture (`W`) is yours.** The engine reads a few fields and hands the
+rest to the rules untouched: `now`, `mode`, `context`, `player.{unit,
+in_combat, busy, casting_id}`, `pet.{unit, alive}`, `target.{unit, casting}`,
+`group.in_group`, `enemies.casting_n`, `bailout`, `fight_on`, `hold_fire`,
+`pending`, `yield`, `s`. Any may be absent. `needs` gates read them:
+`combat`, `pet`, `target`, `group`, `casting`.
+
+**Your own kinds.** Beyond `spell` and `hold`, `configure({ kinds = ... })`
+declares what else a candidate may be -- an order to the pet, a bag item, a
+target switch -- each with `validate(c, W)` (why not, or nil), `execute(c, W)`
+(sent, and the spell id to track), and optionally `target_kind`, `lane`
+(`pet` for anything with its own global cooldown), `answer` (how the client
+answers it: `arbiter`, the default; `sent`, the client still confirms it;
+`done`, asking is doing) and `spell_named` (the name is a spell to know).
+
+**Owner tagging.** The engine casts, subscribes and logs as the plugin that
+holds it; its rules go on `unregister`, and `JCore.react.stats()` and the
+Core page's cost readout count engines, rules, decisions and what went out.
+`JCore.react.new(owner, ctx)` builds one by hand (the tests do); `latch` and
+`new_memory` are reachable on it without an engine.
 
 ### Player
 
@@ -873,7 +1014,10 @@ reads. Since 1.5.10, `spells.castable()` on Forever does not ask the loader's
 recorded calls) and reads the client's range data (`get_spell_max_range` 0 on
 43,505 of 43,544), and so called every spell uncastable -- a rogue stood still.
 The gate there is JCore's own: known, usable, cooldown, line of sight
-(`graphics.is_line_of_sight`), melee reach from the two positions and combat
+(`geometry.sight`, one ray per target per tick since 1.8.0 -- never
+`graphics.is_line_of_sight` on Forever, which asserts in the client on build
+70338, `ASSERT(m_data)` in `M2HitTest.cpp`: see *Line of sight on Forever*
+below), melee reach from the two positions and combat
 reaches (`max(5, reach + 4/3)` yards), and a range the client does not give is
 left to the client. Since 1.5.13, in a party on Forever, `group.role()` and
 `group.objects()` read the party rows: `get_group_role` answered -1 and
@@ -961,6 +1105,7 @@ directly wins that contest by ignoring it.
 ```lua
 ctx.geometry.visible(target)        -- line of sight from the player
 ctx.geometry.line_of_sight(from, to)
+ctx.geometry.sight(from, to)        -- true / false / nil (unknown); what every LoS question in JCore asks
 ctx.geometry.trace_line(from, to, flags?)
 
 ctx.geometry.distance(a, b) / .distance_2d(a, b) / .distance_sq(a, b)
@@ -975,6 +1120,8 @@ ctx.geometry.best_circle(list, radius)   -- position, covered
 ctx.geometry.height_at(pos) / .is_grounded(pos, tolerance?)
 ctx.geometry.vec(x, y, z)           -- a REAL vec3, not a plain table
 ```
+
+**Line of sight on Forever (1.8.0).** `graphics.is_line_of_sight` is never called there. On build 70338 (the client patched itself on 2026-10-11) it asserts inside the client, `ASSERT(m_data)` in `M2HitTest.cpp`: a ray tested against a model whose data has not loaded. Four crashes that day, as a hunter in Duskwood and a druid in Teldrassil, each a ray from the player to a mob. On Forever, `geometry.sight` is a `trace_line` through buildings and terrain only (`WmoCollision + Terrain + IgnoreWmoDoodad`): no model on the way, so trees and rocks do not block it and the client refuses a cast behind one. trace_line's boolean is calibrated first, a ray down from the player's chest (must hit) and one straight up (must not); until both agree, sight is nil and callers treat it as unknown (a cast is left to the client, a mark is painted). `draw.unit_los`, `draw.los`, `spells.castable`, `spells.in_line_of_sight` and `geometry.line_of_sight` all ask it; an answer is kept 0.2 s per pair. Every other client keeps `is_line_of_sight`. `geometry.sight_stats()` says whether it calibrated. A fifth crash at 18:15 the same day (a hunter in Dun Modr) came from none of these: the game's Lua stack was `UseAction` on a pressed action-bar key, and the ray had the native's own ends (eye +1.6, mob +2.03), so the loader's packed Lua (the spell queue picks up pressed keys) had asked the native. So on Forever JCore also replaces `core.graphics.is_line_of_sight` in place, for every package (`services/sightguard`, built before the recorder and before anything that loads the loader's libraries). It answers `geometry.sight`, with unknown counting as in sight, and the loader's `spell_helper.is_spell_in_line_of_sight` answers the same way. `JCore.sightguard.stats()` (also on `diagnostics()`) counts the calls and keeps the file:line of each caller, each logged once. The walk map's wall rays still include doodads (it needs trees and rocks): only Market's mail errands and the walk map overlay run them.
 
 Line of sight is a ray cast through world geometry and is the most expensive
 single call a rotation makes. It is cached per unit pair per tick, so checking
@@ -1397,7 +1544,10 @@ alone. `stats()` reports `submitted`, `painted`, `culled` and `dropped`.
 
 `attachment`, `unit_head` and `unit_los` answer from a per-frame cache for the
 same reason `unit_w2s` does: they are native calls that several plugins ask for
-on the same unit in the same frame. `attachment` returns nil rather than the
+on the same unit in the same frame. `unit_los` keeps its answer for half a
+second (1.8.0): it only fades a mark, and re-asked every frame it was nearly
+every ray the plugins cast, each one a chance at the client's own crash in a
+ray (Forever, Forlorn Rowe, 2026-10-11). `attachment` returns nil rather than the
 zero vector the native call gives for a model that has not loaded — that vector
 would put your mark at the centre of the map.
 
@@ -1415,6 +1565,28 @@ you, so a HUD corner written inline works as written.
 Layers, low to high: `BACKGROUND` `WORLD` `DANGER` `UNITS` `OVERLAY` `HUD`
 `TOOLTIP` (on `ctx.LAYER`). Pick the band that matches what the mark *means* —
 colour and thickness are for importance.
+
+**The screen UI paints over the game's frames (1.8.1).** The loader's render
+pass is painted *under* the client's own UI, so before 1.8.1 a JCore window, an
+ESP panel or a tooltip went behind the bags, the map or a quest log whenever
+one was open over it. The loader's window pass
+(`core.register_on_render_window_callback`) is painted over them. At each flush
+JCore now hands everything from `HUD` up (windows, panels, popups, tooltips,
+toasts, a plugin's own `HUD` text) to that pass, in the same layer order; the
+world bands (`BACKGROUND` to `OVERLAY`) stay in the render pass, under the
+game's frames as its own nameplates are. Nothing changes for a plugin: submit
+as before. The hand-off only happens while the window pass is seen running. A
+loader without it paints everything in the render pass as before, and one that
+stops calling it gets the UI back in the render pass within three frames. A
+hand-off is painted by at most two window passes, so a render pass that stops
+cannot leave a frozen copy on screen. *Draw over the game's windows* on the
+JCore/UI page (on by default) turns it off. `stats()` adds `ui_pass`
+(`"window"` while the UI paints over the game, else `"render"`), `over_game`,
+`window_calls` and `window_painted`; the Core page's `draw:` line says which.
+Mouse input is unchanged: a window takes the mouse from the game while the
+cursor is on it only with *Capture the mouse over windows* on (the default).
+With it off, a click on a window also reaches the game frame under it. Test:
+`jcore_ui_over_game_test`.
 
 ### Menu
 
@@ -1451,7 +1623,9 @@ readout, a boss-timer strip -- is a **window**, and windows come from
 `ctx.ui`. They drag, collapse, resize, remember where they were, stack in a
 shared z-order and paint through the same layer queue as every other mark, so
 they always sit above world drawings and never fight another plugin over the
-mouse.
+mouse. Since 1.8.1 they also paint over the game's own frames (the bags, the
+map, a quest log), not under them: see *The screen UI paints over the game's
+frames* under *Drawing*.
 
 The toolkit is immediate mode with retained state: describe the window every
 frame from a render job, read the values back from the calls.
@@ -1607,8 +1781,8 @@ captured from the game only while over a window (`capture_mouse = false` on a
 window makes it click-through) and released the moment it leaves; the keyboard
 only while a text field or key capture has focus. Nothing reacts while the
 client's own menu owns the cursor or its chat box has the keyboard. The
-**JCore > UI** page has opacity, scale, window locking, capture, a layout
-reset, and the toolkit's own windows: the icon browser, the asset inspector
+**JCore > UI** page has opacity, scale, window locking, capture, *Draw over
+the game's windows* (1.8.1), a layout reset, and the toolkit's own windows: the icon browser, the asset inspector
 and a widget gallery to check a build in-game.
 
 On a fresh install only the small **JCore launcher** window is visible (top
@@ -1756,8 +1930,9 @@ ctx.set_enabled(false)   -- pause: jobs stop, registrations survive
 ctx.unregister()         -- full teardown
 ```
 
-Events, scheduler jobs, timers and draw submissions are all dropped for you.
-`on_unload` is only for state the core does not own.
+Events, scheduler jobs, timers, draw submissions, overlay windows, control
+leases and reactions (1.8.0) are all dropped for you. `on_unload` is only for
+state the core does not own.
 
 ---
 
@@ -1887,6 +2062,7 @@ jcore/
     names.lua             what a unit is called, per client (Forever: learned, kept, the cache)
     loot.lua              whose mob it is, what fought us, whether a corpse is ours; the loot window
     power.lua             Forever: energy, rage, combo points counted while the read says 0
+    react.lua             the reaction framework: rules as data, scored per lane, a memory and a journal; one engine per plugin (ctx.react)
     questdb.lua           our own quest database (from QuestieDB), and Questie's bridge calls from it
     casc.lua              the client's own data archives: build, indices, encoding, root, BLTE
     assets.lua            icons and textures from the game, addons, data files, the web; the catalog

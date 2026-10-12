@@ -529,6 +529,15 @@ return function(R, P, lib)
             end
             if c.trigger == "losing the race" then c:add(5, W.field.reason ~= "" and W.field.reason or "losing") end
         end,
+        -- Against players (intel/cooldowns.lua, Stage 3): held while a
+        -- protection already up covers what is hitting you -- never under
+        -- critical health, never outside a PvP picture.
+        validate = function(W, c)
+            local I = P.react and P.react.intel
+            local cds = I and I.cooldowns
+            if cds and W.intel and W.intel.active then return cds.hold_defensive(W, c, W.intel) end
+            return nil
+        end,
     })
 
     -- Racials that answer a specific problem. The old pass fired whichever

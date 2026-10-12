@@ -563,20 +563,34 @@ local function empty_plan(mode)
 end
 
 --- How many of listing `r` the plan can still take, and what they cost.
+--- A row of several auctions of one each (`each`, ah.lua) gives one a
+--- purchase: a bid buys the row's own auction, at the price of one.
 local function take(units, cost, r, o)
     local q = min(r.qty, (o.max_units or math.huge) - units)
+    if r.each then q = min(q, 1) end
     local afford = floor(((o.budget or math.huge) - cost) / r.unit)
     q = min(q, afford)
     if q <= 0 then return 0, 0 end
-    if o.whole and q < r.qty then return 0, 0 end
+    if o.whole and q < r.qty and not r.each then return 0, 0 end
     local c = (q == r.qty and tonumber(r.buyout) and r.buyout > 0) and r.buyout or q * r.unit
     return q, c
 end
 
+--- A vendor flip takes a bag slot a stack until a merchant is seen: a full
+--- stack must make at least this (2s). 229 Murloc Eyes bought for 3s 13c
+--- under the vendor's price filled twelve slots (the user's bags, 2026-10-12).
+P.VENDOR_STACK_FLOOR = 200
+
+--- Does a stack of `stack` bought at `unit` each make the floor at a vendor?
+function P.vendor_stack_pays(vendor, unit, stack)
+    return ((vendor or 0) - (unit or 0)) * max(1, stack or 1) >= P.VENDOR_STACK_FLOOR
+end
+
 --- Buy what a vendor pays more for than the auction house asks. No cut, no
---- waiting, no risk: the vendor always buys.
+--- waiting, no risk: the vendor always buys. With `stack` (units a bag slot
+--- holds), a stack must make P.VENDOR_STACK_FLOOR.
 ---@param listings table[]
----@param o table { vendor, min_margin_pct, max_units, budget, whole }
+---@param o table { vendor, min_margin_pct, max_units, budget, whole, stack? }
 ---@return table plan
 function P.plan_vendor(listings, o)
     local plan = empty_plan("vendor")
@@ -587,6 +601,7 @@ function P.plan_vendor(listings, o)
     for i = 1, #rows do
         local r = rows[i]
         if vendor < r.unit * need then break end
+        if o.stack and not P.vendor_stack_pays(vendor, r.unit, o.stack) then break end
         local q, c = take(plan.units, plan.cost, r, o)
         if q <= 0 then break end
         plan.rows[#plan.rows + 1] = { unit = r.unit, qty = q, cost = c, ref = r }

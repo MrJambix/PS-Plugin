@@ -546,6 +546,29 @@ local function burst_bundle()
     return W
 end
 
+-- 1.8.1: the user chose, for a hunter, the window solo on a harder fight only
+-- and once the pet holds the mob. The module asks the class.
+T[#T + 1] = { "burst: a class may hold the window back, told why it would open (1.8.1)", function()
+    local W = burst_bundle()
+    W.ready["Rapid Fire"] = true
+    local asked = {}
+    local hold = "solo: kept for a harder fight"
+    W.class.burst_veto = function(_, kind, lasting)
+        asked[#asked + 1] = { kind = kind, lasting = lasting }
+        return hold
+    end
+    W.tick()
+    assert_eq(W.burst.open(), false, "held back")
+    assert_eq(W.burst.stats().reason, hold, "and the class's reason is the readout's")
+    assert_eq(asked[1].kind, "freely", "an ordinary fight: freely")
+    assert_eq(asked[1].lasting, 20, "with its length")
+    hold = nil
+    W.clock = W.clock + 1.1
+    W.tick()
+    assert_eq(W.burst.open(), true, "no reason to wait: it opens")
+    assert_eq(#W.casts, 1, "and the sequence starts")
+end }
+
 T[#T + 1] = { "burst: a druid's window reads its form's bar, not the class's mana (1.80.0)", function()
     local W = burst_bundle()
     W.class = { power = "MANA", burst = { { spell = "Berserk", duration = 15 } } }
@@ -856,6 +879,115 @@ T[#T + 1] = { "a DoT that shows on no mob is never left off: re-cast on its dura
         R.run(6)
         assert(R.on_mob("G1") >= 3, "a refused press says nothing about the mob: " .. R.on_mob("G1"))
     end)
+end }
+
+-- 1.8.1: the user, "the Rotation doesn't automatically Look for All targets
+-- in combat with us and drop a Sting on them". The spread took the first mob
+-- its predicate liked, and press() then found it out of reach.
+T[#T + 1] = { "a spread rule goes on to a mob it can reach: one in the dead zone or out of range holds nothing up (1.8.1)", function()
+    local function mob(guid, dist)
+        return { guid = guid, dist = dist, get_guid = function() return guid end,
+                 is_valid = function() return true end, is_dead = function() return false end }
+    end
+    local function bundle(engaged)
+        local W = rotation_bundle()
+        W.P.units.distance = function(x) return (x and x.dist) or W.distance end
+        W.P.units.health_fraction = function() return 1 end
+        W.P.combat.time_to_die = function() return 20 end
+        W.target.dist = 20
+        -- The target has it already: only the other mobs are asked.
+        local profile = { label = "Spread", rules = {
+            { "Arcane Shot", function(s) return s.spreading == true end, spread = true },
+        } }
+        function W.walk()
+            W.rotation.run_rules(profile, { player = W.player, target = W.target, in_combat = true,
+                distance = 20, hold_fire = false, ttd = 20, engaged_units = engaged })
+        end
+        return W
+    end
+
+    local close, far, reached = mob("close", 4), mob("far", 50), mob("reached", 20)
+    local W = bundle({ close, far, reached })
+    W.walk()
+    local n, last = W.pressed("Arcane Shot")
+    assert_eq(n, 1, "pressed")
+    assert(last.target == reached, "on the mob it reaches, past one in melee and one out of range")
+
+    local N = bundle({ close, far })
+    N.walk()
+    assert_eq((N.pressed("Arcane Shot")), 0, "none in reach: nothing pressed")
+
+    local R = bundle({ reached })
+    R.P.spellbook.castable = function(_, unit) return unit ~= reached end   -- the client refuses it there (sight)
+    R.walk()
+    assert_eq((R.pressed("Arcane Shot")), 0, "the client refusing it on the only one: nothing")
+end }
+
+-- 1.8.1: the user, "what about intimidation? I learned it recently from my
+-- talents but i dont see it being used". Its catalogue row needs the pet on
+-- the target, and the rule casts it on yourself: the gate compared YOUR guid
+-- with the pet's target and refused it every time.
+T[#T + 1] = { "pet_on_target on a self-cast (Intimidation): the pet on a mob, by the client or the mob it was sent at (1.8.1)", function()
+    IDS["Intimidation"] = 19577
+    ROWS["intimidation"] = { name = "Intimidation", range = "pet", needs = { "pet_alive", "pet_on_target" } }
+    local ok, err = pcall(function()
+        local W = rotation_bundle()
+        local pet_on, fighting = nil, nil
+        W.P.pet = {
+            alive = function() return true end,
+            pet_target = function() return pet_on end,
+        }
+        local profile = { label = "Pet", rules = {
+            { "Intimidation", function() return true end, self = true },
+        } }
+        local function walk()
+            W.rotation.run_rules(profile, { player = W.player, target = W.target, in_combat = true,
+                distance = 20, hold_fire = false, ttd = 20 })
+        end
+        local s = { player = W.player, target = W.target, in_combat = true, distance = 20 }
+
+        walk()
+        assert_eq((W.pressed("Intimidation")), 0, "the pet on nothing: not pressed")
+        assert_eq(W.rotation.press_blocked("Intimidation", s, W.player), "catalogue: pet not on a mob", "and why")
+
+        pet_on = W.target
+        walk()
+        assert_eq((W.pressed("Intimidation")), 1, "the pet on our mob: pressed, on yourself")
+        assert_eq(W.rotation.press_blocked("Intimidation", s, W.player), nil, "a reaction's self-cast passes too")
+        -- A reaction may name the player by another object with the same guid.
+        local me = { get_guid = function() return "player" end, is_valid = function() return true end }
+        assert_eq(W.rotation.press_blocked("Intimidation", s, me), nil, "the player by guid")
+        -- Aimed at a mob, the old rule: the pet on that mob.
+        local other = { get_guid = function() return "other" end, is_valid = function() return true end }
+        assert_eq(W.rotation.press_blocked("Intimidation", s, other), "catalogue: pet not on target", "at another mob")
+
+        -- Forever: the client does not say what the pet attacks; the pet
+        -- module's reading (the mob it was sent at) does.
+        pet_on = nil
+        W.P.pet.fighting = function() return fighting end
+        assert_eq(W.rotation.press_blocked("Intimidation", s, W.player), "catalogue: pet not on a mob", "nothing sent either")
+        fighting = W.target
+        assert_eq(W.rotation.press_blocked("Intimidation", s, W.player), nil, "sent at our mob: allowed")
+    end)
+    IDS["Intimidation"], ROWS["intimidation"] = nil, nil
+    if not ok then error(err, 0) end
+end }
+
+T[#T + 1] = { "key_gated: a class may gate an ability on a switch, asked each time (1.8.1)", function()
+    local W = rotation_bundle()
+    local on = false
+    W.P.rotation = { active_class = function()
+        return { key_gated = { ["Disengage"] = function() return on end, ["Fear"] = "rot_fear_key" } }
+    end }
+    local H = W.rotation.helpers
+    assert_eq(H.key_allows("Disengage"), false, "the switch off: never")
+    on = true
+    assert_eq(H.key_allows("Disengage"), true, "on: allowed")
+    W.P.rotation.active_class = function()
+        return { key_gated = { ["Disengage"] = function() error("broken") end } }
+    end
+    assert_eq(H.key_allows("Disengage"), false, "a switch that raises: never")
+    assert_eq(H.key_allows("Wing Clip"), true, "an ungated ability: as before")
 end }
 
 T[#T + 1] = { "a melee weave's swing stopped Auto Shot: the next press goes at once, and once (1.7.6)", function()

@@ -36,6 +36,12 @@ T[#T + 1] = { "without Jambix Debug: no recorder, no loot study, no Dump page, r
     assert_eq(ctx.dump, nil, "none handed to plugins")
     assert_eq(ctx.world.client().forever, true, "on Forever")
     assert_eq(ctx.world.client().recording, false, "nothing records, so the AIO builds no trace lines")
+    -- JCore 1.8.1: nobody listens on rt.faults, so every job and handler
+    -- runs in a plain pcall and no fault file is written.
+    assert_eq(JCore.faults.listening(), false, "no fault listener")
+    assert_eq(JCore.faults.deep, false, "no marks per job")
+    assert_eq(JCore.faultlog, nil, "no fault log")
+    assert_eq(mock.data_fs["jcore/jambix.debug.faults.log"], nil, "no fault file")
     assert_eq(#mock.errors, 0, "no core.log_error")
 end }
 
@@ -47,6 +53,8 @@ T[#T + 1] = { "Jambix Debug running after JCore attaches: recorder, study and Du
     assert(type(D) == "table" and _G.JambixDebug == D, "the plugin publishes itself")
     assert(JCore.dump and JCore.dump.dump, "the Dump service, built late")
     assert_eq(ctx.world.client().recording, true, "the recorder runs, and the flag on the same table says so")
+    assert(JCore.faultlog and JCore.faultlog.available, "the fault log, built late")
+    assert_eq(JCore.faults.listening(), true, "and listening")
     assert_eq(JCore.attach_debug(D), false, "a second attach does nothing")
     mock.frame(2)
     assert_eq(#mock.errors, 0, "no core.log_error")

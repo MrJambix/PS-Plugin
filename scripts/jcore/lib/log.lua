@@ -69,8 +69,19 @@ return function(rt)
         return false, 0
     end
 
+    --- A warn or error line also goes to Jambix Debug's fault log while it
+    --- listens (lib/faults, 1.8.1), before the limiter, so repeats count.
+    local function to_faults(level_value, tag, message)
+        if level_value < LEVELS.warn then return end
+        local faults = rt.faults
+        if faults then
+            faults.report("log", tag, message, level_value >= LEVELS.error and "error" or "warn")
+        end
+    end
+
     local function emit(level_value, tag, key, message)
         if level_value < threshold then return end
+        to_faults(level_value, tag, message)
 
         local ok, suppressed = allow(key)
         if not ok then return end
@@ -139,6 +150,7 @@ return function(rt)
         function logger.raw(level_name, message)
             local level_value = LEVELS[level_name] or LEVELS.info
             if level_value < threshold then return end
+            to_faults(level_value, tag, tostring(message))
 
             local line = "[" .. tag .. "] " .. tostring(message)
             if level_value >= LEVELS.error then

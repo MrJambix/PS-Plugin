@@ -240,9 +240,32 @@ T[#T + 1] = { "a channel id no spell can have is unknown, not a spell", function
     fail_on_errors("channel id")
 end }
 
+-- trace_line as Forever answers it: true is a hit. A ray down through the
+-- player's feet hits the ground, one straight up hits nothing (the
+-- calibration), and a ray between two units hits while `state.blocked`.
+-- The client's is_line_of_sight must never be asked on Forever: on build
+-- 70338 it asserts in M2HitTest.cpp (the four crashes of 2026-10-11).
+local function forever_rays(state)
+    state.rays, state.calls = state.rays or 0, state.calls or 0
+    rawset(mock.core.graphics, "is_line_of_sight", function()
+        state.native = (state.native or 0) + 1
+        return true
+    end)
+    rawset(mock.core.graphics, "trace_line", function(a, b, mask)
+        state.calls = state.calls + 1
+        state.mask = mask
+        if b.z < a.z - 1 then return true end
+        if b.z > a.z and a.x == b.x and a.y == b.y then return false end
+        state.rays = state.rays + 1
+        return state.blocked == true
+    end)
+    ctx.geometry._reset_sight()
+    ctx.geometry.set_forever_rays(true)     -- off by default since 1.8.1
+end
+
 T[#T + 1] = { "a melee spell is castable on Forever: the loader's helper is not asked; reach, sight and usability are", function()
     local me_pos, mob_pos = { x = 0, y = 0, z = 0 }, { x = 3, y = 0, z = 0 }
-    local sight = true
+    local state = {}
     local function unit_of(answers, pos)
         return setmetatable({}, { __index = function(_, key)
             if key == "get_position" then return function() return pos end end
@@ -261,7 +284,7 @@ T[#T + 1] = { "a melee spell is castable on Forever: the loader's helper is not 
     rawset(mock.core.spell_book, "get_spell_max_range", function() return 0 end)
     rawset(mock.core.spell_book, "get_spell_min_range", function() return 0 end)
     rawset(mock.core.spell_book, "is_melee_spell", function(id) return id == 1757 end)
-    rawset(mock.core.graphics, "is_line_of_sight", function() return sight end)
+    forever_rays(state)
     mock.frame(2)
     assert_eq(ctx.spells.castable(1757, mob, { skip_facing = true }), true,
         "Sinister Strike at 3 yards: castable (the helper, which says no to everything, was not asked)")
@@ -269,17 +292,105 @@ T[#T + 1] = { "a melee spell is castable on Forever: the loader's helper is not 
     mock.frame(1)
     assert_eq(ctx.spells.castable(1757, mob, { skip_facing = true }), false, "at 9 yards: out of reach")
     mob_pos.x = 3
-    sight = false
-    mock.frame(1)
+    state.blocked = true
+    mock.frame(15)                      -- past geometry's fifth of a second
     assert_eq(ctx.spells.castable(1757, mob, { skip_facing = true }), false, "no line of sight")
-    sight = true
-    mock.frame(1)
+    state.blocked = false
+    mock.frame(15)
     assert_eq(ctx.spells.castable(9999, mob, { skip_facing = true }), false, "not usable: not castable")
     mob_pos.x = 25
     mock.frame(1)
     assert_eq(ctx.spells.castable(2764, mob, { skip_facing = true }), true,
         "a range the client does not give: left to the client")
     fail_on_errors("castable")
+end }
+
+T[#T + 1] = { "castable on Forever: one line-of-sight ray per target per tick, whatever spells are asked (1.8.0)", function()
+    -- The crashes in Forlorn Rowe (2026-10-11) were the client's own assert
+    -- inside one of these rays: every spell of a priority list cast its own.
+    local mob_pos = { x = 3, y = 0, z = 0 }
+    local state = {}
+    local function unit_of(answers, pos)
+        return setmetatable({}, { __index = function(_, key)
+            if key == "get_position" then return function() return pos end end
+            local v = answers[key]
+            return function() return v end
+        end })
+    end
+    local me = unit_of({ is_valid = true, is_dead = false, get_guid = "Player-1-0002", get_combat_reach = 1.5,
+                         is_channelling_spell = false, is_casting_spell = false }, { x = 0, y = 0, z = 0 })
+    local mob = unit_of({ is_valid = true, is_dead = false, get_guid = "Creature-0-1-0-0-251160-0000406266",
+                          get_combat_reach = 1.5 }, mob_pos)
+    local other = unit_of({ is_valid = true, is_dead = false, get_guid = "Creature-0-1-0-0-251160-0000406267",
+                            get_combat_reach = 1.5 }, mob_pos)
+    rawset(mock.core.object_manager, "get_local_player", function() return me end)
+    rawset(mock.core.spell_book, "is_spell_known", function() return true end)
+    rawset(mock.core.spell_book, "is_usable_spell", function() return true end)
+    rawset(mock.core.spell_book, "get_spell_cooldown", function() return 0 end)
+    rawset(mock.core.spell_book, "get_spell_max_range", function() return 0 end)
+    rawset(mock.core.spell_book, "get_spell_min_range", function() return 0 end)
+    forever_rays(state)
+    mock.frame(1)
+    for _, id in ipairs({ 1757, 2764, 1752, 2098, 53 }) do
+        assert_eq(ctx.spells.castable(id, mob, { skip_facing = true }), true, "spell " .. id .. " in sight")
+    end
+    assert_eq(state.rays, 1, "five spells on one mob in one tick: one ray")
+    ctx.spells.castable(1757, other, { skip_facing = true })
+    assert_eq(state.rays, 2, "another mob: its own ray")
+    state.blocked = true
+    assert_eq(ctx.spells.castable(1757, mob, { skip_facing = true }), true, "the same tick keeps the answer")
+    -- geometry keeps a pair's answer a fifth of a second (the ESP's target
+    -- row asks every frame); past that the next tick asks again.
+    mock.frame(15)
+    assert_eq(ctx.spells.castable(1757, mob, { skip_facing = true }), false, "the next tick asks again: no sight")
+    assert_eq(ctx.spells.castable(2764, mob, { skip_facing = true }), false, "and every spell hears it")
+    assert_eq(state.rays, 3, "one more ray for the new tick")
+    assert_eq(state.native, nil, "the client's is_line_of_sight was never asked")
+    -- Buildings and terrain, a building's doodads ignored: no model bit.
+    assert_eq(state.mask & 0x1, 0, "no doodad collision in the mask")
+    assert_eq(state.mask & 0x100000, 0, "no entity collision in the mask")
+    assert(state.mask & 0x10 ~= 0 and state.mask & 0x100 ~= 0, "buildings and terrain")
+    assert_eq(ctx.geometry.sight_stats().hit_value, true, "calibrated: true is a hit")
+    assert_eq(ctx.spells.in_line_of_sight(1757, mob), false, "in_line_of_sight asks the same ray")
+    assert_eq(state.native, nil, "and never the native either")
+    fail_on_errors("castable sight")
+end }
+
+T[#T + 1] = { "a mark's fade behind a wall asks for sight twice a second, not every frame (1.8.0)", function()
+    local function unit_of(answers)
+        return setmetatable({}, { __index = function(_, key)
+            if key == "get_position" then return function() return { x = 10, y = 0, z = 0 } end end
+            local v = answers[key]
+            return function() return v end
+        end })
+    end
+    local me = unit_of({ is_valid = true, is_dead = false, get_guid = "Player-1-0002" })
+    local mob = unit_of({ is_valid = true, is_dead = false, get_guid = "Creature-0-1-0-0-251160-0000406268" })
+    rawset(mock.core.object_manager, "get_local_player", function() return me end)
+    local state = {}
+    forever_rays(state)
+    local draw = JCore.draw
+    draw.set_los_budget(8)
+    mock.frame(1)
+    assert_eq(draw.unit_los(mob), true, "in sight")
+    assert_eq(state.rays, 1, "one ray")
+    state.blocked = true
+    mock.frame(10)                      -- a sixth of a second
+    assert_eq(draw.unit_los(mob), true, "still the answer from a moment ago")
+    assert_eq(state.rays, 1, "no ray for ten frames")
+    mock.frame(30)                      -- past half a second
+    assert_eq(draw.unit_los(mob), false, "asked again: behind a wall")
+    assert_eq(state.rays, 2, "one more ray")
+    assert_eq(state.native, nil, "the fade never asks the client's is_line_of_sight (1.8.0)")
+    -- No answer from the ray: the mark is painted, never the native asked.
+    rawset(mock.core.graphics, "trace_line", function() return nil end)
+    mock.frame(40)
+    assert_eq(draw.unit_los(mob), true, "unknown: painted as visible")
+    assert_eq(state.native, nil, "still not the native")
+    draw.set_los_budget(0)
+    assert_eq(draw.unit_los(mob), true, "a budget of 0 still switches the check off")
+    draw.set_los_budget(12)
+    fail_on_errors("unit_los")
 end }
 
 T[#T + 1] = { "in a party, roles and members come from the party rows (get_group_role answers -1 here)", function()

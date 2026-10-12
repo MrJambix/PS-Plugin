@@ -10,7 +10,8 @@ own ... where I don't upload it to users".
 ## What is in it
 
     main.lua                publishes _G.JambixDebug; attaches to JCore if JCore came first
-    services/recorder.lua   the Forever API recorder and its trace (was JCore's)
+    services/faults.lua     the Faults page: every error, native raise and nil, logged on the hit; the crash black box (1.1.0)
+    services/recorder.lua   the Forever API recorder and its trace (was JCore's); its watch feeds the fault log
     services/dump.lua       the Dump page: spells, talents, API; the study's switch; the click-to-move probe (was JCore's)
     services/lootstudy.lua  the corpse and loot-window study (was JCore's)
     aio/debug.lua           Jambix AIO's Debug page: object inspector, automation status, narration, reaction history (was the AIO's)
@@ -41,9 +42,87 @@ lines.
     node tools/jcheck/dump_diff.js <forever dump> <era dump> --md   # writes FOREVER_VS_ERA.md here
     node tools/jcheck/lootstudy_diff.js <study files...> --md      # writes LOOT_STUDY.md here
 
-Tests: `jcore_recorder_test`, `jcore_dump_test`, `jcore_lootstudy_test`,
+Tests: `jcore_faults_test`, `jcore_recorder_test`, `jcore_dump_test`, `jcore_lootstudy_test`,
 `jcore_debug_split_test` (JCore without this plugin, then a late attach),
 and the boot tests, which load it from `scripts/`.
+
+## Faults (1.1.0, with JCore 1.8.1)
+
+The user, 2026-10-11, after an evening of crashes that left only the
+"Fatal Error: Your game crashed" popup and no report: "add to the Debug All
+Captures of anything we running thats going Null, or Crashing us for any
+Error whatso ever and log it on the hit so we can fix it/report it".
+
+**Where:** `scripts_data/jcore/jambix.debug.faults.log`. Each fault's first
+hit is written at once, in full. A repeat is counted, and written again as
+"again, xN" at its 2nd, 10th, 100th... hit. `core.write_data_file` appends,
+so a line written survives the game dying a moment later. Past 2 MB the log
+moves to `.prev.log` at the next start.
+`jambix.debug.faults.summary.txt` lists this session's faults by count. It is
+rewritten every 30 s and on logout.
+
+**What is caught.** JCore's `lib/faults` hands these over while this plugin
+listens. Without it, JCore runs a plain `pcall` as before.
+
+| Kind | What |
+|---|---|
+| ERROR | A job, timer, event handler or core stage raised, from any plugin or JCore. The entry has the traceback, the locals of the frame that raised, the job (owner, phase, priority, file:line), what was running, and where you were (zone, position, combat, target, units, fps). |
+| NATIVE | A `core.*` function or game-object method raised, even when the caller's `pcall` swallowed it. Comes from the recorder's watch (Forever only); the entry has the function and its call site. |
+| NULL | A native answered nil after answering values before. Logged once per call site; the nils are counted. From the watch (Forever only). |
+| SWALLOWED | An error JCore's `cache.try` swallowed. |
+| LOG | A warn or error line of JCore's log, which every plugin's `ctx.log` writes to. |
+| CRASH | Written at the next start: the last session ended without logging out. Says when, and what was running then (see the black box). |
+
+Not caught: a plugin's own `pcall` around its own Lua code (the global
+`pcall` is not replaced, because the loader attributes calls by walking the
+stack), and the loader's packed code.
+
+**The black box.** A game that is killed outright runs no more Lua, so the
+box is written *ahead*, to `jambix.debug.blackbox.1.txt` and `.2.txt` in
+turn (2000 lines each). The Faults page's *Crash black box* sets the level:
+
+- *Once a second*: a context line only.
+- *Every pass* (the default): also a line as each of the loader's passes
+  begins and ends (update, pre_tick, render, window, menu, control_panel, the
+  spell-cast callbacks). A scheduler pass with no job in it (pre_tick today)
+  is not marked: nothing of ours runs there.
+- *Every job and handler*: also every scheduler job, event handler and core
+  stage. This is heavy.
+
+At the next start the last session's lines are read back. If `core.time`
+went back (it counts from the injection, so the game was restarted) and
+there is no "logged out" mark, the session died. The passes still open at
+the end are what was running, and a CRASH entry lists them with the last 30
+marks. "Between passes" means it was not in anything JCore runs: a game
+event or the loader itself. "Not known" means the box had stepped down below
+*Every pass* by then, so no pass was marked.
+
+If the plugins load at the character select screen, JCore runs no pass until
+a character is in the world (JCore 1.8.1's world gate). The box then says
+"G waiting for the world (the character screen)", and later "G in the
+world: the passes start". If a box ends on the first of these, the game died
+before any of our passes ran. While waiting, the context line asks nothing:
+the map and zone natives would read tables the game has not loaded yet.
+
+The box times its own writes. Three seconds over 60 ms a second steps it
+down one level, with a line in the log. The page shows its writes and
+milliseconds per second.
+
+In a group or an instance it allows 120 ms a second instead. On the way into
+one it goes back up to the page's level if it had stepped down, but no higher
+than *Every pass* (*Every job* writes ~7000 lines a second in a dungeon), with
+a "black box: in a group; back to pass" line in the log. That is where the
+crashes come: on 2026-10-12 all three deaths in the world were in Shadowfang
+Keep or with a group in Redridge. Every one of those sessions had stepped
+down to a line a second within 30 s of loading, so no CRASH entry could say
+what was running. The context line now names the instance kind (dungeon,
+raid...) and "in a group".
+
+**The native watch** (in `services/recorder.lua`, Forever only). The
+recorder's wrappers stay in place with *Record calls* off, and every call
+goes through a `pcall`. The first answers of each function are searched for
+game objects, so their methods are watched too. Switch: *Watch every native
+call* on the Faults page. `recorder.watch_stats()` gives the counts.
 
 ## The API recorder (Forever only)
 

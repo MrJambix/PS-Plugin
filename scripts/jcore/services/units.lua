@@ -1072,15 +1072,15 @@ return function(rt)
     -- the JCore API recorder caught on Forever, a hunter's among them, so
     -- every pet feature there was blind: the AIO never sent or mended a pet,
     -- and a mob hitting it never read as "on your pet". On Forever only, when
-    -- get_pet has nothing, the pet is looked for: first in the player's
-    -- minion list (get_all_minions), then among the swept units, for one that
-    -- says it is a pet (is_pet answers there) and names the player as its
-    -- owner (get_owner). Neither get_all_minions nor get_owner had been called
-    -- on Forever when this was written; the recorder will show what they
-    -- answer. A pet once found is kept while it lives; a search that finds
-    -- nothing waits PET_SEARCH_EVERY seconds before the next, so a class with
-    -- no pet pays a few calls every two seconds. Every other client asks
-    -- get_pet exactly as before.
+    -- get_pet has nothing, the pet is looked for among the swept units, for
+    -- one that says it is a pet (is_pet answers there) and names the player
+    -- as its owner (get_owner). (1.8.1: the player's minion list,
+    -- get_all_minions, is no longer asked first. It is not in scripts/.api
+    -- -- an izi_sdk extension, not a native -- and Forever's game objects do
+    -- not have it, so it never answered.) A pet once found is kept while it
+    -- lives; a search that finds nothing waits PET_SEARCH_EVERY seconds
+    -- before the next, so a class with no pet pays a few calls every two
+    -- seconds. Every other client asks get_pet exactly as before.
     local pet_cache = cache.new("units.player_pet", { scope = "tick" })
     local PET_SEARCH_EVERY = 2.0
     local forever_client = nil
@@ -1101,13 +1101,6 @@ return function(rt)
     end
 
     local function search_pet(p, my_guid)
-        local minions = try(p.get_all_minions, p)
-        if type(minions) == "table" then
-            for i = 1, #minions do
-                local m = minions[i]
-                if lives(m) and try(m.is_pet, m) == true then return m end
-            end
-        end
         for i = 1, #units do
             local u = units[i]
             if u ~= p and try(u.is_pet, u) == true then

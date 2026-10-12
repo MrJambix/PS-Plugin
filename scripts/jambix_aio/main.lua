@@ -20,7 +20,7 @@
 
 ---@diagnostic disable: lowercase-global
 
-local MINIMUM_CORE = "1.0.0"
+local MINIMUM_CORE = "1.8.0"   -- ctx.react, the reaction framework
 local PACKAGE = "jambix_aio"
 
 -- =============================================================================
@@ -86,7 +86,7 @@ local function start(JCore)
     local ctx = JCore.register({
         id      = "jambix.aio",
         name    = "Jambix AIO",
-        version = "1.7.6",
+        version = "1.7.8",
         kind    = "esp",
         on_load = function(self) self.log.info("Jambix AIO online") end,
         on_unload = hand_back,
@@ -278,6 +278,9 @@ local function start(JCore)
         -- 1.7.4: the guide walk. JCore's nav takes its own movement lease,
         -- round the lock on ctx.input.acquire above.
         rxp_follow = true,
+        -- 1.8.1: the RestedXP ESP acting as you walk up (talks to quest
+        -- givers, hands the step's mobs to the rotation).
+        rxp_act = true,
     }
 
     -- RESTEDXP ONLY (1.61.0). Players: "wish u could turn off all ESP but
@@ -1234,24 +1237,11 @@ local function start(JCore)
     rot_field:label("the same three global cooldowns. Turn it off for a pull being held")
     rot_field:label("together on one target, or next to something somebody has sheeped.")
 
-    -- The reaction engine (modules/react). Since 1.32.0 it is the only path:
-    -- the switches and thresholds it replaced are gone from every page, and
-    -- the old fixed order runs only if the engine itself fails.
-    local rot_react = rotation:section("Reactions", "activity", { column = "full", visible = advanced })
-    rot_react:label("Before the priority list runs, everything urgent is weighed at once:")
-    rot_react:label("interrupts, defensives, potions, mana, the pet, threat, crowd control,")
-    rot_react:label("escapes and the hardcore bail-out. The most important one wins, what")
-    rot_react:label("was just done is remembered, and nothing is pressed twice for one event.")
-    rot_react:label("Every line it acts on is worked out from the fight, not set here.")
-    rot_react:toggle("react_explain_log", "Log every decision and every refusal", false)
-    rot_react:toggle("react_overlay", "Show the decision on screen", false)
-    rot_react:toggle("react_world", "Show it in the world: the kick lined up, who it acted on, PvP marks", true)
-    -- 1.7.6: its two curtains, each its own switch, off by default.
-    rot_react:toggle("react_curtain_vanish", "A red curtain where an enemy player vanished beside you", false)
-    rot_react:toggle("react_curtain_burst", "A red curtain round an enemy player bursting on you", false)
-    rot_react:label("The readout at the bottom of this page says why the last decision")
-    rot_react:label("was made; the Debug page keeps the recent history. Your own reactions,")
-    rot_react:label("and the switch on each built-in one, are on the Reactions page.")
+    -- The reactions are APART from the rotation (1.8.0): their switches,
+    -- their marks and their readout are all on the Reactions page now. A
+    -- setting moved to another page loses what you saved, so the decision
+    -- log, the on-screen panel, the world marks and the two curtains start
+    -- from their defaults there.
 
     -- --- reactions page (1.76.0) ----------------------------------------------
     --
@@ -1260,71 +1250,110 @@ local function start(JCore)
     -- Reactions window (modules/reactwin.lua): the built-in reactions switched
     -- and placed one by one, and your own made in the GUI or in Lua.
     local react_main = reactions_page:section("Reactions in the rotation", "activity", { column = "full" })
-    react_main:toggle("react_active", "Use reactions in the rotation", true)
-    react_main:label("Interrupts, defensives, potions, escapes, crowd control, the pet, threat and your")
-    react_main:label("own reactions are weighed together before the priority list runs: the most")
-    react_main:label("important thing happening wins. Off: none of them act, except the Hardcore page's")
-    react_main:label("bail-out and hearthstone, which keep their own switches there.")
-    react_main:button("react_open_ui", "Open Reactions UI", {
+    -- No switch. The user, 2026-10-11: "reactions should automatically
+    -- activate in PvP when PvP is detected", not an option. The engine is the
+    -- path again (1.32.0): R.active() and custom.master_on() always say yes,
+    -- and a react_active a player saved before changes nothing. PvP is
+    -- detected by the intelligence layer (intel/state.lua, W.intel.active and
+    -- its signs) and, under it, by the picture's env.pvp.
+    react_main:label("Reactions run on their own; nothing here switches them. Each one says when the")
+    react_main:label("rotation should give way -- an interrupt, a defensive, a potion, an escape, crowd")
+    react_main:label("control, the pet, threat -- in a pass of their own just before the rotation's, on")
+    react_main:label("the same picture of the fight, and the most important one wins. The PvP reactions")
+    react_main:label("and the intelligence below wake the moment PvP is detected: a player targeted or on")
+    react_main:label("you, an enemy player within 40 yd, a player's control on you, a battleground, an")
+    react_main:label("arena, a duel. The first line under this page says what is detected now.")
+    -- The *Open Reactions UI* button left this page on 2026-10-11 (the user:
+    -- "should be removed from being accessed by the player but leave it in
+    -- the code for future"). The window (modules/reactwin.lua, P.reactwin,
+    -- P.reactwin.open(tab)) is loaded and rendered as before and nothing a
+    -- player can reach opens it; the built-in and custom reactions it edits
+    -- still run from their saved state.
+
+    -- Reading a decision (1.8.0: here, not on the Rotation page). The
+    -- readout at the bottom of this page says why the last decision was
+    -- made; the Debug page keeps the recent history.
+    local react_read = reactions_page:section("Decisions", "activity", { column = "full" })
+    react_read:toggle("react_overlay", "Show the decision on screen", false)
+    react_read:toggle("react_explain_log", "Log every decision and every refusal", false)
+    react_read:label("The readout at the bottom of this page says why the last decision was made:")
+    react_read:label("the mode, the danger, the winning reaction with every point of its score, the")
+    react_read:label("runners-up and what was refused. The Debug page keeps the recent history.")
+
+    -- The user, 2026-10-11: "remove all other reactions from the menu that
+    -- don't have to do with these phases ... we want to drop/delete old stuff
+    -- and not get it confused". The old *PvP* (the trinket's line), *PvP
+    -- marks*, *PvP extras* and *In the world* sections left this page that
+    -- day with their modules (pvpmarks, pvpx, plays, react/marks), deleted,
+    -- not hidden. The page is the engine's switches, the decision readout and
+    -- the PvP intelligence layer (PVP_INTEL_PLAN.md §3.11).
+
+    -- PvP intelligence (PVP_INTEL_PLAN.md; modules/react/intel): the picture of
+    -- a fight with players, the threat, the cooldown ledger, the tactical
+    -- state and the move. Each module its own switch; the first is the
+    -- emergency switch for the whole layer. Modules not built yet say so.
+    local intel = reactions_page:section("Advanced PvP Intelligence", "swords", { column = "full" })
+    intel:toggle("intel_enabled", "PvP intelligence: the picture, read once a tick (off: nothing of this layer runs)", true)
+    intel:toggle("intel_alerts", "Say each new tactical state and move on screen (the narration banners)", true)
+    intel:toggle("intel_threat", "Threat evaluation: how much danger is coming, from whom, how sure", true)
+    intel:toggle("intel_cooldowns", "Cooldown management: their ledger, your cover; holds a second defensive while covered", true)
+    intel:toggle("intel_tactics", "Hunter PvP tactics: the tactical state, the aspect for the moment", true)
+    intel:toggle("intel_position", "Positioning awareness: the move advice (hold, increase, reduce, line of sight...)", true)
+    intel:toggle("intel_kill", "Kill window detection (half-confidence until Stage 9 weighs the target's defensives)", true)
+    intel:toggle("intel_team", "Teamfight awareness: protect an ally, peel, the flag (Stage 10 extends it)", true)
+    intel:toggle("intel_cc", "Crowd control planning: each control on a player, whose, what breaks it, its diminishing returns, what it is worth; holds your damage off one worth keeping", true)
+    intel:toggle("intel_predict", "Opponent prediction: what each player tends to do this session (closes when slowed, a defensive at N%, interrupts, escapes control, stacks bursts, goes for the pet, the same opener, backs off, saves cooldowns), never from one sighting", true)
+    intel:toggle("intel_bait", "Cooldown baiting: a Concussive Shot to draw a predicted charge into your ready counter or a trinket before the real trap; the burst held for an unseen defensive; a cast to show an interrupter (advice). Never while the threat is HIGH", true)
+    intel:toggle("intel_learn", "Opponent pattern learning: keep counting what players do (off: the counts freeze, the predictions stand as they are)", true, ADV)
+    -- The fight debriefs and the central database (2026-10-12).
+    intel:toggle("intel_debrief", "Fight debriefs: each fight with a player recorded -- what they used, what you used, what stayed ready, how it ended -- with its lessons (the log: scripts_data/jambix.aio.fights.json)", true)
+    intel:toggle("intel_debrief_say", "Say each fight's outcome and first lesson on screen", true)
+    intel:toggle("intel_episodes", "Decision episodes: a window round each tactical moment (a charge, a burst, a root, the dead zone, a kill window...) with the state before and after, what was predicted and advised, what you did, and a measured result", true)
+    intel:label("Nothing here presses a key but the aspect for the moment, through the Aspects window's")
+    intel:label("own switch. The rest is advice: three rows in this page's readout, the banners, the")
+    intel:label("conditions your own reactions can read (PvP threat level, tactical state, move advice,")
+    intel:label("the target's cooldowns...), and the Reactions window's Live view. An inference is")
+    intel:label("never shown as a fact: it carries its confidence, and what the client cannot say is listed.")
+
+    -- The last fight's debrief (react/intel/debrief.lua) and the central
+    -- database's word (react/intel/central.lua): the lessons of each fight.
+    local debrief_section = reactions_page:section("Fight debriefs and the shared network", "book", { column = "full" })
+    debrief_section:label("After each fight with a player: how it ended, what each side used, your lows, and the")
+    debrief_section:label("lessons -- what stayed ready that could have turned it, what beat you, what held. The")
+    debrief_section:label("last 50 are kept in scripts_data/jambix.aio.fights.json (your own file, names kept).")
+    -- The shared network (CENTRAL_NETWORK.md): consent, off until turned on.
+    debrief_section:toggle("net_contribute", "Contribute my fights to the shared network (off until you turn it on)", false)
+    debrief_section:toggle("net_diagnostics", "...and include extra detail: the fight's moments and states, names stripped", false)
+    debrief_section:toggle("net_download", "Download the network's learning: priors for new opponents and matchup advice (off until you turn it on)", false)
+    debrief_section:button("net_delete_queue", "Delete queued local submissions", {
         on_click = function()
-            if P.reactwin then P.reactwin.open() end
+            local I = P.react and P.react.intel
+            if I and I.central then I.central.delete_queue() end
         end,
     })
-    react_main:label("The window: every built-in reaction with its own switch and where it may act")
-    react_main:label("(open world, open world PvP, battlegrounds, arenas, each dungeon and raid);")
-    react_main:label("your class's own reactions, built from conditions and spells off your spellbook,")
-    react_main:label("or written in Lua, with a shared Library of your own functions.")
-
-    -- The user, 2026-10-06: PvP on Classic Era -- what players do, how to
-    -- answer it, and whether to hold or use the trinket (rules/pvp.lua).
-    local react_pvp = reactions_page:section("PvP", "swords", { column = "full" })
-    react_pvp:dropdown("react_pvp_trinket", "Use the PvP trinket", {
-        "Only to stay alive",
-        "Balanced",
-        "Break any control",
-    }, 2)
-    react_pvp:label("Every control a player puts on you is weighed first: what it is, how long is left,")
-    react_pvp:label("whether you are hit through it, your health, how many are on you, the flag. Blink,")
-    react_pvp:label("Berserker Rage, Will of the Forsaken, a form or the felhunter go first; the trinket")
-    react_pvp:label("only past this line. It is never spent on what it cannot break (no Insignia breaks")
-    react_pvp:label("Blind, Sap, Gouge, a Freezing Trap or Death Coil; a warrior's breaks no Fear), nor in")
-    react_pvp:label("a burst window. The Rotation page's reaction readout says what it is waiting for.")
-    -- PvP marks (1.87.0): the enemy players on the ground (modules/pvpmarks.lua).
-    local pvp_marks = reactions_page:section("PvP marks", "swords", { column = "full" })
-    pvp_marks:toggle("pvpmarks_on", "Mark the enemy players on the ground", true)
-    pvp_marks:toggle("pvp_kill_target", "A red curtain on the player in reach lowest on health", false)
-    pvp_marks:slider("pvp_kill_range", "Kill target within", 10, 60, 40, "yd")
-    pvp_marks:toggle("pvp_healers", "A green curtain on players seen healing (the last 20 s)", false)
-    pvp_marks:toggle("pvp_cc_timers", "Your crowd control on them, as rings emptying", true)
-    pvp_marks:toggle("pvp_trinkets", "Their PvP trinket: grey filling while down, gold when ready", true)
-    pvp_marks:label("Nothing is drawn without an enemy player within 40 yd. A healer is one seen")
-    pvp_marks:label("casting a heal or leaving a heal over time; the trinket is known once seen used.")
-
-    -- PvP extras (1.89.0): diminishing returns, the flag carriers and your
-    -- stealth on the ground (modules/pvpx.lua).
-    local pvp_extras = reactions_page:section("PvP extras", "swords", { column = "full" })
-    pvp_extras:toggle("pvpx_on", "PvP extras on the ground", true)
-    pvp_extras:toggle("pvpx_dr", "Diminishing returns: a small ring per category under each enemy player", true)
-    pvp_extras:slider("pvpx_dr_reset", "Diminishing returns reset after", 15, 20, 18, "s", ADV)
-    -- 1.7.6: off by default, a beacon being a curtain (see CURTAINS below).
-    pvp_extras:toggle("pvpx_bg", "In a battleground, a tall beacon on each flag carrier", false)
-    pvp_extras:toggle("pvpx_stealth", "While you are stealthed, where each enemy player would notice you", true)
-    pvp_extras:slider("pvpx_stealth_base", "Noticed at, same level, facing you", 4, 15, 9, "yd")
-    pvp_extras:toggle("pvpx_stealth_mobs", "Stealth rings under mobs too", false, ADV)
-    pvp_extras:label("Diminishing returns fill as the 18 s after the last control run out: amber, the")
-    pvp_extras:label("next is half; red, a quarter; grey, immune. Anyone's control counts, by Classic")
-    pvp_extras:label("Era's categories (Blind, Death Coil and silences have none). Carriers: red theirs,")
-    pvp_extras:label("blue yours. Stealth: a yard more per level it has over you, a third behind it;")
-    pvp_extras:label("red once you are inside.")
-
-    -- Your reactions and the rotation, on the ground (1.87.0; modules/plays.lua).
-    -- The kick lined up and who a reaction acted on are the Rotation page's
-    -- "Show it in the world" (react/marks.lua).
-    local plays_section = reactions_page:section("In the world", "activity", { column = "full" })
-    plays_section:toggle("plays_on", "Show your reactions and the rotation's pick on the ground", true)
-    plays_section:toggle("plays_reactions", "A ring filling toward a reaction of yours that waits \"for N s\"", true)
-    plays_section:toggle("plays_rotation", "A blue curtain when the rotation acts on something not your target", false)
-    plays_section:toggle("plays_target_ring", "A thin ring under your target while the rotation runs", false)
+    debrief_section:button("net_delete_remote", "Request deletion of my uploaded records and start a new identifier", {
+        on_click = function()
+            local I = P.react and P.react.intel
+            if I and I.central then I.central.request_delete() end
+        end,
+    })
+    debrief_section:label("What goes up, only with the first switch on and only after a fight: a random identifier of")
+    debrief_section:label("this install (a pseudonym; the button above replaces it), this plugin's version, the game")
+    debrief_section:label("and build, your class and level, the opponents' classes and roles, the encounter type and")
+    debrief_section:label("length, each forecast as it stood before its outcome with the outcome and what it rested")
+    debrief_section:label("on, the ability names each side used, the lessons' codes. Never names, account, chat or realm.")
+    debrief_section:label("It is queued on this machine and sent between frames; the service keeps it until you ask for")
+    debrief_section:label("deletion (the second button) or its retention runs out. Combat never waits on the network:")
+    debrief_section:label("offline, with the service down or a model withdrawn, everything here runs as it did.")
+    -- The page's live lines (a page's, not a section's): the last fight.
+    reactions_page:live_lines(14, function()
+        local I = P.react and P.react.intel
+        local d = I and I.debrief
+        if not d then return { "The PvP intelligence layer did not load." } end
+        local ok, lines = pcall(d.lines)
+        if not ok then return { "debrief readout failed: " .. tostring(lines) } end
+        return lines
+    end)
 
     reactions_page:live_lines(4, function()
         local custom = P.react and P.react.custom
@@ -1343,14 +1372,38 @@ local function start(JCore)
         for _, def in ipairs(P.react.rules()) do
             if def.fired_at and (not last or def.fired_at > last) then last, last_def = def.fired_at, def end
         end
+        -- PvP detected? The intelligence layer's answer with its signs; under
+        -- it (switched off), the picture's env.pvp.
+        local pvp
+        local W = custom.latest_W and custom.latest_W()
+        local S = W and W.intel
+        if S and not S.off then
+            pvp = S.active and ("PvP detected: " .. tostring(S.why)) or ("no PvP sign: " .. tostring(S.why))
+        elseif W and W.env and W.env.pvp then
+            pvp = "PvP detected: " .. (W.env.context == "pvp" and "a PvP instance" or "your target is a player")
+        else
+            pvp = "no PvP sign"
+        end
         return {
-            string.format("Reactions %s  |  %d built-in (%d act here)  |  %d of your own (%d on)",
-                custom.master_on() and "ON" or "OFF", total, here, mine, mine_on),
+            string.format("Reactions: automatic  |  %s  |  %d built-in (%d act here)  |  %d of your own (%d on)",
+                pvp, total, here, mine, mine_on),
             "Where you are: " .. custom.where_text(),
             last_def and string.format("Last sent: %s -> %s, %.0fs ago", last_def.name, tostring(last_def.fired_name or "?"),
                 core.time() - last) or "Last sent: nothing yet this session",
             custom.lua_available() and "" or "This loader cannot run Lua code: Lua rows are kept but never run.",
         }
+    end)
+
+    -- Why the reactions did what they did: the mode, the danger, the winning
+    -- action with every point of its score, the runners-up and what was
+    -- refused. Built only while this page is open. One more row for the PvP
+    -- line (1.81.0), one for "OFF" (1.8.0), and three for the intel picture
+    -- while it is on (PvP intelligence, Phase 2; the state and the move, Stage 4).
+    reactions_page:live_lines(P.forever and 41 or 40, function()
+        if not P.react then return {} end
+        local ok, lines = pcall(P.react.debug_lines)
+        if not ok then return { "reaction readout failed: " .. tostring(lines) } end
+        return lines
     end)
 
     local rot_target = rotation:section("Targeting", "target", { column = "full" })
@@ -1453,7 +1506,8 @@ local function start(JCore)
     -- (modules/pull.lua).
     local pull_section = hardcore:section("Pull safety", "shield", { column = "full" })
     pull_section:label("A ring under each hostile mob not yet fighting, at the range it notices")
-    pull_section:label("you from. It fills and turns red as you walk toward its edge.")
+    pull_section:label("you from. It fills and turns red as you walk toward its edge. Never under")
+    pull_section:label("a player or a player's pet: they notice nobody from a distance.")
     pull_section:toggle("pull_on", "Show how close you can walk", true)
     pull_section:toggle("pull_rings", "Aggro rings", true, ADV)
     pull_section:slider("pull_margin", "Show a ring from this far outside it", 4, 30, 12, "yd")
@@ -1527,16 +1581,13 @@ local function start(JCore)
         { esp, "party_loose", true, "A mob loose on someone not the tank: ESP, Group and healing" },
         { esp, "groupx_tank", true, "Round the tank: ESP, Group extras" },
         { world_page, "cr_execute_curtain", true, "Your target in execute range: here, Combat rings" },
-        { reactions_page, "plays_rotation", true, "The rotation acting on something not your target: Reactions, In the world" },
-        { reactions_page, "pvp_kill_target", true, "The enemy player lowest on health: Reactions, PvP marks" },
-        { reactions_page, "pvp_healers", true, "Enemy players seen healing: Reactions, PvP marks" },
-        { rotation, "react_curtain_vanish", true, "Where an enemy player vanished: Rotation, Reactions (advanced)" },
-        { rotation, "react_curtain_burst", true, "An enemy player bursting on you: Rotation, Reactions (advanced)" },
+        -- The Reactions page's six (the rotation's pick, the lowest player,
+        -- the healers, the vanish and burst curtains, the flag carriers'
+        -- beacon) left with their modules on 2026-10-11.
         { esp, "tele_wall", true, "A wall round a telegraph as it lands: ESP, Telegraphs" },
         { esp, "box_style", cfg.BOX_CURTAIN, "Boxes round mobs, when shown: ESP, Box style Curtain (advanced)" },
         P.forever and { esp, "esp_beacons", true, "Beacons over far rares, bosses and quest mobs: ESP, Look (advanced)", 2 }
             or { esp, "show_beacon", true, "Pillars over far rares, bosses and quest targets: ESP, Elements", 2 },
-        { reactions_page, "pvpx_bg", true, "A beacon on each battleground flag carrier: Reactions, PvP extras", 2 },
     }
     P.CURTAINS = CURTAINS
 
@@ -1664,8 +1715,7 @@ local function start(JCore)
                 w.kept, w.dropped, w.weight, (w.budget or 0) > 0 and tostring(w.budget) or "no cap", w.faded),
             #parts > 0 and ("By mark: " .. table.concat(parts, ", ")) or "By mark: nothing drawn",
             "Switches: Combat rings, Missiles, facing and patrols, Node memory (here), Pull safety (Hardcore),",
-            "Fight timers, Group and healing, Group extras, Aurora (ESP), Beacons and Route (Quests), PvP marks,",
-            "PvP extras and In the world (Reactions), the reactions' marks (Rotation, Show it in the world).",
+            "Fight timers, Group and healing, Group extras, Aurora (ESP), Beacons and Route (Quests).",
         }
     end)
 
@@ -1840,12 +1890,25 @@ local function start(JCore)
     rxp_section:toggle("rxp_waypoint_label", "Label the waypoint", true, ADV)
     rxp_section:slider("rxp_line_length", "Line length", 20, 150, 60, "yd", ADV)
 
-    -- The guide walk (1.7.4, modules/guidewalk.lua): RestedXP's steps,
-    -- walked with Sentinel Navigation and done.
-    rxp_section:separator("Follow the guide")
+    -- The RestedXP ESP acts as you walk up (1.8.1, modules/guidewalk.lua):
+    -- you move, it does the step's quests and hands its mobs to the
+    -- rotation. The user: "let's make RestedExp ESP - Allow Quest Grab,
+    -- allow the Combat System to work with it and Turn in quests".
+    rxp_section:separator("Do the step as you walk up")
     if esp_only then
         rxp_section:label("Not on " .. client_label .. ": nothing walks or acts for you here.")
     end
+    rxp_section:toggle("rxp_act", "Act on the guide's marks as you walk up to them", false)
+    rxp_section:label("You move, by the marks and the line; nothing walks you. Stand by the")
+    rxp_section:label("step's quest giver and it talks, answering for the step's quests only.")
+    rxp_section:label("The step's mobs in range are the rotation's to open on (Rotation page).")
+    rxp_section:toggle("rxp_act_accept", "Pick up the step's quests", true)
+    rxp_section:toggle("rxp_act_turnin", "Hand in the step's quests", true)
+    rxp_section:toggle("rxp_act_fight", "Let the rotation fight what the step wants killed", true)
+
+    -- The guide walk (1.7.4, modules/guidewalk.lua): RestedXP's steps,
+    -- walked with Sentinel Navigation and done.
+    rxp_section:separator("Follow the guide")
     rxp_section:toggle("rxp_follow", "Follow the guide with Sentinel Navigation", false)
     rxp_section:label("Walks to each step and does it: hands in and picks up its quests,")
     rxp_section:label("pulls what it wants killed, uses its quest objects, loots your kills.")
@@ -2054,9 +2117,6 @@ local function start(JCore)
     P.beacons = load_module("modules/beacons")(P)
     P.routes = load_module("modules/routes")(P)
     P.nodememory = load_module("modules/nodememory")(P)
-    P.pvpmarks = load_module("modules/pvpmarks")(P)
-    P.pvpx = load_module("modules/pvpx")(P)
-    P.plays = load_module("modules/plays")(P)
     -- FOREVER (1.51.0): the vendor and the quest givers. After the rotation,
     -- whose class and profile choose a quest reward; never loaded on any
     -- other client.
@@ -2246,7 +2306,8 @@ local function start(JCore)
         out[#out + 1] = string.format("Quests:    Questie %s, RestedXP %s",
             q.questie_ready and "ready" or "absent",
             q.rxp_loaded and ("step " .. tostring(q.rxp_step)) or "absent")
-        out[#out + 1] = "Guide walk: " .. state(opt("rxp_follow", false), P.guidewalk.status())
+        out[#out + 1] = "Guide walk: " .. state(opt("rxp_follow", false) or opt("rxp_act", false),
+            P.guidewalk.status())
 
         local t = P.targeting.stats()
         out[#out + 1] = string.format("Context:    %s, %d engaged, %d loose%s",
@@ -2460,16 +2521,7 @@ local function start(JCore)
         return out
     end)
 
-    -- Why the reaction engine did what it did: the mode, the danger, the
-    -- winning action with every point of its score, the runners-up and what
-    -- was refused. Built only while this page is open.
-    -- One more row for the PvP line (1.81.0).
-    rotation:live_lines(P.forever and 37 or 36, function()
-        if not P.react then return {} end
-        local ok, lines = pcall(P.react.debug_lines)
-        if not ok then return { "reaction readout failed: " .. tostring(lines) } end
-        return lines
-    end)
+    -- The reaction readout is the Reactions page's (1.8.0).
 
     -- There is no periodic wholesale invalidation of the unit classification
     -- any more. There used to be one every two seconds, from when guide
@@ -2587,8 +2639,6 @@ local function start(JCore)
         if P.tracks then P.tracks.render() end
         if P.party then P.party.render() end
         if P.groupextras then P.groupextras.render() end
-        if P.pvpmarks then P.pvpmarks.render() end
-        if P.pvpx then P.pvpx.render() end
     end, { priority = 111 })
 
     -- Beacons (1.87.0): after the ESP's job (100), whose node lists they read.
@@ -2636,17 +2686,6 @@ local function start(JCore)
         P.timeline.render()
     end, { priority = 205 })
 
-    -- What the reactions decide, on the ground (1.85.0): the kick lined up on
-    -- a caster, who a reaction just acted on, and the PvP marks. Under the
-    -- toggle key like every mark, but not the ESP's switch: it is the
-    -- rotation's, as the alerts are.
-    ctx.render(function()
-        if not toggle_active() then return end
-        local marks = P.react and P.react.marks
-        if marks then marks.render() end
-        if P.plays then P.plays.render() end
-    end, { priority = 125 })
-
     -- Your reactions' alerts (1.79.0): their own job, whatever the overlay's
     -- switches say. An alert you set up is not decoration.
     ctx.render(function()
@@ -2660,7 +2699,8 @@ local function start(JCore)
         P.classwin.render()
     end, { priority = 206 })
 
-    -- The Reactions window: shut until the Reactions page's button opens it.
+    -- The Reactions window: shut, and since 2026-10-11 nothing a player can
+    -- reach opens it (P.reactwin.open is kept for the future).
     ctx.render(function()
         P.reactwin.render()
     end, { priority = 207 })
@@ -2679,19 +2719,29 @@ end
 
 -- =============================================================================
 -- Poll until JCore publishes itself, then hand off. Package load order is not
--- guaranteed and header.lua gives no way to influence it.
+-- guaranteed and header.lua gives no way to influence it. And not before a
+-- character is in the world (1.8.1): loaded at the character select screen,
+-- start() would read spell names from tables the game has not loaded yet,
+-- which kills the client (ASSERT(IsLoaded()), 2026-10-12).
 -- =============================================================================
 
-if _G.JCore then
+local function jcore_in_world(J)
+    return type(J.in_world) ~= "function" or J.in_world()
+end
+
+if _G.JCore and jcore_in_world(_G.JCore) then
     start(_G.JCore)
 else
     local deadline = core.time() + 15.0
     local started = false
     core.register_on_update_callback(function()
         if started then return end
-        if _G.JCore then
-            started = true
-            start(_G.JCore)
+        local J = _G.JCore
+        if J then
+            if jcore_in_world(J) then
+                started = true
+                start(J)
+            end
         elseif core.time() > deadline then
             started = true
             core.log_error("[Jambix AIO] JCore never loaded; ESP inactive")

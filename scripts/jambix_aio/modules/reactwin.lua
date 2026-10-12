@@ -1,6 +1,7 @@
 -- Jambix AIO / reactwin -- the Reactions window (1.76.0; laid out anew in 1.77.0).
 --
--- Opened from the Reactions page ("Open Reactions UI"). A window you move by
+-- Opened from code (M.open; the Reactions page's "Open Reactions UI" button
+-- left the page on 2026-10-11, the window kept for the future). A window you move by
 -- its title bar and size by its corner; it remembers both. On the left a
 -- sidebar that stays put: the master switch, where you are, and the five
 -- views. On the right the view: its title bar and tools stay put, the rest
@@ -358,14 +359,10 @@ return function(P)
         end)
     end
 
-    local function master_toggle()
-        local page = P.pages and P.pages.reactions
-        local c = C()
-        if page and page.set and c then
-            pcall(page.set, page, "react_active", not c.master_on())
-            if P.opt_invalidate then P.opt_invalidate() end
-        end
-    end
+    -- The sidebar's pill switched every reaction on or off through the
+    -- Reactions page's react_active until 2026-10-11; the switch is gone (the
+    -- user: reactions are automatic, waking in PvP when it is detected), so
+    -- the pill only says so.
 
     -- --- where (shared by the built-in reactions and the editor) ---------------------
 
@@ -489,7 +486,6 @@ return function(P)
     -- --- the sidebar ------------------------------------------------------------------
 
     local function nav_status(ui, c)
-        local master = c.master_on()
         local cls = c.class()
         local live = c.latest_W() ~= nil
         local over_pill = false
@@ -502,16 +498,16 @@ return function(P)
             local px, py, pw, ph = 14, 35, cv.w - 28, 26
             local mx, my = cv:mouse()
             over_pill = cv:hovered() and mx >= px and mx <= px + pw and my >= py and my <= py + ph
-            cv:fill(px, py, pw, ph, master and { 100, 200, 140, over_pill and 110 or 60 }
-                or { 235, 87, 87, over_pill and 110 or 60 }, 13)
-            cv:circle(px + 14, py + ph / 2, 4, master and "success" or "danger", true)
-            cv:text(master and "ON in the rotation" or "OFF", px + 26, py + 7, "text", "small")
+            cv:fill(px, py, pw, ph, { 100, 200, 140, over_pill and 110 or 60 }, 13)
+            cv:circle(px + 14, py + ph / 2, 4, "success", true)
+            cv:text("Automatic", px + 26, py + 7, "text", "small")
             cv:text(fit(cv, "Where: " .. c.where_text(), cv.w - 28, "small"), 14, 67, DIM, "small")
             local note = live and "fight picture live" or "lights wait for the rotation"
             cv:text(fit(cv, note, cv.w - 28, "small"), 14, 83, live and "success" or FAINT, "small")
         end)
-        if ui:hovered() and over_pill then ui:tooltip("Click to switch every reaction on or off (the Reactions page's switch)") end
-        if clicked and over_pill then master_toggle() end
+        if ui:hovered() and over_pill then
+            ui:tooltip("Reactions run on their own: no switch. The PvP ones wake when PvP is detected.")
+        end
     end
 
     local function nav_item(ui, i, label, sub, sub_col, dot)
@@ -1898,6 +1894,40 @@ return function(P)
             if wch and keys[wv] then s.where = keys[wv] end
             b_text(ui, "wname", "where_name", "The instance's name, for a reaction held to one (Molten Core)")
         end)
+        -- The PvP intelligence picture (react/intel): what its conditions read.
+        bench_group(ui, "intel", "PVP INTELLIGENCE", function()
+            local function pick(id, label, field, list, default)
+                local idx = 1
+                for j, v in ipairs(list) do if v == (s[field] or default) then idx = j end end
+                put(ui, "b_" .. id, idx)
+                ui:row({ 0.4, 0 })
+                ui:text(label, { size = "small", color = DIM })
+                local v, ch = ui:dropdown("b_" .. id, nil, list, idx, { no_wheel = true, max_visible = 10 })
+                ui:end_row()
+                if ch and list[v] then s[field] = list[v] end
+            end
+            pick("pthreat", "PvP threat level", "pvp_threat", D.THREATS, "INFORMATIONAL")
+            b_slider(ui, "pscore", "Threat score", "pvp_threat_score", 0, 100, 1, nil, 0)
+            pick("ptactic", "Tactical state", "pvp_tactic", D.TACTICAL_STATES, "NONE")
+            pick("padvice", "Move advice", "pvp_advice", D.ADVICE, "none")
+            b_toggle(ui, "pcast", "A dangerous cast is coming at me", "pvp_incoming_cast")
+            b_toggle(ui, "pmob", "The target used a gap closer or sprint in the last 3 s", "t_mobility")
+            b_toggle(ui, "pdef", "The target has a defensive up", "t_defensive")
+            b_text(ui, "pcds", "t_cd_seen", "Abilities seen from the target: Sprint, Blind")
+            b_slider(ui, "pcdr", "...back in", "t_cd_ready", 0, 999, 1, "s", 999)
+            b_slider(ui, "pccl", "Seconds left on the control on it", "t_cc_left", 0, 60, 0.5, "s", 0)
+            pick("pccv", "The control on it is worth keeping for", "t_cc_value", D.CC_VALUES, "none")
+            pick("pdr", "Diminishing returns: the next control gets", "t_dr_next", D.DR_LEVELS, "full")
+            b_toggle(ui, "pcco", "The control on it is mine (or its caster is unread)", "t_cc_ours")
+            pick("ppat", "The target's surest pattern this session", "t_pattern", D.PATTERNS, "none")
+            b_slider(ui, "ppatc", "...its rate", "t_pattern_conf", 0, 100, 1, "%", 0)
+            b_slider(ui, "ppatr", "...the evidence behind it", "t_pattern_rel", 0, 100, 1, "%", 0)
+            pick("pbait", "The bait on the target", "pvp_bait", D.BAITS, "none")
+            b_toggle(ui, "pprot", "A defensive of mine covers me", "me_protected")
+            b_toggle(ui, "pdz", "The target is inside my minimum ranged distance", "me_dead_zone")
+            b_toggle(ui, "pesc", "A safe escape is available", "me_safe_escape")
+            b_toggle(ui, "ppet", "My pet is on a player held by a control damage breaks", "pet_breaks_cc")
+        end)
     end
 
     local function step_code(ui, c, r, body_h)
@@ -2018,6 +2048,40 @@ return function(P)
         if not W then
             ui:text("The rotation is not running, so there is no picture of a fight: the lights wait for it.",
                 { size = "small", color = DIM })
+        end
+        -- The PvP intelligence picture (react/intel), while it is on: the
+        -- state, the threat, the next action, the move, their cooldowns, what
+        -- was kept back, what is unknown. An inference carries its confidence.
+        local intel = P.react and P.react.intel
+        local I = intel and intel.S
+        if I and I.active and not I.off and intel.summary then
+            local sm = intel.summary()
+            ui:spacer(4)
+            ui:separator("PvP intelligence")
+            tiles(ui, "intel_tiles", {
+                { "TACTICAL STATE", string.format("%s (%.2f)", tostring(sm.state), sm.state_conf or 0) },
+                { "THREAT", string.format("%s %d", tostring(sm.threat), sm.threat_score or 0) },
+                { "NEXT", tostring(sm.action or "-") },
+                { "MOVE", string.format("%s (%.2f)", tostring(sm.move), sm.move_conf or 0) },
+            })
+            if sm.state_why ~= "" then ui:text("Why: " .. sm.state_why, { size = "small", color = DIM }) end
+            if sm.threat_why ~= "" then ui:text("Threat: " .. sm.threat_why, { size = "small", color = DIM }) end
+            if sm.move_why ~= "" then ui:text("Move: " .. sm.move_why, { size = "small", color = DIM }) end
+            if (sm.control or "") ~= "" then
+                ui:text("Control: " .. sm.control .. ((sm.control_why or "") ~= "" and (" -- " .. sm.control_why) or ""),
+                    { size = "small", color = DIM })
+            end
+            for k = 1, math.min(3, #(sm.predictions or {})) do
+                ui:text("Predict: " .. sm.predictions[k], { size = "small", color = DIM })
+            end
+            if (sm.inputs or "") ~= "" then ui:text("Inputs: " .. sm.inputs, { size = "small", color = FAINT }) end
+            if (sm.bait or "") ~= "" then
+                ui:text("Bait: " .. sm.bait .. ((sm.bait_why or "") ~= "" and (" -- " .. sm.bait_why) or ""),
+                    { size = "small", color = DIM })
+            end
+            for k = 1, math.min(4, #sm.cooldowns) do ui:text("Seen: " .. sm.cooldowns[k], { size = "small", color = DIM }) end
+            for k = 1, math.min(4, #sm.suppressed) do ui:text("Kept: " .. sm.suppressed[k], { size = "small", color = DIM }) end
+            for k = 1, math.min(3, #sm.unknown) do ui:text("Unknown: " .. sm.unknown[k], { size = "small", color = FAINT }) end
         end
         ui:spacer(4)
         ui:separator("Your reactions right now")
@@ -2421,7 +2485,9 @@ return function(P)
         pcall(ui.end_window, ui)
     end
 
-    --- Opens the window (the Reactions page's button).
+    --- Opens the window. The Reactions page's *Open Reactions UI* button that
+    --- called this left the page on 2026-10-11 (kept out of the player's
+    --- reach, the code kept for the future); the tests and a later caller use it.
     function M.open(tab)
         local ui = ctx.ui
         if tab then state.tab = tab end

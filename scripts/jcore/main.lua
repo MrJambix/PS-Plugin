@@ -13,7 +13,7 @@
 
 ---@diagnostic disable: lowercase-global
 
-local VERSION = "1.7.9"
+local VERSION = "1.8.1"
 
 -- --- require shim -----------------------------------------------------------
 --
@@ -88,6 +88,10 @@ rt.json = load_module("lib/json")          -- leaf, same shape as util
 rt.image = load_module("lib/image")        -- leaf: BLP/TGA decoders, PNG encoder
 rt.inflate = load_module("lib/inflate")    -- leaf: zlib/DEFLATE decoder, for the game's archives
 rt.log = build_module("lib/log")
+-- Every error the core catches, for Jambix Debug's fault log when it listens
+-- (1.8.1). Before events and the scheduler: every handler and job runs
+-- through it. A plain pcall while nobody listens.
+rt.faults = build_module("lib/faults")
 rt.events = build_module("lib/events")
 rt.scheduler = build_module("lib/scheduler")
 rt.registry = build_module("lib/registry")
@@ -99,6 +103,14 @@ rt.menu_ns = build_module("lib/menu_ns")
 -- booting: units takes cache.try at build time, so a nil there is not a
 -- degraded cache, it is a runtime that never starts.
 rt.cache = build_module("lib/cache")
+
+-- FOREVER'S LINE OF SIGHT (1.8.0). On Forever core.graphics.is_line_of_sight
+-- is replaced in place, for every package, with geometry's model-free ray
+-- (read at call time): the client asserts inside its own ray there, and the
+-- loader's packed Lua asks it too. Built before the recorder, so the recorder
+-- wraps the guard rather than the native, and before spells and cast, which
+-- load the loader's libraries. See services/sightguard.
+rt.sightguard = build_module("services/sightguard")
 
 -- THE DEBUG PLUGIN (1.7.0). The Forever API recorder, the loot study and the
 -- Dump page live in scripts/jambix_debug, which users do not get. When that
@@ -139,6 +151,9 @@ local function build_debug(name)
     return nil
 end
 
+-- The fault log first (1.8.1): it listens on rt.faults from here on, and it
+-- keeps the natives it writes with before the recorder wraps them.
+rt.faultlog = build_debug("faults")
 rt.recorder = build_debug("recorder")
 
 rt.units = build_module("services/units")
@@ -212,6 +227,10 @@ rt.telegraphs = build_module("services/telegraphs")
 -- execute and read_lua_*, probed before it is used. Reads world, storage,
 -- events and the scheduler.
 rt.gamelua = build_module("services/gamelua")
+-- The reaction framework (1.8.0): rules as data, scored per lane, with a
+-- memory and a journal. One engine per plugin, built on the plugin's own
+-- handle when it first asks for ctx.react; reads nothing at factory time.
+rt.react = build_module("services/react")
 
 local api = build_module("api")
 
@@ -238,8 +257,19 @@ local CORE_LAST  = 1000000
 -- stage that throws is logged (the first time, then every 600th) and skipped
 -- for that tick, and the jobs themselves never fail.
 local stage_failures = {}
+local stage_marks = {}
 local function stage(name, fn)
-    local ok, err = pcall(fn)
+    -- Through rt.faults (1.8.1): a plain pcall unless Jambix Debug listens.
+    local faults = rt.faults
+    local deep = faults.deep
+    local mark = deep and stage_marks[name]
+    if deep and not mark then
+        mark = "stage " .. name
+        stage_marks[name] = mark
+    end
+    if deep then faults.enter(mark) end
+    local ok, err = faults.call("stage", name, fn)
+    if deep then faults.leave(mark) end
     if ok then
         if stage_failures[name] then stage_failures[name] = nil end
         return
@@ -323,39 +353,130 @@ rt.scheduler.add("render", function()
 end, { owner = "jcore", priority = CORE_LAST })
 
 -- --- native callbacks -------------------------------------------------------
+--
+-- Each pass is marked on rt.faults as it begins and ends (1.8.1): nothing
+-- while nobody listens; with Jambix Debug, its crash black box writes the
+-- mark ahead of the work, so a game that dies outright says in which pass.
+
+local faults = rt.faults
+
+-- THE WORLD GATE (1.8.1). Nothing below runs until a character is in the
+-- world. The loader can start the plugins at the character select screen,
+-- where the game has not loaded its world tables yet, and a native that
+-- reads one there (a spell, map or zone name) is the client's
+-- ASSERT(IsLoaded()) in WowClientDB2.cpp, which no pcall survives: the game
+-- died 0.2 s after the plugins loaded there (2026-10-12 13:26). Only the
+-- update pass asks for the player, so the character screen costs one
+-- native a frame; once open the gate stays open, so a loading screen or a
+-- logout later runs as it always has. The offline harness has no player
+-- unless a test makes one, so it sets JCORE_NO_WORLD_GATE.
+local world_open = rawget(_G, "JCORE_NO_WORLD_GATE") == true
+
+local function probe_world()
+    if world_open then return true end
+    local ok, p = pcall(core.object_manager.get_local_player)
+    if not ok or p == nil then return false end
+    local ok_valid, valid = pcall(p.is_valid, p)
+    if not ok_valid or not valid then return false end
+    world_open = true
+    log.info("in the world: the plugins' passes start")
+    rt.events.emit("jcore.world.open")
+    return true
+end
+
+--- True once a character has been in the world since JCore loaded.
+---@return boolean
+function rt.in_world() return world_open end
 
 core.register_on_update_callback(function()
+    if not world_open and not probe_world() then return end
+    faults.enter("update")
     rt.scheduler.on_update()
+    faults.leave("update")
 end)
 
 core.register_on_pre_tick_callback(function()
+    if not world_open then return end
+    faults.enter("pre_tick")
     rt.scheduler.on_pre_tick()
+    faults.leave("pre_tick")
 end)
 
 core.register_on_render_callback(function()
+    if not world_open then return end
+    faults.enter("render")
     rt.scheduler.on_render()
+    faults.leave("render")
 end)
 
+-- The window pass is painted over the game's own frames, the render pass
+-- under them. The screen UI the render pass queued is painted here, so no
+-- JCore window sits behind the bags or the map (1.8.1). A loader without
+-- the pass keeps painting everything in the render pass.
+if type(core.register_on_render_window_callback) == "function" then
+    core.register_on_render_window_callback(function()
+        if not world_open then return end
+        faults.enter("window")
+        stage("ui over game", rt.draw._flush_window)
+        faults.leave("window")
+    end)
+end
+
 core.register_on_render_menu_callback(function()
+    if not world_open then return end
+    faults.enter("menu")
     rt.scheduler.on_render_menu()
+    faults.leave("menu")
 end)
 
 core.register_on_render_control_panel_callback(function()
+    if not world_open then return end
+    faults.enter("control_panel")
     rt.scheduler.on_render_control_panel()
+    faults.leave("control_panel")
 end)
 
 -- Re-broadcast the native spell-cast hook onto the bus, so a plugin that wants
 -- it does not have to register a second native callback and does not get
 -- dropped when it raises.
 core.register_on_spell_cast_callback(function(data)
+    if not world_open then return end
+    faults.enter("spell_cast")
     rt.events.emit("jcore.spell.cast", data)
+    faults.leave("spell_cast")
 end)
 
-core.register_on_legit_spell_cast_callback(function(...)
-    rt.events.emit("jcore.spell.cast.legit", ...)
-end)
+-- THE LEGIT-CAST CALLBACK IS NOT REGISTERED AT BOOT (1.8.1). The loader
+-- reports "legit" casts (the player's own presses: 1678 of 5400 recorded
+-- calls followed no call of ours) by hooking the game's input functions. On
+-- 2026-10-12 Forever died in Shadowfang Keep on key presses in combat:
+-- TurnOrActionStop and the strafes call a native hook that converts the
+-- target's name to a string, and in an instance fight that name is a secret
+-- value, so the client raises a fatal script error. The black box had every
+-- pass of ours closed. Nothing of ours used this callback (only Jambix
+-- Debug's recorder listened), so it is no longer asked for, in case asking
+-- is what puts those hooks in. JCore.enable_legit_casts() registers it on
+-- demand.
+local legit_registered = false
+function rt.enable_legit_casts()
+    if legit_registered then return true end
+    if type(core.register_on_legit_spell_cast_callback) ~= "function" then return false end
+    legit_registered = true
+    core.register_on_legit_spell_cast_callback(function(...)
+        if not world_open then return end
+        faults.enter("legit_spell_cast")
+        rt.events.emit("jcore.spell.cast.legit", ...)
+        faults.leave("legit_spell_cast")
+    end)
+    return true
+end
 
+-- Game events come by the hundred in a fight: marked one by one only in the
+-- deep mode, which marks every handler anyway.
 core.register_on_game_event_callback(function(event_name, args)
+    -- Behind the world gate too: a handler re-reading spell tooltips on a
+    -- login event would ask the same tables.
+    if not world_open then return end
     -- Caches bound to this event name are dropped BEFORE any subscriber runs.
     -- A handler for BAG_UPDATE that reads the bag index must see the new
     -- contents, and it would not if invalidation were just another subscriber
@@ -428,7 +549,7 @@ local COST_ROWS = 20
 -- draw, cache, http, and up to four control leases. The per-owner list is
 -- given whatever is left, so adding a summary line means raising this too or
 -- the last one silently falls off the end of the page.
-local COST_FOOTER_ROWS = 12
+local COST_FOOTER_ROWS = 13
 
 local function build_diagnostics_page()
     local page = rt.menu_ns.for_plugin("jcore", "Core", { icon = "settings" })
@@ -544,14 +665,23 @@ local function build_diagnostics_page()
         out[#out + 1] = string.format("threat: %d mob(s) ranked across %d in the group (%d raid), %d read this tick",
             th.boards, th.roster, th.raid, th.reads)
 
+        local rx = rt.react.stats()
+        if rx.engines > 0 then
+            out[#out + 1] = string.format("reactions: %d engine(s), %d rule(s) (%d on), %d decision(s), %d sent",
+                rx.engines, rx.rules, rx.enabled, rx.decided, rx.fired)
+        end
+
         local wm = rt.walkmap.stats()
         out[#out + 1] = string.format("walk map: %s, %d yd -- %d cells known, %d wall, %d step edges, %d stuck, %d hole, %d water; rays %s; %d rays %d probes this tick%s",
             wm.active and "mapping" or "idle", wm.radius, wm.known, wm.walls, wm.steps, wm.stuck, wm.holes, wm.water,
             wm.rays, wm.rays_tick, wm.probes_tick, wm.walking and ("; walking for " .. wm.walking) or "")
 
         local d = rt.draw.stats()
-        out[#out + 1] = string.format("draw: %d painted, %d culled, %d cached projections",
-            d.painted, d.culled, d.cached_w2s)
+        out[#out + 1] = string.format("draw: %d painted, %d culled, %d cached projections; UI %s",
+            d.painted, d.culled, d.cached_w2s,
+            d.ui_pass == "window" and "over the game's frames"
+                or (d.over_game and d.window_calls == 0 and "under the game's frames (no window pass)")
+                or "under the game's frames")
 
         -- The one line that says whether the memoisation is actually working.
         -- A hit rate that falls off a cliff means something is asking a
@@ -603,6 +733,11 @@ end
 
 local public = api.build_public()
 
+--- Registers the loader's legit-cast callback, which JCore no longer asks for
+--- at boot (see THE LEGIT-CAST CALLBACK above); then "jcore.spell.cast.legit"
+--- fires again. True once registered.
+public.enable_legit_casts = rt.enable_legit_casts
+
 --- The debug plugin, when it runs after JCore (1.7.0): builds the recorder,
 --- the loot study and the Dump page if boot did not. A recorder built now
 --- sees only calls made through core.* from here on, not the natives JCore's
@@ -611,12 +746,14 @@ local public = api.build_public()
 ---@return boolean attached
 function public.attach_debug(D)
     if type(D) ~= "table" then return false end
-    if rt.recorder or rt.lootstudy or rt.dump then return false end
+    if rt.faultlog or rt.recorder or rt.lootstudy or rt.dump then return false end
     debug_plugin = D
+    rt.faultlog = build_debug("faults")
     rt.recorder = build_debug("recorder")
     rt.lootstudy = build_debug("lootstudy")
     rt.dump = build_debug("dump")
     public.dump = rt.dump
+    public.faultlog = rt.faultlog
     local world = rt.world
     local ok, c = pcall(function() return world and world.client and world.client() end)
     if ok and type(c) == "table" then
@@ -624,9 +761,16 @@ function public.attach_debug(D)
     end
     for i = 1, #debug_errors do log.fmt("warn", "Jambix Debug: %s", debug_errors[i]) end
     debug_errors = {}
-    log.fmt("info", "Jambix Debug attached after boot: recorder %s, loot study %s, dump %s",
-        tostring(rt.recorder ~= nil), tostring(rt.lootstudy ~= nil), tostring(rt.dump ~= nil))
+    log.fmt("info", "Jambix Debug attached after boot: fault log %s, recorder %s, loot study %s, dump %s",
+        tostring(rt.faultlog ~= nil), tostring(rt.recorder ~= nil), tostring(rt.lootstudy ~= nil), tostring(rt.dump ~= nil))
     return true
+end
+
+-- Loaded in the world, as usual: the gate opens now, so the plugins waiting
+-- on JCore.in_world() start on the first frame, as before the gate.
+if not probe_world() then
+    log.info("loaded at the character screen: waiting for the world")
+    rt.events.emit("jcore.world.waiting")
 end
 
 -- Two doors to the same runtime, per the contract other plugins are written

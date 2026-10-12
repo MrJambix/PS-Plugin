@@ -920,7 +920,8 @@ return function(M)
             elseif job.kind == "cancel" then run_cancel(job, t) end
             return
         end
-        if T.owned_due and t >= T.owned_due then
+        -- Your auctions are read only while Market is on (off at every load).
+        if T.owned_due and t >= T.owned_due and M.cfg("enabled", false) then
             T.owned_due = t + OWNED_EVERY
             T.refresh_owned()
         end

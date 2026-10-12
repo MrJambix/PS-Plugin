@@ -175,30 +175,39 @@ return function(P)
             end
         end
 
-        -- 2. Would it change anything?
-        if field and not field.winning() then
-            return true, "losing the race -- kill it faster"
-        end
-
+        -- 2. Would it change anything? `kind` names the reason for the
+        -- class's veto below: losing, pack, elite, freely.
+        local kind, why
         local count = field and select(1, field.counts()) or 1
-        if count >= 3 then
-            return true, string.format(
+        if field and not field.winning() then
+            kind, why = "losing", "losing the race -- kill it faster"
+        elseif count >= 3 then
+            kind, why = "pack", string.format(
                 "%d on us -- clearing sooner is less damage taken", count)
+        elseif field and field.elites() > 0 then
+            kind, why = "elite", "elite -- this fight is long enough to matter"
+        elseif P.opt("rot_burst_freely", true) then
+            -- The levelling case, and the most common one. A three-minute
+            -- cooldown against fights every half a minute comes back before
+            -- it is wanted again, so holding it is not patience, it is waste.
+            -- The bar for this is simply that the fight is long enough,
+            -- which was checked above.
+            kind, why = "freely", string.format("%.0fs fight and the cooldown is up", lasting)
+        else
+            return false, "saving it for something bigger"
         end
 
-        if field and field.elites() > 0 then
-            return true, "elite -- this fight is long enough to matter"
+        -- A CLASS MAY HOLD THE WINDOW BACK (1.8.1). The hunter, solo, keeps
+        -- it for a harder fight and for the pet holding the mob (the user
+        -- chose Mobalytics' rule: Rapid Fire's threat "might pull enemies off
+        -- your pet"). `burst_veto(s, kind, lasting)` answers a reason to
+        -- wait, or nil.
+        local veto = class_module.burst_veto
+        if type(veto) == "function" then
+            local ok, no = pcall(veto, s, kind, lasting)
+            if ok and type(no) == "string" and no ~= "" then return false, no end
         end
-
-        -- The levelling case, and the most common one. A three-minute cooldown
-        -- against fights every half a minute comes back before it is wanted
-        -- again, so holding it is not patience, it is waste. The bar for this
-        -- is simply that the fight is long enough, which was checked above.
-        if P.opt("rot_burst_freely", true) then
-            return true, string.format("%.0fs fight and the cooldown is up", lasting)
-        end
-
-        return false, "saving it for something bigger"
+        return true, why
     end
 
     -- --- the window ---------------------------------------------------------
@@ -388,7 +397,10 @@ return function(P)
 
     -- Resolved by NAME, so whichever one the character has is the one that
     -- exists and the rest simply do not -- no race detection needed.
-    local OFFENSIVE_RACIALS = { "Blood Fury", "Berserking", "Arcane Torrent" }
+    -- Elune's Light (1.8.1) is Forever's Night Elf racial, 1259799: 10%
+    -- critical strike chance for 15 s on a 3 min cooldown, off the global
+    -- cooldown. Nothing pressed it.
+    local OFFENSIVE_RACIALS = { "Blood Fury", "Berserking", "Arcane Torrent", "Elune's Light" }
 
     -- No switch of their own (1.32.0): inside a burst window -- which "Use
     -- offensive cooldowns" already governs -- the offensive racial goes in

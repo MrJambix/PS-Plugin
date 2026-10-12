@@ -334,6 +334,9 @@ return function(rt)
         general:toggle("capture", "Capture the mouse over windows", true, {
             description = "Off: clicks on a window also reach the game. On: the game ignores them.",
         })
+        general:toggle("over_game", "Draw over the game's windows", true, {
+            description = "On: JCore windows, panels and tooltips paint over the bags, the map and every other game frame. Off: under them, as before 1.8.1.",
+        })
         general:toggle("snap", "Snap to screen edges", true)
         general:toggle("shaders", "Shader drawing", true, {
             description = "Windows: soft shadows, gradients, animated sliders and hover rows. World: smooth filling rings. Drawn with the loader's shader calls; off, the plain shapes from before 1.10.0.",
@@ -425,6 +428,7 @@ return function(rt)
         page:on_change("scale", function(v) ui.set_scale((tonumber(v) or 100) / 100) end)
         page:on_change("lock", function(v) ui.settings.lock_windows = v and true or false end)
         page:on_change("capture", function(v) ui.settings.capture_mouse = v and true or false end)
+        page:on_change("over_game", function(v) rt.draw.over_game = v and true or false end)
         page:on_change("snap", function(v) ui.settings.snap = v and 10 or 0 end)
         page:on_change("shaders", function(v)
             ui.settings.shaders = v and true or false
@@ -443,6 +447,7 @@ return function(rt)
             ui.set_scale(page:get_or("scale", 100) / 100)
             ui.settings.lock_windows = page:get_or("lock", false)
             ui.settings.capture_mouse = page:get_or("capture", true)
+            rt.draw.over_game = page:get_or("over_game", true) and true or false
             ui.settings.snap = page:get_or("snap", true) and 10 or 0
             ui.settings.shaders = page:get_or("shaders", true) and true or false
             rt.draw.shaders = ui.settings.shaders

@@ -128,6 +128,29 @@ const helpers = {
         }
     },
 
+    // jtest.list_files(dir, ext) -> { "rel/path.lua", ... } every file under
+    // dir (relative to the repository root) ending in ext, sorted; {} when missing
+    list_files(L) {
+        const d = to_jsstring(lauxlib.luaL_checkstring(L, 1));
+        const ext = lua.lua_isstring(L, 2) ? to_jsstring(lua.lua_tostring(L, 2)) : "";
+        const base = path.isAbsolute(d) ? d : path.join(ROOT, d);
+        const out = [];
+        const walk = (dir) => {
+            let entries = [];
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+            for (const e of entries) {
+                const full = path.join(dir, e.name);
+                if (e.isDirectory()) walk(full);
+                else if (!ext || e.name.endsWith(ext)) out.push(slashes(path.relative(ROOT, full)));
+            }
+        };
+        walk(base);
+        out.sort();
+        lua.lua_newtable(L);
+        out.forEach((f, i) => { textToLua(L, f); lua.lua_rawseti(L, -2, i + 1); });
+        return 1;
+    },
+
     // jtest.file_size(path) -> bytes (0 when missing)
     file_size(L) {
         const p = to_jsstring(lauxlib.luaL_checkstring(L, 1));

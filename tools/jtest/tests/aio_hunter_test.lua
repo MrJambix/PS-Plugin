@@ -1662,7 +1662,7 @@ T[#T + 1] = { "the mark on: every target, elites and bosses, bosses only, never 
     assert(seen:find("mark_on", 1, true) and seen:find("sting_spread", 1, true), "both are class options")
 end }
 
-T[#T + 1] = { "the sting spreads to up to three mobs in the fight, each worth it on its own (1.84.0)", function()
+T[#T + 1] = { "the sting spreads to every mob in the fight by default, or up to the cap picked, each worth it on its own (1.84.0, 1.8.1)", function()
     local W = hunter_bundle({ forever = true })
     W.in_combat, W.pet_alive = true, false        -- no pet: no wait for it
     local function mob(guid)
@@ -1679,7 +1679,19 @@ T[#T + 1] = { "the sting spreads to up to three mobs in the fight, each worth it
     W.debuffs_on[a] = { ["Serpent Sting"] = true }
     assert_eq(W.rule("leveling", "Serpent Sting"), true, "two stung: a third")
     W.debuffs_on[b] = { ["Serpent Sting"] = true }
-    assert_eq(W.rule("leveling", "Serpent Sting"), false, "three stung (the default cap): no fourth")
+    assert_eq(W.rule("leveling", "Serpent Sting"), true, "three stung: a fourth (every mob, the default since 1.8.1)")
+    W.settings.sting_spread = 3
+    assert_eq(W.rule("leveling", "Serpent Sting"), false, "up to 3: no fourth")
+
+    -- Never a mob held by crowd control that damage breaks (1.8.1).
+    W.settings.sting_spread = nil
+    W.P.react = { out_of_fight = function() return true end }
+    assert_eq(W.rule("leveling", "Serpent Sting"), false, "a sheep is not stung awake")
+    W.P.react = nil
+    -- Nor one in the dead zone: the next mob is asked (1.8.1).
+    W.distance = 6
+    assert_eq(W.rule("leveling", "Serpent Sting"), false, "an add in melee with you: not stung")
+    W.distance = 30
 
     W.settings.sting_spread = 2
     W.debuffs_on[b] = nil
@@ -1703,6 +1715,149 @@ T[#T + 1] = { "the sting spreads to up to three mobs in the fight, each worth it
         end
         assert(found and found.spread == true and found.dot == true, profile .. ": the sting rule spreads")
     end
+end }
+
+-- 1.8.1: the user, "the Rotation doesn't automatically Look for All targets
+-- in combat with us and drop a Sting on them how come?" The pet's wait was
+-- asked about every add the sting spread to, with one clock for all of them:
+-- each add restarted it for the next, and with two it never ran out.
+T[#T + 1] = { "the sting spreads without the pet's wait: every add of the fight, at once, however many (1.8.1)", function()
+    local W = hunter_bundle({ forever = true })
+    W.in_combat = true
+    -- The pull still waiting: the pet sent a second ago, ten yards short.
+    W.pet_sent, W.pet_on_target = 1.0, true
+    W.pet_pos = { x = 20, y = 0, z = 0 }
+    W.row = { targeting_me = false, targeting_pet = false, closing = 0 }
+    local function mob(guid)
+        return { is_valid = function() return true end, is_dead = function() return false end,
+                 get_guid = function() return guid end }
+    end
+    local a, b = mob("a"), mob("b")
+    W.engaged = { W.target, a, b }
+    --- The sting rule as the engine's spread asks it, about another mob.
+    local function on(profile, unit)
+        for _, rule in ipairs(W.class.profiles[profile].rules) do
+            if rule[1] == "Serpent Sting" then
+                local s = W.situation()
+                s.target, s.spreading = unit, true
+                return rule[2](s)
+            end
+        end
+    end
+    for _, profile in ipairs({ "leveling", "beast_mastery" }) do
+        assert_eq(W.rule(profile, "Serpent Sting"), false, profile .. ": the pull's own target still waits for the pet")
+        for round = 1, 3 do
+            assert_eq(on(profile, a), true, profile .. ": the first add, round " .. round)
+            assert_eq(on(profile, b), true, profile .. ": the second add, round " .. round)
+        end
+    end
+end }
+
+-- 1.8.1: the user, "ensure to have better Pet management when things like CC
+-- kick off on a mob we dont want our pet to attack it".
+T[#T + 1] = { "pet.fighting: the client's target, else the mob it was sent at while it lives, for 30 s (1.8.1)", function()
+    local W = pet_bundle()
+    local mob = { dead = false }
+    mob.is_valid = function() return true end
+    mob.is_dead = function() return mob.dead end
+    mob.get_guid = function() return "mob" end
+    mob.get_name = function() return "Boar" end
+    W.by_guid = { mob = mob }
+    assert_eq(W.pet.fighting(), nil, "sent nowhere, on nothing: nothing")
+    W.pet_holds = mob
+    assert_eq(W.pet.fighting(), mob, "the client's answer")
+    W.pet_holds = nil
+    assert_eq(W.pet.send(mob, "assist", true), true, "sent")
+    assert_eq(W.pet.fighting(), mob, "the client says nothing: the mob it was sent at")
+    W.clock = W.clock + 31
+    assert_eq(W.pet.fighting(), nil, "not after 30 s")
+    W.pet.send(mob, "assist", true)
+    mob.dead = true
+    assert_eq(W.pet.fighting(), nil, "nor once it is dead")
+end }
+
+T[#T + 1] = { "crowd control: never sent at a held mob nor a skill aimed there; on one, to your target, else what hits it, else home (1.8.1)", function()
+    local function mob(guid)
+        return { is_valid = function() return true end, is_dead = function() return false end,
+                 get_guid = function() return guid end, get_name = function() return guid end }
+    end
+    local function bundle()
+        local W = pet_bundle()
+        W.attacks, W.follows, W.held = {}, 0, {}
+        _G.core.input.pet_attack = function(u) W.attacks[#W.attacks + 1] = u end
+        _G.core.input.set_pet_follow = function() W.follows = W.follows + 1 end
+        W.P.react = { out_of_fight = function(u) return W.held[u] == true end }
+        W.P.ctx.enemies.where = function(pred)
+            local out = {}
+            for _, r in ipairs(W.list or {}) do if pred(r) then out[#out + 1] = r end end
+            return out
+        end
+        W.in_combat = true
+        return W
+    end
+    local sheep, free, biter = mob("sheep"), mob("free"), mob("biter")
+
+    -- Nothing sends it there, and no skill goes there.
+    local W = bundle()
+    W.held[sheep] = true
+    W.target = free
+    assert_eq(W.pet.send(sheep, "react", true), false, "a send at a sheep is refused")
+    assert_eq(W.pet.assign(sheep, "react", 5), false, "and an assignment")
+    assert_eq(W.pet.cast("Growl", sheep), false, "a skill at a sheep is refused")
+    assert_eq(W.pet.cast("Growl", free), true, "at a free mob it goes")
+
+    -- On a mob sheeped under it, not your target: to your target, once.
+    local A = bundle()
+    A.target, A.rows = free, { [free] = { engaged = true } }
+    A.pet_holds = sheep
+    A.held[sheep] = true
+    A.tick()
+    assert_eq(A.attacks[#A.attacks], free, "moved to your target")
+    assert_eq(A.follows, 0, "not called home")
+    A.clock = A.clock + 0.3
+    local before = #A.attacks
+    A.tick()
+    assert_eq(#A.attacks, before, "not sent again while it turns round")
+
+    -- Your target is the sheep: what is hitting the pet or you.
+    local B = bundle()
+    B.target, B.pet_holds = sheep, sheep
+    B.held[sheep] = true
+    B.list = { { obj = biter, targeting_pet = true, dist = 3 } }
+    B.tick()
+    assert_eq(B.attacks[#B.attacks], biter, "moved to what is hitting it")
+
+    -- Nothing else in the fight: called home, once.
+    local C = bundle()
+    C.target, C.pet_holds = sheep, sheep
+    C.held[sheep] = true
+    C.tick()
+    assert_eq(C.follows, 1, "called home")
+    assert_eq(#C.attacks, 0, "sent nowhere")
+    C.clock = C.clock + 0.3
+    C.tick()
+    assert_eq(C.follows, 1, "once while it turns round")
+
+    -- A reaction's assignment on a mob sheeped afterwards: the pin ends and
+    -- the pet comes off it.
+    local D = bundle()
+    D.target, D.rows, D.by_guid = free, { [free] = { engaged = true } }, { biter = biter }
+    assert_eq(D.pet.assign(biter, "Pet: pick up the add", 5), true, "assigned")
+    D.held[biter] = true
+    assert_eq(D.pet.assigned(), nil, "the pin ends once it is held")
+    D.pet_holds = biter
+    D.clock = D.clock + 1
+    D.tick()
+    assert_eq(D.attacks[#D.attacks], free, "and the pet goes back to your target")
+
+    -- Pet mode Focus on a mob that is sheeped: called home, not left biting.
+    local F = bundle()
+    F.mode, F.by_guid = 4, { biter = biter }
+    F.pet.set_focus(biter)
+    F.target, F.pet_holds = nil, biter
+    F.held[biter] = true
+    F.tick()
+    assert_eq(F.follows, 1, "Focus: called home off the held mob")
 end }
 
 -- 1.7.4: the user, "hunter rotaiton burns through alot of mana doest let
@@ -1995,16 +2150,17 @@ T[#T + 1] = { "Beast Mastery: Aimed Shot on its cooldown at Forever's two second
     E.distance, E.row = 30, { targeting_me = true, closing = 7, time_to_reach = 2.9, engaged = true }
     assert_eq(E.rule("beast_mastery", "Aimed Shot"), false, "Era: three seconds do not")
 
-    -- One cooldown for both: on a pack it is Multi-Shot's.
+    -- One cooldown for both: with two or more where it lands it is Multi-Shot's.
     W.spread = true
     assert_eq(W.rule("beast_mastery", "Aimed Shot"), false, "not on a pack")
     assert_eq(W.rule("beast_mastery", "Multi-Shot"), true, "Multi-Shot instead")
     W.spread = false
 
-    -- Too close for the aim, not for Multi-Shot's half second.
+    -- Too close for the aim: since the weave is Beast Mastery's (1.8.1), no
+    -- Multi-Shot on one mob -- it was the cooldown's quick shot before.
     W.row = { targeting_me = true, closing = 7, time_to_reach = 1.5, engaged = true }
     assert_eq(W.rule("beast_mastery", "Aimed Shot"), false, "the aim would not land")
-    assert_eq(W.rule("beast_mastery", "Multi-Shot"), true, "the quick shot of the cooldown")
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "no Multi-Shot on one mob (1.8.1)")
     -- A held mob: Aimed Shot, and Multi-Shot stays out of its way.
     W.row = { targeting_pet = true, engaged = true, closing = 0 }
     assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "one mob, the aim lands: not Multi-Shot")
@@ -2045,9 +2201,10 @@ T[#T + 1] = { "Beast Mastery: a mob that reaches you is meleed, not dazed or cli
     W.kite_active = true
     assert_eq(W.rule("beast_mastery", "Attack"), false, "not while the kite steps us out")
     W.kite_active = false
-    -- Next to us but on the pet: the swing is not ours to start.
+    -- Next to us but on the pet: since the weave is Beast Mastery's (1.8.1),
+    -- you walked up to it, and the swing is yours.
     W.row = { targeting_pet = true, engaged = true, closing = 0 }
-    assert_eq(W.rule("beast_mastery", "Attack"), false, "a mob on the pet is not swung at")
+    assert_eq(W.rule("beast_mastery", "Attack"), true, "a mob on the pet is swung at (the weave)")
 
     -- No pet out: Levelling's slow and clip come back.
     W.pet_alive = false
@@ -2077,11 +2234,12 @@ T[#T + 1] = { "Beast Mastery: two hawks, the sting, no Arcane Shot once the hawk
     assert_eq(W.rule("beast_mastery", "Serpent Sting"), true, "the sting")
 end }
 
--- --- the AOE melee weave (1.7.6, ALPHA/TEST) -------------------------------------
--- The user, 2026-10-10, in place of the melee weave on a key: in melee, the
--- hawks, Immolation Trap and the melee strikes, with Rapid Fire on both sides;
--- "We manually Move out and when we move out we use Multi-shot", the stings
--- renewed on every mob in the fight; two hawks at all times.
+-- --- Beast Mastery's melee weave (1.8.1; the AOE melee weave, 1.7.6) ------------
+-- The user, 2026-10-10: in melee, the hawks, Immolation Trap and the melee
+-- strikes, with Rapid Fire on both sides; "We manually Move out and when we
+-- move out we use Multi-shot", the stings renewed on every mob in the fight;
+-- two hawks at all times. Then, 2026-10-11: "add AOE melee weave into our
+-- Normal Beast master rotation no longer alpha/test".
 
 --- A mob of the fight, for engaged_units.
 local function fight_mob(guid)
@@ -2089,37 +2247,40 @@ local function fight_mob(guid)
              get_guid = function() return guid end }
 end
 
---- The bundle with the weave switched on and a fight going: the pet sent
---- long ago, so nothing waits for its first hit.
-local function aoe_bundle()
+--- A Forever hunter running Beast Mastery in a fight: the pet sent long ago
+--- and the mob on it, so nothing waits for its first hit.
+local function bm_bundle()
     local W = hunter_bundle({ forever = true })
-    W.settings.aoe_weave = true
     W.in_combat, W.pet_sent = true, 7
     W.row = { targeting_pet = true, engaged = true, closing = 0 }
     W.H.melee_start_wanted = function() return W.swing_off ~= false end
+    W.class.suggest(points(21, 0, 0))
     return W
 end
 
-T[#T + 1] = { "AOE weave (ALPHA): one switch, off; on, it runs in place of the talents' profile, PvP still first (1.7.6)", function()
+T[#T + 1] = { "Beast Mastery: the melee weave is part of it -- no switch, no profile of its own (1.8.1)", function()
     local W = hunter_bundle()
-    assert_eq(W.class.suggest(points(21, 0, 0)), "beast_mastery", "off: the talents' profile")
-    assert_eq(W.class.aoe_running(), false, "off: not running")
+    -- A value the old switch saved changes nothing.
     W.settings.aoe_weave = true
-    assert_eq(W.class.suggest(points(21, 0, 0)), "aoe_weave", "on: the weave")
-    assert_eq(W.class.suggest(points(0, 21, 0)), "aoe_weave", "over Marksmanship too")
-    assert_eq(W.class.aoe_running(), true, "running")
+    assert_eq(W.class.suggest(points(21, 0, 0)), "beast_mastery", "Beast Mastery's talents: Beast Mastery")
+    assert_eq(W.class.weave_running(), true, "and its weave is running")
+    assert_eq(W.class.suggest(points(0, 21, 0)), "marksmanship", "Marksmanship keeps its own")
+    assert_eq(W.class.weave_running(), false, "with no weave")
+    assert_eq(W.class.suggest(points(3, 10, 0)), "leveling", "Levelling too")
+    assert_eq(W.class.weave_running(), false, "with no weave")
     W.P.pvphunter = { mode = function() return true end }
     assert_eq(W.class.suggest(points(21, 0, 0)), "pvp", "a fight with a player: PvP first")
-    assert_eq(W.class.aoe_running(), false, "and the weave is not running then")
+    assert_eq(W.class.weave_running(), false, "and the weave is not running then")
 
-    assert_eq(W.class.profiles.aoe_weave.label, "AOE melee weave (ALPHA/TEST)", "labelled ALPHA/TEST")
-    local found = false
-    for _, key in ipairs(W.class.profile_order) do found = found or key == "aoe_weave" end
-    assert(found, "in the profile order")
+    assert_eq(W.class.profiles.aoe_weave, nil, "no profile of its own")
+    for _, key in ipairs(W.class.profile_order) do assert(key ~= "aoe_weave", "not in the profile order") end
     local seen = table.concat(W.settings_seen, ",")
-    assert(seen:find("aoe_weave", 1, true), "a class option")
-    assert(not seen:find("weave_swings", 1, true), "the old melee weave's option is gone")
-    -- Melee is the weave's alone: the other profiles have no swing of their own.
+    assert(not seen:find("aoe_weave", 1, true), "no switch")
+    assert(seen:find("disengage", 1, true), "the Disengage switch is a class option")
+    assert_eq(W.class.aoe_running, nil, "the old names are gone")
+    assert_eq(W.class.aoe_status, nil, "the old line too")
+    assert_eq(W.class.profiles.beast_mastery.label, "Beast Mastery", "no ALPHA tag")
+    -- Melee is Beast Mastery's alone: the other profiles have no swing of their own.
     for _, key in ipairs({ "leveling", "marksmanship", "survival" }) do
         for _, rule in ipairs(W.class.profiles[key].rules) do
             assert(rule[1] ~= "Attack", key .. " has no swing rule")
@@ -2127,202 +2288,317 @@ T[#T + 1] = { "AOE weave (ALPHA): one switch, off; on, it runs in place of the t
     end
 end }
 
-T[#T + 1] = { "AOE weave (ALPHA): in melee, the burst -- the fire trap, the strikes, Lacerate, the swing; no shot (1.7.6)", function()
-    local W = aoe_bundle()
+T[#T + 1] = { "Beast Mastery weave: in melee, the burst -- fire trap, strikes, Lacerate, the swing; no shot (1.8.1)", function()
+    local W = bm_bundle()
     W.distance = 3
     for _, name in ipairs({ "Immolation Trap", "Raptor Strike", "Mongoose Bite", "Strider Kick", "Counterattack",
                             "Lacerate", "Attack" }) do
-        assert_eq(W.rule("aoe_weave", name), true, name .. " in melee")
+        assert_eq(W.rule("beast_mastery", name), true, name .. " in melee")
     end
-    for _, name in ipairs({ "Auto Shot", "Multi-Shot", "Serpent Sting" }) do
-        assert_eq(W.rule("aoe_weave", name), false, name .. ": not in melee")
+    for _, name in ipairs({ "Auto Shot", "Multi-Shot", "Serpent Sting", "Aimed Shot" }) do
+        assert_eq(W.rule("beast_mastery", name), false, name .. ": not in melee")
     end
-    assert_eq(W.rule("aoe_weave", "Explosive Trap"), false, "one mob: not the pack's trap")
+    assert_eq(W.rule("beast_mastery", "Explosive Trap"), false, "one mob: not the pack's trap")
     W.spread = true
-    assert_eq(W.rule("aoe_weave", "Explosive Trap"), true, "two or more round you: Explosive Trap")
+    assert_eq(W.rule("beast_mastery", "Explosive Trap"), true, "two or more round you: Explosive Trap")
     W.spread = nil
-    assert_eq(W.rule("aoe_weave", "Wing Clip"), false, "no clip with the pet out")
+    assert_eq(W.rule("beast_mastery", "Wing Clip"), false, "no clip with the pet out")
+    -- The mob is on the pet and you walked up to it: the swing is yours (1.8.1).
+    assert_eq(W.rule("beast_mastery", "Attack"), true, "a mob on the pet is swung at")
 
     W.debuffs["Lacerate"] = true
-    assert_eq(W.rule("aoe_weave", "Lacerate"), false, "the bleed is up")
+    assert_eq(W.rule("beast_mastery", "Lacerate"), false, "the bleed is up")
     W.debuffs["Lacerate"] = nil
     W.ttd = 8
-    assert_eq(W.rule("aoe_weave", "Lacerate"), false, "not on a mob dead before it bleeds out")
-    assert_eq(W.rule("aoe_weave", "Immolation Trap"), true, "the trap still")
+    assert_eq(W.rule("beast_mastery", "Lacerate"), false, "not on a mob dead before it bleeds out")
+    assert_eq(W.rule("beast_mastery", "Immolation Trap"), true, "the trap still")
     W.ttd = 2
-    assert_eq(W.rule("aoe_weave", "Immolation Trap"), false, "nothing on a mob about to die")
-    assert_eq(W.rule("aoe_weave", "Raptor Strike"), false, "no strike")
-    assert_eq(W.rule("aoe_weave", "Attack"), true, "the free swing finishes it")
+    assert_eq(W.rule("beast_mastery", "Immolation Trap"), false, "nothing on a mob about to die")
+    assert_eq(W.rule("beast_mastery", "Raptor Strike"), false, "no strike")
+    assert_eq(W.rule("beast_mastery", "Attack"), true, "the free swing finishes it")
     W.ttd = nil
     W.swing_off = false
-    assert_eq(W.rule("aoe_weave", "Attack"), false, "not while the swing runs")
+    assert_eq(W.rule("beast_mastery", "Attack"), false, "not while the swing runs")
+    W.swing_off = nil
+    W.kite_active = true
+    assert_eq(W.rule("beast_mastery", "Raptor Strike"), false, "not while the run-and-shoot has the legs")
+    assert_eq(W.rule("beast_mastery", "Attack"), false, "nor the swing")
+    W.kite_active = false
 
     W.distance = 20
     for _, name in ipairs({ "Immolation Trap", "Raptor Strike", "Lacerate", "Attack" }) do
-        assert_eq(W.rule("aoe_weave", name), false, name .. ": not out of melee")
+        assert_eq(W.rule("beast_mastery", name), false, name .. ": not out of melee")
     end
-end }
-
-T[#T + 1] = { "AOE weave (ALPHA): out, Multi-Shot on two or more, and Serpent Sting on every mob -- no cap -- moving or not (1.7.6)", function()
-    local W = aoe_bundle()
-    W.distance = 20
-    W.spread = true
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), true, "out and standing, two or more where it lands: Multi-Shot")
-    assert_eq(W.rule("aoe_weave", "Serpent Sting"), true, "the sting on the target")
-    W.moving = true
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), false, "walking: not its half-second cast")
-    assert_eq(W.rule("aoe_weave", "Serpent Sting"), true, "the sting on the move: the way out and back in")
-    W.moving = false
-
-    -- Every mob in the fight, past the class option's cap.
-    local a, b, c = fight_mob("a"), fight_mob("b"), fight_mob("c")
-    W.engaged = { W.target, a, b, c }
-    W.debuffs["Serpent Sting"] = true
-    W.debuffs_on[a] = { ["Serpent Sting"] = true }
-    W.debuffs_on[b] = { ["Serpent Sting"] = true }
-    W.settings.sting_spread = 1                       -- "My target only", for the other profiles
-    W.spreading = true
-    assert_eq(W.rule("leveling", "Serpent Sting"), false, "(Levelling keeps the cap)")
-    assert_eq(W.rule("aoe_weave", "Serpent Sting"), true, "the weave stings the fourth")
-    W.spreading = nil
-
-    local found
-    for _, rule in ipairs(W.class.profiles.aoe_weave.rules) do
-        if rule[1] == "Serpent Sting" then found = rule end
-    end
-    assert(found.spread == true and found.dot == true, "the rule spreads")
-
-    W.posture = "RECOVER"
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), false, "an empty bar: no Multi-Shot")
-    assert_eq(W.rule("aoe_weave", "Serpent Sting"), false, "nor a sting")
-    W.posture = nil
-    W.ttd = 2
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), false, "nothing on a mob about to die")
 end }
 
 -- The user: "if its 2+ mobs it should be priority to multishot", then
 -- "remember Neither PvP or AoE meele wave should Multishot if its not 2+
--- enemy mobs".
-T[#T + 1] = { "AOE weave (ALPHA): Multi-Shot only with two or more where it lands, and then first (1.7.6)", function()
-    local W = aoe_bundle()
+-- enemy mobs" -- Beast Mastery's rule since the weave is its own (1.8.1).
+T[#T + 1] = { "Beast Mastery weave: out, Multi-Shot first with two or more where it lands, never on one (1.8.1)", function()
+    local W = bm_bundle()
     W.distance = 20
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), false, "one mob: never")
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "one mob: never")
+    assert_eq(W.rule("beast_mastery", "Aimed Shot"), true, "Aimed Shot has the cooldown")
+    -- Charging, too close for the aim: still no Multi-Shot on one mob.
+    W.row = { targeting_me = true, closing = 7, time_to_reach = 1.5, engaged = true }
+    assert_eq(W.rule("beast_mastery", "Aimed Shot"), false, "the aim would not land")
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "nor the quick shot on one mob")
+    W.row = { targeting_pet = true, engaged = true, closing = 0 }
     W.spread = true
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), true, "two or more where it lands")
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), true, "two or more where it lands")
+    assert_eq(W.rule("beast_mastery", "Aimed Shot"), false, "and Aimed Shot gives it the shared cooldown")
     W.moving = true
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), false, "not on the move")
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "not on the move")
     W.moving = false
     W.distance = 3
-    assert_eq(W.rule("aoe_weave", "Multi-Shot"), false, "not in melee")
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "not in melee")
+    W.distance = 20
+    W.posture = "RECOVER"
+    assert_eq(W.rule("beast_mastery", "Multi-Shot"), false, "an empty bar: no Multi-Shot")
+    W.posture = nil
 
     -- One Multi-Shot rule, ahead of every damage rule.
     local at, multi = {}, {}
-    for i, rule in ipairs(W.class.profiles.aoe_weave.rules) do
+    for i, rule in ipairs(W.class.profiles.beast_mastery.rules) do
         if rule[1] == "Multi-Shot" then multi[#multi + 1] = i else at[rule[1]] = at[rule[1]] or i end
     end
     assert_eq(#multi, 1, "one Multi-Shot rule")
-    for _, name in ipairs({ "Rapid Fire", "Summon Hawk", "Serpent Sting", "Raptor Strike", "Immolation Trap" }) do
+    for _, name in ipairs({ "Rapid Fire", "Summon Hawk", "Serpent Sting", "Aimed Shot", "Raptor Strike",
+                            "Immolation Trap" }) do
         assert(multi[1] < at[name], "Multi-Shot before " .. name)
     end
+    local sting
+    for _, rule in ipairs(W.class.profiles.beast_mastery.rules) do
+        if rule[1] == "Serpent Sting" then sting = rule end
+    end
+    assert(sting.spread == true and sting.dot == true, "the sting spreads")
 end }
 
-T[#T + 1] = { "AOE weave (ALPHA): two hawks at all times and Rapid Fire, in melee and out (1.7.6)", function()
+T[#T + 1] = { "Beast Mastery weave: two hawks at all times; Rapid Fire in a burst window, in melee and out (1.8.1)", function()
     for _, d in ipairs({ 3, 20 }) do
-        local W = aoe_bundle()
+        local W = bm_bundle()
+        local bursting = false
+        W.H.bursting = function() return bursting end
         W.known["Summon Hawk"] = true
         W.distance = d
         local where = d < 5 and "in melee" or "out"
         W.power = 0.3                                 -- refilling: Levelling keeps to one hawk
-        assert_eq(W.rule("aoe_weave", "Summon Hawk"), true, where .. ": the first hawk")
+        assert_eq(W.rule("beast_mastery", "Summon Hawk"), true, where .. ": the first hawk")
         W.last_cast["Summon Hawk"] = 1
         assert_eq(W.rule("leveling", "Summon Hawk"), false, where .. ": (Levelling, refilling: one is enough)")
-        assert_eq(W.rule("aoe_weave", "Summon Hawk"), true, where .. ": the weave keeps two")
+        assert_eq(W.rule("beast_mastery", "Summon Hawk"), true, where .. ": Beast Mastery keeps two")
         W.clock = W.clock + 6
         W.last_cast["Summon Hawk"] = 0.5
-        assert_eq(W.rule("aoe_weave", "Summon Hawk"), false, where .. ": two out")
+        assert_eq(W.rule("beast_mastery", "Summon Hawk"), false, where .. ": two out")
 
         W.power = 0.9
-        assert_eq(W.rule("aoe_weave", "Rapid Fire"), true, where .. ": Rapid Fire on a mob that lives a while")
-        W.ttd = 8
-        assert_eq(W.rule("aoe_weave", "Rapid Fire"), false, where .. ": not on one short fight")
+        -- One rule for the five-minute cooldown, the burst window's (1.8.1).
         W.engaged = { W.target, fight_mob("b") }
-        assert_eq(W.rule("aoe_weave", "Rapid Fire"), true, where .. ": on two")
+        assert_eq(W.rule("beast_mastery", "Rapid Fire"), false, where .. ": two mobs, no burst window: kept")
+        bursting = true
+        assert_eq(W.rule("beast_mastery", "Rapid Fire"), true, where .. ": a burst window: Rapid Fire")
         W.ttd = 2
-        assert_eq(W.rule("aoe_weave", "Rapid Fire"), false, where .. ": not into a mob about to die")
+        assert_eq(W.rule("beast_mastery", "Rapid Fire"), false, where .. ": not into a mob about to die")
+        W.ttd = nil
+        W.posture = "RECOVER"
+        assert_eq(W.rule("beast_mastery", "Rapid Fire"), false, where .. ": not on an empty bar")
     end
+    -- The pull: Rapid Fire and the hawks wait for the pet's first hit too.
+    local V = hunter_bundle({ forever = true })
+    V.H.bursting = function() return true end
+    V.known["Summon Hawk"] = true
+    V.in_combat, V.pet_sent, V.pet_on_target = true, 0.8, true
+    V.pet_pos = { x = 20, y = 0, z = 0 }
+    V.row = { targeting_me = false, targeting_pet = false, closing = 0 }
+    assert_eq(V.rule("beast_mastery", "Rapid Fire"), false, "Rapid Fire waits for the pet")
+    assert_eq(V.rule("beast_mastery", "Summon Hawk"), false, "and the hawks")
 end }
 
-T[#T + 1] = { "AOE weave (ALPHA): Auto Shot pressed again straight back out of melee, once a trip (1.7.6)", function()
-    local W = aoe_bundle()
+T[#T + 1] = { "Beast Mastery weave: Auto Shot pressed again straight back out of melee, once a trip (1.8.1)", function()
+    local W = bm_bundle()
     local restarted = 0
     W.repeater.restart = function() restarted = restarted + 1 end
     W.distance = 20
-    assert_eq(W.rule("aoe_weave", "Auto Shot"), true, "out: Auto Shot")
+    assert_eq(W.rule("beast_mastery", "Auto Shot"), true, "out: Auto Shot")
     assert_eq(restarted, 0, "no trip yet")
     W.distance = 3
-    W.rule("aoe_weave", "Raptor Strike")
+    W.rule("beast_mastery", "Raptor Strike")
     W.clock = W.clock + 1
     W.distance = 20
-    assert_eq(W.rule("aoe_weave", "Auto Shot"), true, "back out: pressed")
+    assert_eq(W.rule("beast_mastery", "Auto Shot"), true, "back out: pressed")
     assert_eq(restarted, 1, "restarted")
     W.clock = W.clock + 1
-    W.rule("aoe_weave", "Auto Shot")
+    W.rule("beast_mastery", "Auto Shot")
     assert_eq(restarted, 1, "once a trip")
 
     -- The next trip.
     W.distance = 3
-    W.rule("aoe_weave", "Attack")
+    W.rule("beast_mastery", "Attack")
     W.clock = W.clock + 1
     W.distance = 20
-    W.rule("aoe_weave", "Auto Shot")
+    W.rule("beast_mastery", "Auto Shot")
     assert_eq(restarted, 2, "the next trip, again")
 
-    -- Without the weave, melee restarts nothing.
-    W.settings.aoe_weave = nil
+    -- Levelling's melee restarts nothing.
     W.distance = 3
     W.rule("leveling", "Raptor Strike")
     W.clock = W.clock + 1
     W.distance = 20
     W.rule("leveling", "Auto Shot")
-    assert_eq(restarted, 2, "off: no restart")
+    assert_eq(restarted, 2, "Levelling: no restart")
 end }
 
-T[#T + 1] = { "AOE weave (ALPHA): the class window's line says which side you are on (1.7.6)", function()
-    local W = aoe_bundle()
-    W.settings.aoe_weave = nil
-    assert(W.class.aoe_status():find("off", 1, true), "off: " .. W.class.aoe_status())
-    W.settings.aoe_weave = true
-    assert(W.class.aoe_status():find("waiting for a fight", 1, true), "no fight: " .. W.class.aoe_status())
+T[#T + 1] = { "Beast Mastery weave: the class window's line says which side you are on (1.8.1)", function()
+    local W = bm_bundle()
+    W.class.suggest(points(0, 21, 0))
+    assert(W.class.weave_status():find("not running", 1, true), "Marksmanship: " .. W.class.weave_status())
+    W.class.suggest(points(21, 0, 0))
+    assert(W.class.weave_status():find("waiting for a fight", 1, true), "no fight: " .. W.class.weave_status())
     W.P.combat = { target = function() return W.target end, in_combat = function() return true end }
     W.distance = 3
-    local line = W.class.aoe_status()
-    assert(line:find("in melee", 1, true) and line:find("ALPHA/TEST", 1, true), "in melee: " .. line)
+    local line = W.class.weave_status()
+    assert(line:find("in melee", 1, true) and line:find("Beast Mastery", 1, true), "in melee: " .. line)
+    assert(not line:find("ALPHA", 1, true), "no ALPHA tag: " .. line)
     W.distance = 20
     local other = fight_mob("b")
     W.P.field = { by_weakest = function() return { W.target, other } end }
     W.debuffs["Serpent Sting"] = true
-    line = W.class.aoe_status()
+    line = W.class.weave_status()
     assert(line:find("out: Multi-Shot; Serpent Sting on 1 of 2", 1, true), "out: " .. line)
     W.P.field = { by_weakest = function() return { W.target } end }
-    line = W.class.aoe_status()
-    assert(line:find("one mob, no Multi-Shot", 1, true), "out, one mob: " .. line)
+    line = W.class.weave_status()
+    assert(line:find("one mob, Aimed Shot", 1, true), "out, one mob: " .. line)
     W.P.pvphunter = { mode = function() return true end }
-    assert(W.class.aoe_status():find("PvP", 1, true), "a player fight: " .. W.class.aoe_status())
+    assert(W.class.weave_status():find("PvP", 1, true), "a player fight: " .. W.class.weave_status())
 end }
 
-T[#T + 1] = { "AOE weave (ALPHA): nothing moves you -- the step out stands aside while it runs (1.7.6)", function()
+T[#T + 1] = { "Beast Mastery: nothing moves you once the pet levels have begun; the run-and-shoot before them is kept (1.8.1)", function()
     local W = kite_bundle()
     W.row = { targeting_pet = true }
     local running = true
     W.P.rotation.active_class = function()
-        return { key = "hunter", aoe_running = function() return running end }
+        return { key = "hunter", weave_running = function() return running end }
     end
     W.tick()
     assert_eq(W.kite.active(), false, "no step out: you walk")
-    assert_eq(W.kite.stats().reason, "AOE melee weave: you move", "and why")
+    assert_eq(W.kite.stats().reason, "Beast Mastery: you move in and out", "and why")
     running = false
     W.tick()
-    assert_eq(W.kite.stepping_out(), true, "the step out again without it")
+    assert_eq(W.kite.stepping_out(), true, "the step out again in another profile")
+
+    -- Before Tame Beast: Beast Mastery (a hunter with no points reads as one)
+    -- leaves the legs to the run-and-shoot's own switch.
+    local V = kite_bundle()
+    V.known["Tame Beast"] = nil
+    V.P.pet.alive = function() return false end
+    V.P.rotation.active_class = function()
+        return { key = "hunter", weave_running = function() return true end }
+    end
+    V.tick()
+    assert(V.kite.stats().reason ~= "Beast Mastery: you move in and out", "the pre-pet kite is not stood aside: "
+        .. tostring(V.kite.stats().reason))
+end }
+
+-- --- Disengage when hit: the switch (1.8.1) ----------------------------------------
+-- The user: "add a button Turn it on if being attacked to disengage". The
+-- reaction is react/rules/hunter.lua's (aio_hunter_pvp_test); the gate every
+-- other path asks is the class's key_gated (rotation.lua, H.key_allows).
+
+-- 1.8.1: the user, "what about intimidation? I learned it recently from my
+-- talents but i dont see it being used". Forever does not say what the pet
+-- is attacking (1.73.1), and these asked the client alone. Then: "it stunts
+-- target and next sucess full attack gains 100% critical chance and Generate
+-- high threat so it should be used ina Burst, Interrupt (stunt) or when I
+-- really need a mob off me and Disengage is not available".
+T[#T + 1] = { "Intimidation: kept for a burst -- pressed only in a burst window, the pet on our mob; in the burst sequence after Bestial Wrath (1.8.1)", function()
+    local W = hunter_bundle({ forever = true })
+    W.in_combat = true
+    W.pet_on_target = false                          -- the client says nothing (Forever)
+    local fighting, bursting = nil, false
+    W.P.pet.fighting = function() return fighting end
+    W.H.bursting = function() return bursting end
+    fighting = W.target                              -- the pet module: sent at our mob
+    for _, profile in ipairs({ "leveling", "beast_mastery" }) do
+        assert_eq(W.rule(profile, "Intimidation"), false, profile .. ": no burst window: Intimidation is kept")
+        assert_eq(W.rule(profile, "Bestial Wrath"), false, profile .. ": and Bestial Wrath (the burst window's too)")
+    end
+    bursting = true
+    for _, profile in ipairs({ "leveling", "beast_mastery" }) do
+        assert_eq(W.rule(profile, "Intimidation"), true, profile .. ": a burst window: Intimidation")
+        assert_eq(W.rule(profile, "Bestial Wrath"), true, profile .. ": and Bestial Wrath")
+    end
+    fighting = nil
+    assert_eq(W.rule("beast_mastery", "Intimidation"), false, "the pet on nothing: it would stun nothing")
+    fighting = W.target
+    W.ttd = 2
+    assert_eq(W.rule("beast_mastery", "Intimidation"), false, "not on a mob about to die")
+    W.ttd = nil
+    W.P.react = { out_of_fight = function() return true end }
+    assert_eq(W.rule("beast_mastery", "Intimidation"), false, "not into crowd control")
+    W.P.react = nil
+    W.in_combat = false
+    assert_eq(W.rule("beast_mastery", "Intimidation"), false, "not before the fight")
+    W.in_combat = true
+
+    -- The burst sequence: after Bestial Wrath, vetoed while the pet is on nothing.
+    local at = {}
+    for i, entry in ipairs(W.class.burst) do at[entry.spell] = { i = i, entry = entry } end
+    assert(at["Intimidation"] and at["Bestial Wrath"], "both in the burst sequence")
+    assert(at["Intimidation"].i > at["Bestial Wrath"].i, "Intimidation after Bestial Wrath")
+    local when = at["Intimidation"].entry.when
+    assert_eq(when(W.situation()), true, "the pet on our mob: it goes")
+    fighting = nil
+    assert_eq(when(W.situation()), false, "the pet on nothing: skipped")
+
+    -- A client that answers: as before.
+    local E = hunter_bundle()
+    E.in_combat, E.pet_on_target = true, true
+    E.H.bursting = function() return true end
+    assert_eq(E.rule("beast_mastery", "Intimidation"), true, "the client says the pet is on it")
+end }
+
+-- 1.8.1: the user asked when to burst in PvE; no Forever guide says, and
+-- they chose Mobalytics' rule: solo, Rapid Fire "on harder encounters ... it
+-- might pull enemies off your pet"; with a tank, freely.
+T[#T + 1] = { "the burst window solo: a harder fight only, once the pet holds the mob; with a tank, freely (1.8.1)", function()
+    local W = hunter_bundle({ forever = true })
+    W.in_combat = true
+    local veto = W.class.burst_veto
+    assert(type(veto) == "function", "the class holds the window back through burst_veto")
+    W.row = { targeting_pet = true, engaged = true, closing = 0 }
+    local why = veto(W.situation(), "freely", 12)
+    assert(type(why) == "string" and why:find("harder fight", 1, true), "solo, a 12 s mob: kept: " .. tostring(why))
+    assert_eq(veto(W.situation(), "freely", 25), nil, "a mob living 25 s: it opens")
+    for _, kind in ipairs({ "elite", "pack", "losing" }) do
+        assert_eq(veto(W.situation(), kind, 10), nil, kind .. ": it opens")
+    end
+    -- The pet not holding the mob yet: Rapid Fire's threat would pull it.
+    W.row = { targeting_me = false, targeting_pet = false, closing = 0 }
+    why = veto(W.situation(), "elite", 30)
+    assert(type(why) == "string" and why:find("pet to hold", 1, true), "the pet not on it yet: wait: " .. tostring(why))
+    W.row = { targeting_me = true, closing = 0, engaged = true }
+    assert_eq(veto(W.situation(), "elite", 30), nil, "on you already: nothing left to pull")
+    W.row = { targeting_me = false, targeting_pet = false, closing = 0 }
+    W.pet_alive = false
+    assert_eq(veto(W.situation(), "elite", 30), nil, "no pet out: nothing to wait for")
+    W.pet_alive = true
+    W.context = "party"
+    assert_eq(veto(W.situation(), "freely", 12), nil, "a group with its tank: freely, as before")
+end }
+
+T[#T + 1] = { "Disengage: one class switch, off by default, and the gate every path asks (1.8.1)", function()
+    local W = hunter_bundle()
+    local gate = W.class.key_gated and W.class.key_gated["Disengage"]
+    assert(type(gate) == "function", "Disengage is gated on a switch")
+    assert_eq(gate(), false, "off by default: nothing presses it")
+    W.settings.disengage = true
+    assert_eq(gate(), true, "on: allowed")
+    assert(table.concat(W.settings_seen, ","):find("disengage", 1, true), "a class option")
+    for _, key in ipairs(W.class.profile_order) do
+        for _, rule in ipairs(W.class.profiles[key].rules) do
+            assert(rule[1] ~= "Disengage", key .. ": no Disengage rule; the reaction presses it")
+        end
+    end
 end }
 
 -- --- the PvP hunter (1.7.6, ALPHA/TEST) ------------------------------------------

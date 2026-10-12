@@ -57,6 +57,28 @@ D.CREATURE_BY_ID = { [1] = "Beast", [2] = "Dragonkin", [3] = "Demon", [4] = "Ele
     [6] = "Undead", [7] = "Humanoid", [8] = "Critter", [9] = "Mechanical", [11] = "Totem" }
 
 D.MODES = { "NORMAL", "DEFENSIVE", "EMERGENCY", "ESCAPE", "RECOVERY" }
+-- The PvP threat levels (react/intel/threat.lua), worst first.
+D.THREATS = { "CRITICAL", "HIGH", "MODERATE", "LOW", "INFORMATIONAL" }
+-- The tactical states (react/intel/states.lua), the brief's eighteen and the
+-- two the layer adds (NONE: no PvP; IDLE: PvP about, nothing to do).
+D.TACTICAL_STATES = { "DISENGAGE", "ANTI_BURST", "DEFENSIVE", "INTERRUPT_OPPORTUNITY", "CONTROL_DISTANCE",
+    "RESET_FIGHT", "CROWD_CONTROL_SETUP", "PROTECT_ALLY", "PEEL_ENEMY", "KILL_WINDOW", "COUNTER_ATTACK",
+    "OBJECTIVE_CONTROL", "OPENING", "SUSTAINED_PRESSURE", "RANGED_PRESSURE", "RESOURCE_RECOVERY", "PREPARATION",
+    "BAIT_OPPONENT", "IDLE", "NONE" }
+-- The move advice (react/intel/position.lua).
+D.ADVICE = { "hold", "increase", "reduce", "strafe", "break_los", "regain_los", "stay_near_allies",
+    "avoid_reinforcements", "do_not_pursue", "none" }
+-- The control plan (react/intel/ccplan.lua, Stage 6): what keeping a control
+-- on a player is worth, and what the next control of its kind gets
+-- ("unknown": Forever, where the rule is unverified).
+D.CC_VALUES = { "survive", "stop_heal", "stop_burst", "kill", "peel", "distance", "reset", "none" }
+D.DR_LEVELS = { "full", "half", "quarter", "immune", "unknown" }
+-- Opponent prediction (react/intel/predict.lua, Stage 7): the patterns a
+-- player can show this session, as the brief lists them; "none": nothing sure.
+D.PATTERNS = { "mobility_when_slowed", "defensive_threshold", "interrupts_casts", "escape_after_control",
+    "over_committing", "targeting_pet", "same_opener", "retreating_when_pressured", "saving_cooldowns_until_low", "none" }
+-- Bait detection (react/intel/bait.lua, Stage 8): the bait on the target.
+D.BAITS = { "mobility", "defensive", "interrupt", "cc", "none" }
 
 --- What can take control of you, as react/pvp.lua names it (1.81.0).
 D.CONTROLS = { "stun", "fear", "polymorph", "charm", "sleep", "knockout", "disorient", "freeze", "horror",
@@ -153,6 +175,14 @@ D.CONDITIONS = {
     { key = "me_control_kind", group = "Me", label = "I am controlled by", type = "choice",
       code = "me.control_kind == %q", choices = "controls", default = "stun" },
     { key = "me_pvp_trinket", group = "Me", label = "My PvP trinket is ready", type = "bool", code = "me.pvp_trinket" },
+    -- PvP intelligence, Stage 3 (react/intel/cooldowns.lua).
+    { key = "me_protected", group = "Me", label = "A defensive of mine already covers me (Deterrence, Evasion, a bubble, a shield)",
+      type = "bool", code = "me.protected" },
+    -- PvP intelligence, Stage 4.
+    { key = "me_dead_zone", group = "Me", label = "My target is inside my minimum ranged distance (melee or the dead zone)",
+      type = "bool", code = "me.dead_zone" },
+    { key = "me_safe_escape", group = "Me", label = "A safe escape is available (one ready, nothing unslowed in melee with me)",
+      type = "bool", code = "me.safe_escape" },
 
     -- Spells
     { key = "spell_ready", group = "Spells", label = "This spell is ready", type = "text", code = 'ready(%q)',
@@ -219,9 +249,39 @@ D.CONDITIONS = {
       type = "bool", code = "target.bursting" },
     { key = "t_trinket_down", group = "Target", label = "Target's PvP trinket is on its cooldown", type = "bool",
       code = "target.trinket_down" },
+    -- PvP intelligence, Stage 2 (react/intel): read off W.intel.
+    { key = "t_mobility", group = "Target", label = "Target used a gap closer or sprint in the last 3 s", type = "bool",
+      code = "target.mobility" },
+    { key = "t_defensive", group = "Target", label = "Target has a defensive up (immune, Evasion, Deterrence, a shield)",
+      type = "bool", code = "target.defensive" },
+    -- PvP intelligence, Stage 3 (react/intel/cooldowns.lua): the target's
+    -- ledger. Never seen, or a cooldown the tables do not carry: not ready.
+    { key = "t_cd_seen", group = "Target", label = "Target was seen using", type = "text",
+      code = 'enemy_cd_seen(%q)', pick = "spell", default = "" },
+    { key = "t_cd_ready_in", group = "Target", label = "Seconds until the target's ability is back (999: never seen)",
+      type = "text_number", code = 'enemy_cd_ready_in(%q)', pick = "spell", default = "", min = 0, max = 999, step = 1,
+      suffix = "s", default_num = 10, op = "<=" },
+    { key = "t_cc_left", group = "Target", label = "Seconds left on the control on my target (0: none)", type = "number",
+      code = "target.cc_left", min = 0, max = 60, step = 0.5, default = 2, op = "<=" },
+    -- PvP intelligence, Stage 6 (react/intel/ccplan.lua): the control plan.
+    { key = "t_cc_value", group = "Target", label = "The control on my target is worth keeping for", type = "choice",
+      code = "target.cc_value == %q", choices = "cc_values", default = "stop_heal" },
+    { key = "t_dr_next", group = "Target", label = "Diminishing returns: what my next control on the target gets",
+      type = "choice", code = "target.dr_next == %q", choices = "dr", default = "full" },
+    { key = "t_cc_ours", group = "Target", label = "The control on my target is mine (or its caster is unread)",
+      type = "bool", code = "target.cc_ours" },
+    -- PvP intelligence, Stage 7 (react/intel/predict.lua): what the target tends to do.
+    { key = "t_pattern", group = "Target", label = "Target's surest pattern this session", type = "choice",
+      code = "target.pattern == %q", choices = "patterns", default = "mobility_when_slowed" },
+    { key = "t_pattern_conf", group = "Target", label = "The target's surest pattern: its rate %", type = "number",
+      code = "target.pattern_conf", min = 0, max = 100, suffix = "%", default = 60, op = ">=" },
+    { key = "t_pattern_rel", group = "Target", label = "The target's surest pattern: the evidence behind it % (two chances: 50)",
+      type = "number", code = "target.pattern_reliability", min = 0, max = 100, suffix = "%", default = 60, op = ">=" },
 
     -- Pet
     { key = "pet_exists", group = "Pet", label = "My pet is out", type = "bool", code = "pet.exists" },
+    { key = "pet_breaks_cc", group = "Pet", label = "My pet is on a player held by a control that damage breaks",
+      type = "bool", code = "pet.breaks_cc" },
     { key = "pet_hp", group = "Pet", label = "Pet health %", type = "number", code = "pet.hp",
       min = 1, max = 100, suffix = "%", default = 40, op = "<" },
     { key = "pet_attackers", group = "Pet", label = "Mobs attacking my pet", type = "number", code = "pet.attackers",
@@ -259,6 +319,23 @@ D.CONDITIONS = {
       min = 0, max = 10, default = 1, op = ">=" },
     { key = "f_boss", group = "Fight", label = "A boss fight", type = "bool", code = "fight.boss" },
     { key = "f_pvp", group = "Fight", label = "Fighting players (PvP)", type = "bool", code = "fight.pvp" },
+    -- PvP intelligence, Stage 2 (react/intel/threat.lua).
+    { key = "f_threat", group = "Fight", label = "PvP threat level", type = "choice", code = "fight.threat == %q",
+      choices = "threats", default = "HIGH" },
+    { key = "f_threat_score", group = "Fight", label = "PvP threat score (0-100)", type = "number",
+      code = "fight.threat_score", min = 0, max = 100, default = 50, op = ">=" },
+    { key = "f_incoming_cast", group = "Fight", label = "A dangerous cast is coming at me (a player's)", type = "bool",
+      code = "fight.incoming_cast" },
+    -- PvP intelligence, Stage 4 (react/intel/states.lua, position.lua).
+    { key = "f_tactic", group = "Fight", label = "PvP tactical state", type = "choice", code = "fight.tactic == %q",
+      choices = "tactics", default = "CONTROL_DISTANCE" },
+    { key = "f_advice", group = "Fight", label = "PvP move advice", type = "choice", code = "fight.advice == %q",
+      choices = "advice", default = "increase" },
+    -- PvP intelligence, Stage 8 (react/intel/bait.lua): the bait on the target.
+    { key = "f_bait", group = "Fight", label = "PvP bait on my target (mobility: its charge; defensive: hold the burst; interrupt: show a cast; cc: draw the trinket)",
+      type = "choice", code = "fight.bait == %q", choices = "baits", default = "mobility" },
+    { key = "f_kill_window", group = "Fight", label = "A kill window on my target (PvP intelligence)", type = "bool",
+      code = "fight.kill_window" },
     { key = "f_within8", group = "Fight", label = "Enemies within 8 yards of me", type = "number", code = "fight.within8",
       min = 0, max = 15, default = 3, op = ">=" },
     { key = "f_within30", group = "Fight", label = "Enemies within 30 yards of me", type = "number", code = "fight.within30",
@@ -468,12 +545,16 @@ D.DEFAULT_INFO = {
     ["Restore mana"] = "A mana gem, else a mana potion, when mana runs out before the fight does.",
     ["Mana cooldown"] = "Evocation, Innervate, Life Tap and the like when mana is short.",
     ["Clip the add"] = "Wing Clip on a mob meleeing you that is not your target, so you can step away from it.",
+    ["Intel: the aspect for the moment"] = "PvP intelligence: Aspect of the Monkey with a melee player on you, Hawk back once nobody is -- only with Auto swap aspects on (the Hunter window).",
+    ["Intel: keep the control on your target"] = "PvP intelligence: no damage on a player held by a control that damage breaks (a trap, a Scatter Shot, a sheep, anyone's) while keeping it is worth something -- you are low, it heals, its burst is up, another is nearly dead, it was on an ally, a melee player held, a reset -- or the trap could follow a Scatter Shot. A hold: the rotation's presses stop; nothing is pressed.",
+    ["Intel: the bait"] = "PvP intelligence: Concussive Shot to bait a player the predictor says closes the gap when slowed (the trap, Scatter Shot or the clip ready for it), or one that breaks a control at once (the trinket drawn before the real trap). Never while the threat is HIGH, never into a control being kept, never from one sighting.",
     ["Stop the cast with crowd control"] = "Scatter Shot or Intimidation to stop a cast that Counter Shot cannot.",
     ["Intimidation: save the pet"] = "Intimidation when the pet is about to die under its mob.",
     ["Intimidation: give the pet its mob back"] = "Intimidation to hand back a mob that turned on you.",
     ["Out of Cheetah before the hit"] = "Leaves Aspect of the Cheetah before a mob reaches you (dazed).",
-    -- 1.7.6: the hunter's AOE melee weave (ALPHA/TEST)
-    ["AOE weave: sting the next mob"] = "AOE melee weave (ALPHA/TEST) only: out of melee, once your target has its Serpent Sting, the target moves on to the next mob fighting you or your pet whose sting is missing or running out.",
+    -- 1.8.1: Beast Mastery (the AOE melee weave of 1.7.6), and Disengage
+    ["Beast Mastery: sting the next mob"] = "Beast Mastery only: out of melee, once your target has its Serpent Sting, a mob fighting you or your pet that has gone 4 s without one (the rotation stings the rest straight onto them) becomes your target.",
+    ["Disengage when hit"] = "With the Hunter option Disengage when a mob hits you on: a mob hitting you in melee that your pet is fighting (in a group, the tank) is handed back with Disengage, a threat drop.",
     ["Pet: Furious Howl"] = "The wolf's Furious Howl when you are about to hit.",
     ["Pet: sprint to its mob"] = "Dash or Dive to reach the pet's mob sooner.",
     ["Pet: Charge"] = "The boar's Charge at its mob.",
@@ -499,8 +580,12 @@ D.DEFAULT_CLASS = {
     ["Pet: Furious Howl"] = "HUNTER", ["Pet: sprint to its mob"] = "HUNTER", ["Pet: Charge"] = "HUNTER",
     ["Pet: Thunderstomp"] = "HUNTER", ["Pet: Shell Shield"] = "HUNTER", ["Pet: Cower"] = "HUNTER",
     ["Clip the add"] = "HUNTER", ["Stop the cast with crowd control"] = "HUNTER",
+    ["Intel: the aspect for the moment"] = "HUNTER",
+    ["Intel: keep the control on your target"] = "HUNTER",
+    ["Intel: the bait"] = "HUNTER",
     ["Intimidation: save the pet"] = "HUNTER", ["Intimidation: give the pet its mob back"] = "HUNTER",
-    ["Out of Cheetah before the hit"] = "HUNTER", ["AOE weave: sting the next mob"] = "HUNTER",
+    ["Out of Cheetah before the hit"] = "HUNTER", ["Beast Mastery: sting the next mob"] = "HUNTER",
+    ["Disengage when hit"] = "HUNTER",
 }
 D.PET_CLASSES = { HUNTER = true, WARLOCK = true }
 
@@ -607,6 +692,15 @@ D.BENCH_PRESETS = {
         t_distance = 3, on_me = 1, melee_on_me = 1, engaged = 1, t_player = true, t_on_me = true, pvp = true,
         players = 1, where = "world_pvp", combat_time = 6 } },
     { key = "idle", label = "Out of combat", s = { in_combat = false, hp = 100, power = 100 } },
+    -- PvP intelligence (react/intel): what its conditions read, made up.
+    { key = "pvp_intel", label = "PvP: a warrior bursting on me", s = { in_combat = true, hp = 45, power = 50, target = true,
+        t_hp = 70, t_distance = 3, on_me = 1, melee_on_me = 1, engaged = 1, t_player = true, t_on_me = true, pvp = true,
+        players = 1, where = "world_pvp", combat_time = 9, t_name = "a warrior", pet = true, pet_hp = 80,
+        pvp_threat = "HIGH", pvp_threat_score = 58, pvp_tactic = "ANTI_BURST", pvp_advice = "hold",
+        t_mobility = true, t_defensive = false, t_cd_seen = "Recklessness, Intercept", t_cd_ready = 1790,
+        me_protected = false, me_dead_zone = true, me_safe_escape = false, pet_breaks_cc = false,
+        t_cc_value = "none", t_dr_next = "full", t_cc_ours = false, t_pattern = "none", t_pattern_conf = 0,
+        t_pattern_rel = 0, pvp_bait = "none" } },
 }
 
 D.LIBRARY_EXAMPLE = [[-- Your class's own Lua, shared by every reaction of the class.
@@ -625,17 +719,21 @@ end
 --- Every name the Lua side gives code, for the editor's colours and the
 --- window's reference list.
 D.API = {
-    { name = "me", text = "hp, falling, ttl, power, power_pct, power_kind, combo, level, in_combat, combat_time, moving, casting, attacking, controlled, healthstone, potion, mana_potion" },
-    { name = "target", text = "exists, name, hp, distance, ttd, casting, cast_name, cast_left, interruptible, on_me, on_pet, on_tank, on_healer, on_group, fleeing, elite, boss, rare, player, level_diff, creature, controlled, threat, runs, others" },
-    { name = "pet", text = "exists, hp, attackers, tanking" },
+    { name = "me", text = "hp, falling, ttl, power, power_pct, power_kind, combo, level, in_combat, combat_time, moving, casting, attacking, controlled, healthstone, potion, mana_potion; protected, dead_zone, safe_escape (PvP intelligence)" },
+    { name = "target", text = "exists, name, hp, distance, ttd, casting, cast_name, cast_left, interruptible, on_me, on_pet, on_tank, on_healer, on_group, fleeing, elite, boss, rare, player, level_diff, creature, controlled, threat, runs, others; immune, bursting, trinket_down, mobility, defensive (a player's)" },
+    { name = "pet", text = "exists, hp, attackers, tanking; breaks_cc (on a player held by a control damage breaks)" },
     { name = "group", text = "in_group, in_raid, members, dead, tank_alive, healer_alive, healer_controlled, lowest (health %), hurt (under 50%)" },
-    { name = "fight", text = "mode, danger, engaged, on_me, melee_on_me, nearby, within8, within30, players, casting, elites, boss, pvp" },
+    { name = "fight", text = "mode, danger, engaged, on_me, melee_on_me, nearby, within8, within30, players, casting, elites, boss, pvp; threat (CRITICAL..INFORMATIONAL), threat_score (0-100), incoming_cast, tactic (the PvP state), advice (the move: hold, increase, reduce...)" },
     { name = "where", text = "kind (world, world_pvp, bg, arena, dungeon, raid), name" },
     { name = "check", text = 'check("me_hp", "<", 40): any GUI condition by its key' },
     { name = "ready", text = 'ready("Spell"), known("Spell"), cooldown("Spell") in seconds' },
     { name = "buff", text = 'buff("Name") on you, debuff("Name") on the target, debuff("Name", true) yours only' },
     { name = "buff_left", text = 'buff_left("Name") / buff_stacks("Name"); debuff_left("Name") / debuff_stacks("Name", mine)' },
     { name = "has_item", text = 'has_item("Free Action Potion"): carried; key(0x10): that key is held' },
+    { name = "enemy_cd_seen", text = 'enemy_cd_seen("Sprint"): the target was seen using it; enemy_cd_ready_in("Sprint"): seconds until it is back by the client\'s tables (0 when it has run out, 999 when never seen); me.protected: a defensive of yours covers you' },
+    { name = "target.cc_value", text = 'target.cc_value: what keeping the control on the target is worth ("survive", "stop_heal", "stop_burst", "kill", "peel", "distance", "reset", "none"); target.dr_next: what your next control on it gets ("full", "half", "quarter", "immune"; "unknown" on Forever); target.cc_ours: the control on it is yours, or its caster is unread; target.cc_left: seconds left on it; pet.breaks_cc: the pet is on a player held by a control damage breaks' },
+    { name = "fight.bait", text = 'fight.bait: the bait on the target ("mobility": slow it to draw its charge into your ready counter; "defensive": hold the burst, its defensive is unseen or due; "interrupt": show Aimed Shot to draw its kick, stop_cast is yours; "cc": Concussive Shot to draw the trinket, then the trap; "none")' },
+    { name = "prediction_confidence", text = 'prediction_confidence("mobility_when_slowed"): 0 to 1, the rate the target shows that pattern this session (0: nothing seen; one sighting reads 0.67 and is never a prediction); prediction_reliability("..."): the evidence behind it, 0 to 1 (two chances: 0.5); target.pattern: its surest pattern that is not adapting ("none" when nothing is sure); target.pattern_conf: that rate in %; target.pattern_reliability: that evidence in %. The patterns: mobility_when_slowed, defensive_threshold, interrupts_casts, escape_after_control, over_committing, targeting_pet, same_opener, retreating_when_pressured, saving_cooldowns_until_low' },
     { name = "situation", text = 'situation("outnumbered"); place("Molten Core")' },
     { name = "cast", text = 'cast("Spell", "target"|"self"|"pet"|"caster"|"attacker"|"tank"|"healer"): true when it can go' },
     { name = "use", text = 'use("healthstone"|"potion"|"mana_potion"|"mana_gem"|"bandage"), or use("Any Item Name")' },
@@ -647,7 +745,7 @@ D.API_WORDS = {}
 for _, w in ipairs({ "me", "target", "pet", "group", "fight", "where", "check", "known", "ready", "cooldown",
     "buff", "debuff", "situation", "place", "cast", "use", "pet_cast", "pet_attack", "hold", "vars", "now", "log",
     "buff_left", "buff_stacks", "debuff_left", "debuff_stacks", "has_item", "key", "alert", "set_target",
-    "stop_cast" }) do
+    "stop_cast", "enemy_cd_seen", "enemy_cd_ready_in", "prediction_confidence", "prediction_reliability" }) do
     D.API_WORDS[w] = true
 end
 

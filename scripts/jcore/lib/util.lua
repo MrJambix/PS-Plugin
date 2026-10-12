@@ -138,4 +138,14 @@ function M.ring(capacity)
     }
 end
 
+--- lib/faults with nobody listening, for a runtime built without it (a
+--- test's): events and the scheduler call through this instead (1.8.1).
+local function no_mark() end
+M.no_faults = {
+    deep = false,
+    call = function(_, _, fn, ...) return pcall(fn, ...) end,
+    enter = no_mark,
+    leave = no_mark,
+}
+
 return M

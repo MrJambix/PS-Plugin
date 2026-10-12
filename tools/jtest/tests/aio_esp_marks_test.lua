@@ -35,7 +35,7 @@ _G.core = {
     },
     play_sound_by_id = function() end,
     graphics = {
-        is_line_of_sight = function() return clock.los ~= false end,
+        is_line_of_sight = function() error("the ESP asked the client's is_line_of_sight") end,
     },
 }
 
@@ -190,7 +190,10 @@ local function bundle(opts)
             group = opts.group,
             threat = opts.threat,
             player = opts.jplayer,   -- JCore's player service: can_skin (1.67.0)
-            geometry = { vec = function(x, y, z) return { x = x, y = y, z = z, vec = true } end },
+            -- JCore's sight (AIO 1.8.1): the target row asks it, never the client's
+            -- is_line_of_sight, which asserts on Forever build 70338.
+            geometry = { vec = function(x, y, z) return { x = x, y = y, z = z, vec = true } end,
+                         sight = function() return clock.los ~= false end },
         },
         units = units,
         draw = draw,

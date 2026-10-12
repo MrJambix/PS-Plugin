@@ -17,6 +17,9 @@
 return function(rt)
     local util = rt.util
     local log = rt.log.for_tag("JCore/events")
+    -- Handlers run through it: a plain pcall unless Jambix Debug listens
+    -- (lib/faults, 1.8.1). A runtime built without it gets the plain pcall.
+    local faults = rt.faults or rt.util.no_faults
 
     local M = {}
 
@@ -152,7 +155,10 @@ return function(rt)
         for i = 1, count do
             local sub = snapshot[i]
             if not sub.dead then
-                local ok, err = pcall(sub.fn, ...)
+                local deep = faults.deep
+                if deep then faults.enter(sub) end
+                local ok, err = faults.call("event", sub, sub.fn, ...)
+                if deep then faults.leave(sub) end
                 if ok then
                     sub.errors = 0
                     delivered = delivered + 1

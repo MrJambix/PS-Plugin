@@ -103,6 +103,32 @@ return function(rt)
     local queue = {}
     local layers_used = {}
 
+    -- OVER THE GAME'S FRAMES (1.8.1). The render pass is painted under the
+    -- client's own UI, so a JCore window sat behind the bags, the map or a
+    -- quest log whenever one was open over it. The native window pass
+    -- (core.register_on_render_window_callback, wired in main.lua) is painted
+    -- over them, so the screen UI -- the HUD band and up: windows, panels,
+    -- popups, tooltips, toasts -- is handed to it at each flush, in layer
+    -- order. The world bands stay in the render pass, under the game's frames
+    -- the way its own nameplates are. Only while that pass is seen firing:
+    -- a loader without it, or the switch off (Core > UI), paints the UI in
+    -- the render pass as before.
+    local UI_BAND = M.LAYER.HUD
+    local ui_buckets, ui_n = {}, 0
+    local window_frame = nil -- frame_id of the last window pass
+    local window_passes = 0  -- window passes since the last flush
+    -- Render frames without a window pass before the UI goes back to the
+    -- render pass, so a loader that stops calling it costs a blink, not
+    -- the UI.
+    local WINDOW_GRACE = 3
+    -- Window passes one flush is painted for. The two passes run once a
+    -- frame each; this keeps the UI up if they ever drift apart, and stops a
+    -- frozen copy staying on screen when the render pass stops.
+    local WINDOW_STALE = 2
+    local window_stats = { pass = "render", window_calls = 0, window_painted = 0 }
+    --- Paint the screen UI over the game's own frames. Core > UI sets it.
+    M.over_game = true
+
     -- Per-frame world-to-screen cache, keyed by unit guid. Entries are reused
     -- in place and the table is dropped on the same cadence as the other
     -- per-guid caches (see _begin_frame); before 1.5.3 it was never emptied,
@@ -1640,9 +1666,18 @@ return function(rt)
     -- --- visibility ---------------------------------------------------------
 
     -- Line of sight is a trace through world geometry, which is the most
-    -- expensive question in this module. Cached per unit per frame, and
-    -- rationed: past the budget the answer is "visible", because hiding a mark
-    -- on a frame that ran out of time is worse than showing one behind a wall.
+    -- expensive question in this module. Cached per unit, and rationed: past
+    -- the budget the answer is "visible", because hiding a mark on a frame
+    -- that ran out of time is worse than showing one behind a wall.
+    --
+    -- KEPT FOR HALF A SECOND, NOT ONE FRAME (1.8.0). It only fades a mark, and
+    -- re-asked every frame it was ~97% of every ray the plugins cast (the API
+    -- recorder: the world layer's fade, up to eight rays a frame). Each ray is
+    -- also a chance at the client's own assert: Forever crashed twice in
+    -- Forlorn Rowe, Duskwood (2026-10-11, ASSERT(m_data) in M2HitTest.cpp)
+    -- inside a ray from the player to a mob, once a mob 58 yards off with
+    -- nothing targeted. A mark now fades up to half a second late.
+    local LOS_KEEP = 0.5
     local los_cache = {}
     local los_spent = 0
     local los_budget = 12
@@ -1663,20 +1698,31 @@ return function(rt)
         local player = units.player()
         if not player then return true end
 
+        local now = core.time()
         local entry = guid and los_cache[guid]
-        if entry and entry.frame == frame_id then return entry.visible end
+        if entry and (entry.frame == frame_id or (now - entry.at) < LOS_KEEP) then
+            return entry.visible
+        end
 
         if los_spent >= los_budget then
-            -- Keep last frame's answer rather than inventing one; a wall does
+            -- Keep the last answer rather than inventing one; a wall does
             -- not move between frames.
             if entry then return entry.visible end
             return true
         end
 
         los_spent = los_spent + 1
-        local ok, visible = pcall(core.graphics.is_line_of_sight, player, unit)
-        visible = ok and visible or false
-        if guid then los_cache[guid] = { frame = frame_id, visible = visible } end
+        -- geometry.sight: on Forever a model-free ray, never the native that
+        -- asserts there (1.8.0). Unknown paints the mark as visible.
+        local geometry = rt.geometry
+        local visible
+        if geometry and geometry.sight then
+            visible = geometry.sight(player, unit) ~= false
+        else
+            local ok, v = pcall(core.graphics.is_line_of_sight, player, unit)
+            visible = ok and v or false
+        end
+        if guid then los_cache[guid] = { frame = frame_id, at = now, visible = visible } end
         return visible
     end
 
@@ -1687,6 +1733,8 @@ return function(rt)
     ---@return boolean
     function M.los(from, to)
         if not from or not to then return false end
+        local geometry = rt.geometry
+        if geometry and geometry.sight then return geometry.sight(from, to) ~= false end
         local ok, visible = pcall(core.graphics.is_line_of_sight, from, to)
         return ok and visible or false
     end
@@ -1755,25 +1803,42 @@ return function(rt)
         end
     end
 
+    local function paint(bucket)
+        for j = 1, #bucket do
+            -- One bad primitive must not cost the rest of the frame.
+            local ok, err = pcall(bucket[j])
+            if ok then
+                stats.painted = stats.painted + 1
+            else
+                log.fmt("error", "draw call failed: %s", tostring(err))
+            end
+        end
+    end
+
     --- Paints everything submitted this frame, in layer order, then clears.
+    --- The screen UI is handed to the window pass instead while it runs.
     --- Registered last in the render phase.
     function M._flush()
         draw_pulses()
+        -- The last hand-off goes first: a frame with no UI leaves none up.
+        for i = ui_n, 1, -1 do ui_buckets[i] = nil end
+        ui_n = 0
+        window_passes = 0
+        local defer = M.over_game and window_frame ~= nil and frame_id - window_frame <= WINDOW_GRACE
+        window_stats.pass = defer and "window" or "render"
         if #layers_used == 0 then return end
 
         table.sort(layers_used)
 
         for i = 1, #layers_used do
-            local bucket = queue[layers_used[i]]
+            local layer = layers_used[i]
+            local bucket = queue[layer]
             if bucket then
-                for j = 1, #bucket do
-                    -- One bad primitive must not cost the rest of the frame.
-                    local ok, err = pcall(bucket[j])
-                    if ok then
-                        stats.painted = stats.painted + 1
-                    else
-                        log.fmt("error", "draw call failed: %s", tostring(err))
-                    end
+                if defer and layer >= UI_BAND then
+                    ui_n = ui_n + 1
+                    ui_buckets[ui_n] = bucket
+                else
+                    paint(bucket)
                 end
             end
         end
@@ -1784,6 +1849,20 @@ return function(rt)
         for i = #layers_used, 1, -1 do
             layers_used[i] = nil
         end
+    end
+
+    --- Paints the screen UI the last flush handed over. Registered on the
+    --- native window pass.
+    function M._flush_window()
+        if window_frame == nil then
+            log.fmt("info", "window pass found: the screen UI paints over the game's frames")
+        end
+        window_frame = frame_id
+        window_passes = window_passes + 1
+        window_stats.window_calls = window_stats.window_calls + 1
+        if window_passes > WINDOW_STALE or ui_n == 0 then return end
+        window_stats.window_painted = window_stats.window_painted + 1
+        for i = 1, ui_n do paint(ui_buckets[i]) end
     end
 
     function M.stats()
@@ -1797,6 +1876,11 @@ return function(rt)
             screen_w    = screen_w,
             screen_h    = screen_h,
             cached_w2s  = util.count(w2s_cache),
+            -- "window" while the screen UI paints over the game's frames
+            ui_pass     = window_stats.pass,
+            over_game   = M.over_game,
+            window_calls = window_stats.window_calls,
+            window_painted = window_stats.window_painted,
         }
     end
 

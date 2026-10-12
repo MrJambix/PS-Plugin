@@ -308,6 +308,13 @@ T[#T + 1] = { "boots with the gear module", function()
     local ok, err = pcall(require, "jcore/main")
     if not ok then error("JCore boot raised: " .. tostring(err)) end
     JCore = _G.JCore
+    -- Books from 1.2.3: one bid on a pouch booked as 40 pouches for 4s (the
+    -- user's Minor Wizard Oil). Fixed once the client has said pouches stack 1.
+    mock.data_fs["jcore/jambix.market.journal.json"] = '{"rows":[{"kind":"buy","id":4496,"qty":40,"copper":400,'
+        .. '"mode":"vendor","note":"vendor","expected":600,"conf":1,"t":1791600000}]}'
+    mock.data_fs["jcore/jambix.market.ledger.json"] = '{"holdings":{"4496":{"qty":40,"cost":400,"expect":1000,"mode":"vendor",'
+        .. '"lot":{"t":1791600000,"net":0,"basis":0,"fees":0,"expected":600,"bought":40,"conf":1,"planned":600,"big":true}}},'
+        .. '"days":{},"trades":[]}'
     local ok2, err2 = pcall(require, "jambix_market/main")
     if not ok2 then error("market boot raised: " .. tostring(err2)) end
     run(3)
@@ -315,7 +322,23 @@ T[#T + 1] = { "boots with the gear module", function()
     MK = _G.JambixMarket
     G = MK.gear
     assert(G, "the gear module")
-    assert_eq(MK.VERSION, "1.2.2", "version")
+    assert_eq(MK.VERSION, "1.2.5", "version")
+    assert_eq(MK.menu:get("enabled"), false, "Market is off at load")
+    MK.menu:set("enabled", true)
+    -- The books: the pouch's stack arrives from the client, then the fix runs.
+    MK.db.info(POUCH)
+    run(5)
+    local h = MK.ledger.holding(POUCH)
+    assert(h and h.qty == 1, "one pouch held, not 40: " .. tostring(h and h.qty))
+    assert_eq(h.cost, 400, "cost as paid")
+    assert_eq(h.expect, 25, "expected to bring one vendor price")
+    assert_eq(h.lot.bought, 1, "the lot bought one")
+    assert_eq(h.lot.big, nil, "no longer big money")
+    local buy = MK.ledger.trades()[1]
+    assert_eq(buy.qty, 1, "the journal row says one")
+    assert_eq(buy.expected, -375, "expected for one: 25c back for 4s")
+    -- Cleared for the tests that follow.
+    MK.ledger.release(POUCH, 1, nil, "test")
 end }
 
 T[#T + 1] = { "a full scan reads each single item's roll, and only theirs", function()

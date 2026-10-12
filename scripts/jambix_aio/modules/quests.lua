@@ -1190,9 +1190,10 @@ return function(P)
     end
 
     local function refresh_rxp()
-        -- The guide walk (1.7.4, modules/guidewalk.lua) reads the guide too,
-        -- with the RestedXP marks switched off or on.
-        if not P.opt("rxp_on", true) and not P.opt("rxp_follow", false) then
+        -- The guide walk (1.7.4, modules/guidewalk.lua) and the ESP acting
+        -- as you walk up (1.8.1) read the guide too, with the RestedXP marks
+        -- switched off or on.
+        if not P.opt("rxp_on", true) and not P.opt("rxp_follow", false) and not P.opt("rxp_act", false) then
             rxp.loaded = false
             return
         end
@@ -2151,6 +2152,19 @@ return function(P)
     --- kept whole when the row has to be cut short.
     local function guide_rows()
         local rows = {}
+
+        -- The guide walk, or the ESP acting as you walk up (1.8.1): what it
+        -- is doing, first ("> walk up to Marshal McBride to hand in (12 yd)").
+        local walk = P.guidewalk
+        if walk and walk.active and walk.status then
+            local ok, on = pcall(walk.active)
+            if ok and on == true then
+                local ok_s, text, tone = pcall(walk.status)
+                if ok_s and type(text) == "string" and text ~= "" then
+                    rows[#rows + 1] = { text = "> " .. text, col = draw.theme[tone or "text"] or draw.theme.text }
+                end
+            end
+        end
 
         if rxp.step then
             local goals = rxp.step.goals or {}

@@ -2,9 +2,13 @@
 --
 -- Two kinds, over the listings of the last full scan:
 --
---   vendor  listed for less than a vendor pays. The vendor always buys, so
---           this is the one deal with no risk; a small margin (5%) covers
---           the price moving before you get there.
+--   vendor  listed at least 15% under what a vendor pays. The vendor always
+--           buys, so this is the one deal with no price risk -- but the goods
+--           wait in the bags until you open a merchant, so: at most a fifth
+--           of capital in vendor flips, four bag slots always left free, and
+--           a full stack must make 2s (the user's bags, 2026-10-12: 3g 22s of
+--           piles bought at 5% under, waiting to make about 40s). A vendor
+--           flip that is big money on its own is held to the deal share only.
 --   flip    listed well under the item's usual price, on an item that has
 --           been seen to sell. Bought and posted again just under the next
 --           seller (pricing.plan_flip), no higher than the CAUTIOUS price
@@ -38,7 +42,8 @@ return function(M)
 
     local K = {}
 
-    local VENDOR_MARGIN = 5
+    local VENDOR_MARGIN = 15          -- under the vendor's price (was 5 before 1.2.5)
+    local VENDOR_FREE_SLOTS = 4       -- bag slots a vendor flip never fills
     local MAX_DEALS = 150
     local CANCEL_TRUST = 0.75         -- of the sales rate's lower bound: some "sales" were cancels
     local DURATION_DAYS = { 0.5, 1, 2 }
@@ -117,8 +122,20 @@ return function(M)
         if o.vendor then
             local v = D.vendor(item_id)
             if v and v > 0 then
-                local plan = P.plan_vendor(rows, { vendor = v, min_margin_pct = VENDOR_MARGIN,
-                    budget = budget, whole = whole })
+                local info = D.info(item_id)
+                local stack = (info and info.s) or 1
+                local vo = { vendor = v, min_margin_pct = VENDOR_MARGIN, whole = whole, stack = stack, budget = budget }
+                local plan = P.plan_vendor(rows, vo)
+                -- Big money on its own (a certain +10g): held to the deal share
+                -- alone, like any big deal. Anything less waits in the bags for
+                -- a merchant for pennies: within a fifth of capital for vendor
+                -- flips, and the bag room less four slots kept free.
+                if plan.units > 0 and plan.profit > 0 and not P.is_big(plan.profit, o.capital.capital, 0) then
+                    vo.budget = math.min(budget, M.policy.vendor_room(o.capital))
+                    local free = tonumber(U.try(M.ctx.inventory.free_slots))
+                    if free then vo.max_units = math.max(0, free - VENDOR_FREE_SLOTS) * stack end
+                    plan = P.plan_vendor(rows, vo)
+                end
                 if plan.units > 0 and plan.profit > 0 then best = plan end
             end
         end

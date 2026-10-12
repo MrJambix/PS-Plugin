@@ -15,7 +15,7 @@ const { createStore, parseIssue, ingest } = require('./github_ingest');
 const hex = n => Array.from({ length: n }, (_, i) => '0123456789abcdef'[(i * 7 + n) % 16]).join('');
 
 function batch(contributor, id) {
-    return { schema: 1, id, contributor, client: { plugin: '1.8.1', game: 'Forever', build: '1.60.1.70338', schema: 1 },
+    return { schema: 1, id, contributor, client: { plugin: '1.7.8', game: 'Forever', build: '1.60.1.70338', schema: 1 },
         me: { class: 'HUNTER', level: 26 }, encounter: { type: 'world_pvp', duration: 30, outcome: 'won' },
         observations: [{ pattern: 'mobility_when_slowed', enemy_class: 'WARRIOR', p: 0.5, reliability: 0, sure: false, basis: 'session',
             evidence: 0, inputs_ok: true, hit: true, correct: true }] };
@@ -49,7 +49,7 @@ test('ingest: accepted, refused with the reason, a duplicate, a deletion; every 
         issue(5, `jambix-delete ${me}`, { schema: 1, contributor: me }),
     ];
     const api = fakeApi(issues);
-    const s = await ingest(store, api, Date.now());
+    const s = await ingest(store, api);
     assert.deepStrictEqual(s, { seen: 5, accepted: 2, refused: 2, duplicates: 1, deletions: 1 });
     assert.deepStrictEqual(api.closed, [1, 2, 3, 4, 5]);
     assert.deepStrictEqual(api.comments, [
@@ -60,18 +60,29 @@ test('ingest: accepted, refused with the reason, a duplicate, a deletion; every 
     assert.ok(fs.readFileSync(store.files.deletions, 'utf8').includes(me));
 });
 
-test('publish writes the model and the manifest; withdraw marks a version', async () => {
+test('publish is a gated learning cycle: one contributor is rejected and only the evaluation and the audit are written; forced, it writes the model and the manifest as forced; promote and withdraw mark a version', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jambix-ingest-'));
     const store = createStore(dataDir);
     const api = fakeApi([issue(1, 'jambix-batch ' + '3'.repeat(20), batch(hex(24), '3'.repeat(20)))]);
-    await ingest(store, api, Date.now());
-    const model = store.publish('first');
-    assert.strictEqual(model.version, '1');
-    assert.strictEqual(model.fights, 1);
+    await ingest(store, api);
+    let r = store.publish('first');
+    assert.strictEqual(r.decision, 'reject'); assert.strictEqual(r.version, null);
+    assert.deepStrictEqual(r.verdict.failed, ['contributors', 'content']);
+    assert.strictEqual(store.readManifest().versions.length, 0);
+    assert.ok(fs.existsSync(path.join(dataDir, 'models', 'evaluations.jsonl')));
+    assert.ok(fs.existsSync(path.join(dataDir, 'audit.jsonl')));
+    r = store.publish('first', { force: true });
+    assert.strictEqual(r.decision, 'forced'); assert.strictEqual(r.version, '1');
+    assert.strictEqual(r.candidate.fights, 1);
     const manifest = store.readManifest();
     assert.strictEqual(manifest.versions[0].status, 'active');
-    assert.strictEqual(manifest.versions[0].min_plugin, '1.8.1');
+    assert.strictEqual(manifest.versions[0].min_plugin, '1.7.8');
+    assert.strictEqual(manifest.versions[0].gates.forced, true);
     assert.ok(fs.existsSync(path.join(dataDir, 'models', 'v1.json')));
+    const ev = store.evaluate();
+    assert.strictEqual(ev.verdict.decision, 'reject', 'still one contributor');
+    assert.match(ev.verdict.material.why, /0 fight\(s\) since v1/);
+    assert.strictEqual(store.promote('1'), true);
     assert.strictEqual(store.withdraw('1'), true);
     assert.strictEqual(store.readManifest().versions[0].status, 'withdrawn');
     assert.strictEqual(store.withdraw('9'), false);

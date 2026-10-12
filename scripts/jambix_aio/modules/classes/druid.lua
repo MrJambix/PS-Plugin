@@ -61,6 +61,13 @@ return function(P, H, CS)
         return s.in_combat and (s.power or 0) < 60
     end
 
+    --- A heal on yourself mid-fight: the fight's defensive line, or sooner
+    --- while health is draining fast -- the paladin's and shaman's line.
+    local function self_heal_wanted(s)
+        local line = P.derived and P.derived("rot_defensive_hp", 40) or 0.40
+        return s.in_combat and (s.hp < line + 0.05 or (H.bleeding() and s.hp < 0.6))
+    end
+
     --- Party members under `line` within 40 yards, you included.
     local function party_hurt(line)
         local group = P.ctx and P.ctx.group
@@ -106,9 +113,31 @@ return function(P, H, CS)
         form = CAT, acceptable = { [CAT] = true }, rules = feral_rules,
     }
 
-    profiles.feral_bear = {
-        label = "Feral (Bear tank)",
-        power = "RAGE",
+    -- BEFORE THE FORMS (1.8.1). Every levelling rule was a cat's, and Cat
+    -- Form is trained at 20 (Bear Form at 10), so a druid of 1 to 19 had
+    -- nothing to press. The live log (Forever, a level 1) has it standing
+    -- still in every fight, "no rotation rule passed", with Wrath and Healing
+    -- Touch in the book. Until Bear Form, a caster; then the bear's rules
+    -- until Cat Form (`suggest`, below).
+    profiles.leveling_caster = {
+        label = "Levelling (Caster)",
+        power = "MANA",
+        rules = {
+            { "Mark of the Wild", motw_wanted, self = true, upkeep = 30 },
+            -- Waits for the last one to run out, as the priest's Renew does.
+            { "Rejuvenation", function(s)
+                return s.in_combat and (s.hp < 0.65 or (H.bleeding() and s.hp < 0.85))
+                    and not H.buff_up(s.player, "Rejuvenation")
+            end, self = true, upkeep = 3 },
+            { "Healing Touch", function(s)
+                return self_heal_wanted(s) and not s.player:is_moving()
+            end, self = true, upkeep = 2 },
+            { "Moonfire", function(s) return H.dot_worth_it(s, "Moonfire", 8) end, upkeep = 2, dot = true },
+            { "Wrath", function(s) return not s.player:is_moving() end },
+        },
+    }
+
+    local bear = {
         form = BEAR,
         acceptable = { [BEAR] = true, ["Bear Form"] = true },
         rules = {
@@ -156,6 +185,17 @@ return function(P, H, CS)
                 return s.power >= (H.spread(s, 2) and 35 or 30)
             end, fast = true },
         },
+    }
+
+    profiles.feral_bear = {
+        label = "Feral (Bear tank)", power = "RAGE",
+        form = bear.form, acceptable = bear.acceptable, rules = bear.rules,
+    }
+
+    -- From Bear Form at 10 to Cat Form at 20 (1.8.1).
+    profiles.leveling_bear = {
+        label = "Levelling (Bear)", power = "RAGE",
+        form = bear.form, acceptable = bear.acceptable, rules = bear.rules,
     }
 
     profiles.balance = {
@@ -258,11 +298,17 @@ return function(P, H, CS)
         defensives = { "Survival Instincts", "Barkskin", "Frenzied Regeneration" },
         escapes = { "Travel Form", "Dash", "Entangling Roots", "Hibernate" },
         profiles = profiles,
-        profile_order = { "leveling", "feral_cat", "feral_bear", "balance", "restoration" },
+        profile_order = { "leveling", "leveling_caster", "leveling_bear", "feral_cat", "feral_bear",
+            "balance", "restoration" },
         suggest = function(t, prefer_tank)
             local balance, feral, resto = t.points()
             local total = balance + feral + resto
-            if total < 20 then return "leveling" end
+            if total < 20 then
+                -- The cat's rules need Cat Form, the bear's Bear Form (1.8.1).
+                if book.known(CAT) then return "leveling" end
+                if book.known("Bear Form") or book.known(BEAR) then return "leveling_bear" end
+                return "leveling_caster"
+            end
             if feral >= balance and feral >= resto then
                 return prefer_tank and "feral_bear" or "feral_cat"
             end

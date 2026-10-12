@@ -329,8 +329,19 @@ return function(M)
                     -- Each auction's roll, from its link (nil when it has none):
                     -- gear is bought by roll (gear.lua), never blind.
                     local var, vname = U.link_variant(info.item_link)
+                    -- A row of MORE THAN ONE is several auctions of one each at
+                    -- the same price, and its buyout is the price of ONE (the
+                    -- user's game, 2026-10-11: "75 Minor Wizard Oil, 4s" while
+                    -- the full scan showed 82 auctions of one at 4s; read as 75
+                    -- for 4s, Auto bid 4s, got one oil a bid and booked 75). A
+                    -- bid buys one of them, the row's auction: `each`. Read the
+                    -- other way, a price that is really per unit would look
+                    -- many times cheaper than it is; this way, at worst a deal
+                    -- looks dearer.
+                    local each = qty > 1
                     rows[#rows + 1] = {
-                        unit = buyout > 0 and buyout / qty or 0, qty = qty, buyout = buyout,
+                        unit = buyout > 0 and buyout or 0, qty = qty, buyout = (not each) and buyout or nil,
+                        each = each or nil,
                         auction_id = info.auction_id, band = tonumber(info.time_left),
                         bid = tonumber(info.bid_amount), min_bid = tonumber(info.min_bid),
                         own = info.contains_owner_item == true, var = var, vname = vname,

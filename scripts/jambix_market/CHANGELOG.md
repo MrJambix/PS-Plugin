@@ -1,5 +1,79 @@
 # Jambix Market changelog
 
+## 1.2.5 (2026-10-12)
+
+The user, after a look at the formulas and the books: "yes" to both changes, "and then clean the
+data so we can start fresh again".
+
+- **Vendor flips are harder to buy.** They were 100% sure by construction, so the Kelly share
+  handed them a lot of gold for pennies: 229 Murloc Eyes for 3s 13c, 77 Boar Intestines for
+  77c, piles that sat in the bags for days (3g 22s waiting to make about 40s). Now:
+  - at least 15% under what the vendor pays (was 5%);
+  - a full stack must make 2s at the vendor (`pricing.vendor_stack_pays`), so an item earning
+    a few copper a unit is never bought however many are listed;
+  - at most a fifth of capital in vendor flips at once (`policy.vendor_room`);
+  - four bag slots are always left free;
+  - a vendor flip that is big money on its own (a certain +10g) skips the last two: it is held
+    to the deal share like any big deal.
+- **Posting comes before buying.** Stock that came back by mail is posted the moment the
+  auction house is open, before gold goes into new deals (Thick Spider's Silk had sat unposted
+  for four days).
+- **Data cleared** at the user's request (backed up first): prices, scans, gear rolls, ledger,
+  journal, policy, posts, errands and presence. Prices need three scans over an hour again;
+  the confidence bar starts at 99%, the cut at 5%, the deposits at Forever's known rates.
+- Tests: the vendor rules (margin, stack floor, capital cap, bag room).
+- **Starts only once a character is in the world.** On 2026-10-12 the loader started the
+  plugins at the character select screen, and the game died 0.2 s later (`ASSERT(IsLoaded())`,
+  a game table read before the game had loaded it). The start-up now waits on JCore 1.8.1's
+  `JCore.in_world()` as well as on JCore itself.
+
+## 1.2.4 (2026-10-11)
+
+The user: "I think the Auto has minor Wizard oil incorrectly being read??? check log".
+
+- **The bug**: an item search answers one ROW for several identical auctions ("75 Minor Wizard
+  Oil, 4s"), and its price is the price of ONE. Auto read it as 75 oils for 4s, bid 4s, got one
+  oil, and booked 75. Twenty bids booked 1,353 oils for 92s, "expected" to bring 67g at a
+  vendor, and the same misreading bought a Woolen Reagent Bag for 4g (read as 14 for 4g), two
+  first-aid manuals for 2g 95s and six recipes for 52s, all "for a vendor" paying 50s, 25s and
+  2s 50c. About 6g lost, out of 7g.
+- **Fixed**: a row of more than one is read as that many auctions at that price each, and a bid
+  takes one of them. A resale against a row like that competes with the rest at the same price
+  (so none is planned); a vendor flip of a 4s oil makes 1s and is under the floor.
+- **The books repaired once**: every buy of a single item (stack 1, not gear) is one unit a
+  bid; the holdings are rebuilt from the rows, the cost as paid. On the user's ledger: oil
+  1,353 → 20, recipes 49 → 6, the bag 14 → 1, manuals 49 → 2.
+- **Recovering the loss**: a single item Auto bought for a vendor goes to the Gear tab's "Post
+  these yourself" when the auction house pays more than the vendor, instead of being sold to
+  the vendor. At the time: the bag listed at 3g 56s (a vendor: 50s), the manuals at 1g 43s each
+  (25s), the recipes at 7s (2s 50c); the oils go to a vendor (5s against 4s listed). The Gear
+  tab's buyout has no floor at what was paid: "If it sells" shows the loss or gain.
+- **Mail**: an item back by mail is recorded when the mail leaves the inbox, not each time the
+  loot is asked for. With the bags full, the same oil mails were asked for every five seconds:
+  183 "Mail back" rows for 20 oils. Those rows do not count toward any total.
+- **Tests**: a grouped search row buys one at the price of one (pricing and the trader); a mail
+  looted at the fourth ask is recorded once; the books repair on a seeded ledger.
+
+## 1.2.3 (2026-10-10)
+
+The user: "Market should always be of and require us to turn it on".
+
+- **Off at every load**: Market and AUTO are both put back off each time the scripts load,
+  whatever was saved, so neither resumes by itself after a reload.
+- **While off, nothing happens on its own**: no scans, no window opening with the auction house,
+  no reading of your auctions, no gear reminder, no trading, no anti-AFK and no mail runs.
+- **Still recorded while off**: your gold and the sale mails you take, so the lots of what Auto
+  posted still settle.
+- **Turning it on**:
+  - The switch at the top of the settings page, or the window's one button: "MARKET IS OFF —
+    click to turn it on".
+  - Pressing AUTO turns Market on too.
+  - Turning Market off turns AUTO off with it.
+- **Shown everywhere**: the settings title and the first live line say whether Market is off, on
+  (scanning), or on and trading.
+- **Tests**: switches saved ON come back OFF at load; the window offers the button; every test
+  boot turns Market on.
+
 ## 1.2.2 (2026-10-10)
 
 The user: "let's take a look at If it's buying gear and weapons cause its not so far".

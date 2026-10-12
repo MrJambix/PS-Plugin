@@ -57,6 +57,8 @@ local ACTING = {
     "rot_hud_enabled", "rot_auto_target",
     -- 1.7.4: the guide walk (RestedXP with Sentinel Navigation).
     "rxp_follow",
+    -- 1.8.1: the RestedXP ESP acting as you walk up.
+    "rxp_act",
 }
 
 local PAGES = { "Rotation", "Hardcore", "Automation", "Fishing" }

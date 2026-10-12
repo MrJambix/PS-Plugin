@@ -149,7 +149,19 @@ return function(M)
                 out.value = (M.gear and M.gear.bag_value(item_id)) or 0
                 return out
             elseif mine.mode == "vendor" and vendor > 0 then
-                out.action, out.why, out.value = "vendor", "bought for a vendor", vendor * count
+                -- Bought for a vendor; but when the auction house pays more
+                -- after its cut, it is yours to post there instead (1.2.4: a
+                -- bag bought for 4g by the grouped-row mistake would have gone
+                -- to a vendor for 50s).
+                local cut = M.policy.cut()
+                local ga = M.gear and M.gear.advise(U.vkey(item_id, ""), L.cost_basis(item_id), false)
+                if ga and ga.price and P.net(ga.price, cut) > vendor then
+                    out.action, out.price = "hand", ga.price
+                    out.why = "the auction house pays more than a vendor: post it yourself (Gear tab)"
+                    out.value = P.net(ga.price, cut) * count
+                else
+                    out.action, out.why, out.value = "vendor", "bought for a vendor", vendor * count
+                end
                 return out
             end
         end

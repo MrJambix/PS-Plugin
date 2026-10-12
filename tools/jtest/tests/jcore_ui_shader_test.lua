@@ -79,7 +79,7 @@ T[#T + 1] = { "boot with the shader calls present: the switch on by default", fu
     if not ok then error("boot raised: " .. tostring(public)) end
     fail_on_errors("boot")
     JCore = _G.JCore
-    assert_eq(JCore.version, "1.7.9", "version")
+    assert_eq(JCore.version, "1.8.1", "version")
     assert_eq(JCore.ui.settings.shaders, true, "settings.shaders")
     local page = mock.menu.values["JCore/UI"]
     assert(page, "JCore/UI page declared")

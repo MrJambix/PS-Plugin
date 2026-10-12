@@ -194,7 +194,11 @@ return function(P, world, tactics, learn, memory)
             local r = rows[i]
             local held = r ~= nil and ((held_guid ~= nil and r.guid == held_guid)
                 or (held_guid == nil and r.targeting_pet == true))
+            -- A player is no mob to taunt: Growl and Torment move a threat
+            -- table, and players have none (live 2026-10-12: Growl at a player).
+            local fr = world.facts and r and r.obj and r.guid and world.facts(r.obj, r.guid) or nil
             if r and r.obj and r.guid and (r.engaged or held) and r.activity ~= "dead" and (r.hp or 1) > 0
+                and not (fr and fr.player)
                 and not tactics.out_of_fight(r) and not strangers(r, W)
                 and not (held and pet.target_evading) and not evading(r.guid) then
                 seen[r.guid] = true

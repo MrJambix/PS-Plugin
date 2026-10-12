@@ -97,7 +97,7 @@ T[#T + 1] = { "boot as Era with a hunter, its wolf and a mob the wolf is fightin
     core.input.enable_pet_autocast = function(id) W.on[id] = true end
     b.mock.menu:set("Jambix AIO/Rotation", "rot_enabled", true)
     b.mock.menu:set("Jambix AIO/Rotation", "rot_key", { vk = 0x58, active = true, toggled = true })
-    b.mock.menu:set("Jambix AIO/Rotation", "react_overlay", true)
+    b.mock.menu:set("Jambix AIO/Reactions", "react_overlay", true)
     b.P.opt_invalidate()
     b.P.ctx.emit("jambix.aio.spells_changed")
     assert_eq(b.errors(), "", "core.log_error during boot")

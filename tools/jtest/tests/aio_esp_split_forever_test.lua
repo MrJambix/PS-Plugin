@@ -32,8 +32,6 @@ T[#T + 1] = { "Forever: the whole plugin boots clean beside the shared fight fil
             aurora_on = true, killnext_on = true, party_heal_curtain = true, party_loose = true, groupx_tank = true,
             tele_wall = true, esp_beacons = true }
         mock.menu.values["Jambix AIO/Hardcore"] = { pull_curtains = true }
-        mock.menu.values["Jambix AIO/Reactions"] = { pvp_kill_target = true, pvp_healers = true, plays_rotation = true,
-            pvpx_bg = true }
     end)
     assert_eq(b.errors(), "", "core.log_error during boot")
     assert_eq(b.P.forever, true, "Forever")
@@ -82,24 +80,19 @@ T[#T + 1] = { "Forever: the new look (1.88.0): its switches on by default; the b
 end }
 
 T[#T + 1] = { "1.7.6 curtains: every one saved on is switched off once, each keeps its own switch, the World marks page switches them all", function()
-    local ESP, HC, RE = "Jambix AIO/Forever ESP", "Jambix AIO/Hardcore", "Jambix AIO/Reactions"
+    local ESP, HC = "Jambix AIO/Forever ESP", "Jambix AIO/Hardcore"
     local m = b.mock.menu
     for _, id in ipairs({ "aurora_on", "killnext_on", "party_heal_curtain", "party_loose", "groupx_tank", "tele_wall",
         "esp_beacons" }) do
         assert_eq(m:get(ESP, id), false, id .. ", saved on, switched off")
     end
     assert_eq(m:get(HC, "pull_curtains"), false, "pull safety's curtain")
-    for _, id in ipairs({ "pvp_kill_target", "pvp_healers", "plays_rotation", "pvpx_bg" }) do
-        assert_eq(m:get(RE, id), false, id)
-    end
     -- What was not a curtain stays as it was.
     assert_eq(m:get(ESP, "party_rings"), true, "the party's rings")
     assert_eq(m:get(HC, "pull_on"), true, "pull safety itself")
     assert_eq(m:get("Jambix AIO/World marks", "cr_execute"), true, "the execute ring")
     -- The new curtain switches start off.
     assert_eq(m:get("Jambix AIO/World marks", "cr_execute_curtain"), false, "execute's curtain")
-    assert_eq(m:get("Jambix AIO/Rotation", "react_curtain_vanish"), false, "the vanish curtain")
-    assert_eq(m:get("Jambix AIO/Rotation", "react_curtain_burst"), false, "the burst curtain")
 
     -- Switched back on by hand: kept, the move is made once.
     m:set(ESP, "aurora_on", true)
@@ -110,7 +103,8 @@ T[#T + 1] = { "1.7.6 curtains: every one saved on is switched off once, each kee
 
     -- Every curtain at once, both ways.
     local list = b.P.CURTAINS
-    assert(type(list) == "table" and #list >= 16, "the World marks page's list")
+    -- Ten since 2026-10-11: the Reactions page's six left with their modules.
+    assert(type(list) == "table" and #list >= 10, "the World marks page's list")
     local page = m.pages["Jambix AIO/World marks"]
     assert(page, "a World marks page")
     local function press(id)
@@ -125,12 +119,11 @@ T[#T + 1] = { "1.7.6 curtains: every one saved on is switched off once, each kee
     assert_eq(m:get(ESP, "box_style"), b.P.cfg.BOX_CORNERS, "all off: the box")
     assert(press("curtains_all_on"), "and one to switch them all on")
     assert_eq(m:get(HC, "pull_curtains"), true, "all on: pull safety's curtain")
-    assert_eq(m:get("Jambix AIO/Rotation", "react_curtain_burst"), true, "all on: the burst curtain")
+    assert_eq(m:get(ESP, "killnext_on"), true, "all on: the kill-next curtain")
     assert_eq(m:get(ESP, "box_style"), b.P.cfg.BOX_CURTAIN, "all on: the curtain box")
     assert_eq(m:get(ESP, "esp_beacons"), true, "all on: the beacons")
-    assert_eq(m:get(RE, "pvpx_bg"), true, "all on: the flag carriers' beacon")
     press("curtains_all_off")
-    assert_eq(m:get(RE, "pvp_healers"), false, "off again")
+    assert_eq(m:get(HC, "pull_curtains"), false, "off again")
     assert_eq(b.errors(), "", "core.log_error while running")
 end }
 

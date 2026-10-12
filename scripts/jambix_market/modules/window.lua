@@ -104,6 +104,21 @@ return function(M)
     -- --- the header: the AUTO button, gold, and what the gold allows ------------------
 
     local function header(ui)
+        -- Off every time the scripts load (the user, 2026-10-10): one button
+        -- turns Market on; nothing scans or trades before.
+        if not M.cfg("enabled", false) then
+            if ui:button("market_on", "MARKET IS OFF  -  click to turn it on", {
+                style = "success",
+                tooltip = "Market is off every time the scripts load. On, it scans the auction house while it is "
+                    .. "open; press AUTO then to trade.",
+            }) then
+                M.menu:set("enabled", true)
+            end
+            small(ui, "Off: no scans, no trading, nothing opens or moves by itself. It still writes down your gold and "
+                .. "the sale mails you take, so what Auto already posted settles in its books. The tabs show the last "
+                .. "data it saw.", "text_dim")
+            return
+        end
         local on = X.active()
         if ui:button("auto", on and "AUTO IS ON  -  click to stop" or "AUTO IS OFF  -  click to start trading", {
             style = on and "danger" or "success",

@@ -22,6 +22,9 @@
 return function(rt)
     local util = rt.util
     local log = rt.log.for_tag("JCore/scheduler")
+    -- Jobs and timers run through it: a plain pcall unless Jambix Debug listens
+    -- (lib/faults, 1.8.1). A runtime built without it gets the plain pcall.
+    local faults = rt.faults or rt.util.no_faults
 
     local M = {}
 
@@ -252,7 +255,7 @@ return function(rt)
         for i = #timers, 1, -1 do
             local t = timers[i]
             if t.enabled and now >= t.due then
-                local ok, err = pcall(t.fn)
+                local ok, err = faults.call("timer", t, t.fn)
                 if not ok then
                     log.fmt("error", "timer from %s failed: %s", t.owner, tostring(err))
                 end
@@ -325,7 +328,10 @@ return function(rt)
                 if due then
                     job.last_run = now
                     local t0 = core.cpu_time()
-                    local ok, err = pcall(job.fn)
+                    local deep = faults.deep
+                    if deep then faults.enter(job) end
+                    local ok, err = faults.call("job", job, job.fn)
+                    if deep then faults.leave(job) end
                     job.cost:push((core.cpu_time() - t0) * NS_TO_MS)
                     if ok then
                         job.failures = 0
@@ -390,6 +396,19 @@ return function(rt)
 
     function M.on_render_control_panel()
         M.run_phase("control_panel")
+    end
+
+    --- Whether any live job is registered on a phase. A pass with none runs
+    --- nothing of any plugin's: Jambix Debug's black box leaves it unmarked.
+    ---@param phase string
+    ---@return boolean
+    function M.has_jobs(phase)
+        local list = jobs[phase]
+        if not list then return false end
+        for i = 1, #list do
+            if not list[i].dead then return true end
+        end
+        return false
     end
 
     -- --- diagnostics --------------------------------------------------------

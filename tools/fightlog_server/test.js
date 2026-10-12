@@ -38,7 +38,7 @@ const ADMIN = { 'X-Jambix-Key': 'k', 'X-Jambix-Admin': 'a' };
 function batch(contributor, id, overrides) {
     return Object.assign({
         schema: 1, id, contributor,
-        client: { plugin: '1.8.1', game: 'Forever', build: '1.60.1.70338', schema: 1 },
+        client: { plugin: '1.7.8', game: 'Forever', build: '1.60.1.70338', schema: 1 },
         me: { class: 'HUNTER', level: 26 },
         encounter: { type: 'world_pvp', duration: 42, outcome: 'won' },
         observations: [
@@ -53,7 +53,7 @@ function batch(contributor, id, overrides) {
 function lesson(contributor, id, outcome, codes) {
     return {
         schema: 1, id, contributor,
-        client: { plugin: '1.8.1', game: 'Forever', build: '1.60.1.70338', schema: 1 },
+        client: { plugin: '1.7.8', game: 'Forever', build: '1.60.1.70338', schema: 1 },
         me: { class: 'HUNTER', level: 26 },
         encounter: { type: 'world_pvp', duration: 42, outcome },
         enemies: [{ class: 'WARRIOR', role: 'melee', used: { Charge: 1, Hamstring: 2 }, controls_on_me: {}, bursts: 1, trinket: false,
@@ -141,15 +141,25 @@ test('privacy: a deletion request removes every record under the contributor and
     } finally { app.close(); }
 });
 
-test('versions: publish makes an active model; withdraw marks it and the previous active stands; a withdrawn model answers 410; the client status checks the plugin', async () => {
+test('versions: the gates refuse an empty database and say why; a forced publish makes an active model and is written as forced; withdraw marks it and the previous active stands; a withdrawn model answers 410; the client status checks the plugin', async () => {
     const { app, port } = await start();
     try {
         let r = await req(port, 'POST', '/v1/admin/publish', { note: 'first' }, ADMIN);
-        assert.strictEqual(r.body.version, '1');
-        r = await req(port, 'POST', '/v1/admin/publish', {}, ADMIN);
+        assert.strictEqual(r.body.decision, 'reject'); assert.strictEqual(r.body.version, null);
+        assert.deepStrictEqual(r.body.failed, ['contributors', 'content']);
+        assert.ok(r.body.checks.find(c => c.name === 'holdout' && c.pass === null), 'the holdout gate skipped on nothing and said so');
+        r = await req(port, 'POST', '/v1/admin/publish', { note: 'first', force: true }, ADMIN);
+        assert.strictEqual(r.body.decision, 'forced'); assert.strictEqual(r.body.version, '1');
+        r = await req(port, 'POST', '/v1/admin/publish', { force: true }, ADMIN);
         assert.strictEqual(r.body.version, '2');
         let m = (await req(port, 'GET', '/v1/models/manifest', undefined, KEY)).body;
-        assert.deepStrictEqual(m.versions.map(v => [v.version, v.status, v.schema, v.min_plugin]), [['1', 'active', 1, '1.8.1'], ['2', 'active', 1, '1.8.1']]);
+        assert.deepStrictEqual(m.versions.map(v => [v.version, v.status, v.schema, v.min_plugin]), [['1', 'active', 1, '1.7.8'], ['2', 'active', 1, '1.7.8']]);
+        assert.strictEqual(m.versions[0].gates.forced, true); assert.strictEqual(m.versions[0].stage, 'full'); assert.strictEqual(m.versions[1].stage, 'canary');
+        assert.strictEqual(m.versions[1].rollout, 25); assert.strictEqual(m.versions[1].rollback, '1');
+        const audit = (await req(port, 'GET', '/v1/admin/audit', undefined, ADMIN)).body.rows;
+        assert.deepStrictEqual(audit.map(a => [a.kind, a.action || a.forced]), [['cycle', 'reject'], ['publish', true], ['publish', true]]);
+        assert.strictEqual((await req(port, 'POST', '/v1/admin/promote', { version: '2' }, ADMIN)).status, 200);
+        assert.strictEqual((await req(port, 'GET', '/v1/models/manifest', undefined, KEY)).body.versions[1].stage, 'full');
         assert.strictEqual((await req(port, 'GET', '/v1/models/2', undefined, KEY)).body.version, '2');
         r = await req(port, 'POST', '/v1/admin/withdraw', { version: '2' }, ADMIN);
         assert.strictEqual(r.status, 200);
@@ -157,15 +167,15 @@ test('versions: publish makes an active model; withdraw marks it and the previou
         assert.strictEqual(m.versions[1].status, 'withdrawn');
         assert.strictEqual((await req(port, 'GET', '/v1/models/2', undefined, KEY)).status, 410);
         assert.strictEqual((await req(port, 'GET', '/v1/models/9', undefined, KEY)).status, 404);
-        const status = (await req(port, 'GET', '/v1/client/status?plugin=1.8.1&schema=1', undefined, KEY)).body;
+        const status = (await req(port, 'GET', '/v1/client/status?plugin=1.7.8&schema=1', undefined, KEY)).body;
         assert.strictEqual(status.accepted, true); assert.strictEqual(status.active_model, '1');
         assert.strictEqual((await req(port, 'GET', '/v1/client/status?plugin=1.7.6&schema=1', undefined, KEY)).body.accepted, false);
-        assert.strictEqual((await req(port, 'GET', '/v1/client/status?plugin=1.8.1&schema=2', undefined, KEY)).body.accepted, false);
+        assert.strictEqual((await req(port, 'GET', '/v1/client/status?plugin=1.7.8&schema=2', undefined, KEY)).body.accepted, false);
     } finally { app.close(); }
 });
 
 test('the learning engine: a pattern backed by several contributors with verified inputs is offered; one contributor or too few chances is marked unreliable and says why; the matchup advice tells won from lost', async () => {
-    const { app, port } = await start({ learn: { minChances: 4, minContributors: 2, minLessonFights: 2 } });
+    const { app, port } = await start({ learn: { minChances: 4, minContributors: 2, minEff: 2, minLessonFights: 2 } });
     try {
         const c1 = '1'.repeat(24), c2 = '2'.repeat(24), c3 = '3'.repeat(24);
         let n = 0;
@@ -179,23 +189,29 @@ test('the learning engine: a pattern backed by several contributors with verifie
         const rogue = batch(c1, id());
         rogue.observations = [{ pattern: 'interrupts_casts', enemy_class: 'ROGUE', p: 0.5, reliability: 0, sure: false, basis: 'session', evidence: 0, inputs_ok: false, hit: true, correct: true }];
         await req(port, 'POST', '/v1/combat/batches', rogue, KEY);
-        const model = (await req(port, 'POST', '/v1/admin/publish', {}, ADMIN)).body;
+        const model = (await req(port, 'POST', '/v1/admin/publish', { force: true }, ADMIN)).body;
         const full = (await req(port, 'GET', '/v1/models/' + model.version, undefined, KEY)).body;
-        const w = full.by_class.WARRIOR.patterns.mobility_when_slowed;
-        assert.strictEqual(w.chances, 6); assert.strictEqual(w.contributors, 3); assert.strictEqual(w.p, 1);
-        assert.strictEqual(w.unreliable, false);
+        const w = full.games.Forever.by_class.WARRIOR.patterns.mobility_when_slowed;
+        assert.strictEqual(w.chances, 6); assert.strictEqual(w.contributors, 3); assert.ok(w.p > 0.8 && w.p < 1, `shrunk toward 0.5: ${w.p}`);
+        assert.strictEqual(w.unreliable, false, w.why);
         assert.ok(w.brier < 0.3);
-        const r = full.by_class.ROGUE.patterns.interrupts_casts;
+        assert.ok(w.interval[0] < w.p && w.interval[1] >= w.p, 'the interval');
+        const r = full.games.Forever.by_class.ROGUE.patterns.interrupts_casts;
         assert.strictEqual(r.unreliable, true);
-        assert.match(r.why, /1 chance\(s\), needs 4/); assert.match(r.why, /1 contributor\(s\), needs 2/); assert.match(r.why, /verified inputs/);
-        const matchups = (await req(port, 'GET', '/v1/knowledge/matchups', undefined, KEY)).body;
-        assert.deepStrictEqual(matchups.by_class.WARRIOR.outcomes, { won: 2, lost: 1 });
-        const advice = matchups.by_class.WARRIOR.advice;
+        assert.match(r.why, /0.5 weighted chance\(s\), needs 4/, 'unverified inputs weigh half'); assert.match(r.why, /1 contributor\(s\), needs 2/); assert.match(r.why, /verified inputs/);
+        const matchups = (await req(port, 'GET', '/v1/knowledge/matchups?game=Forever', undefined, KEY)).body;
+        assert.deepStrictEqual(matchups.games.Forever.by_class.WARRIOR.outcomes, { won: 2, lost: 1 });
+        const advice = matchups.games.Forever.by_class.WARRIOR.advice;
         assert.ok(advice.find(a => a.code === 'trap_unused' && a.lost === 1 && a.won === 0), 'the trap never laid told lost fights');
         assert.ok(advice.find(a => a.code === 'trap_won' && a.won === 1), 'the trap laid told won ones');
         const abilities = (await req(port, 'GET', '/v1/knowledge/abilities', undefined, KEY)).body;
-        assert.strictEqual(abilities.by_class.WARRIOR.abilities.Hamstring.per_fight, 2);
+        assert.strictEqual(abilities.games.Forever.by_class.WARRIOR.abilities.Hamstring.per_fight, 2);
+        assert.strictEqual(abilities.games.Forever.by_class.WARRIOR.abilities.Hamstring.verified, true, 'seen by several contributors');
         assert.ok(full.evaluation.mobility_when_slowed.bands.mid.n >= 3, 'the calibration bands');
+        const tactics = (await req(port, 'GET', '/v1/knowledge/tactics', undefined, KEY)).body;
+        assert.deepStrictEqual(tactics.games.Forever.tactics, [], 'no episodes: no tactics');
+        assert.ok(full.release.known_limitations.some(l => /association/.test(l)));
+        assert.ok(Object.keys(full.games.Forever.groups).includes('g:Forever|me:HUNTER|e:WARRIOR|lv:20-29|enc:world_pvp|1v1'), 'the exact level, the combat read off the lesson\'s one enemy');
     } finally { app.close(); }
 });
 
@@ -242,10 +258,10 @@ test('the learning engine validates an episode lesson only with enough comparabl
             ] }), KEY);
         }
         await req(port, 'POST', '/v1/combat/batches', batch(c1, id(), { episodes: [episode(id(), 'blink', 'NO_MEASURABLE_CHANGE', false)] }), KEY);
-        const model = (await req(port, 'POST', '/v1/admin/publish', {}, ADMIN)).body;
+        const model = (await req(port, 'POST', '/v1/admin/publish', { force: true }, ADMIN)).body;
         const full = (await req(port, 'GET', '/v1/models/' + model.version, undefined, KEY)).body;
         assert.strictEqual(full.episodes, 7, 'seven episodes aggregated');
-        const w = full.by_class.WARRIOR;
+        const w = full.games.Forever.by_class.WARRIOR;
         assert.strictEqual(w.episodes.gap_close_attempt.n, 6);
         assert.deepStrictEqual(w.episodes.gap_close_attempt.results, { POSITION_IMPROVED: 4, SITUATION_WORSENED: 2 });
         assert.deepStrictEqual(w.episodes.gap_close_attempt.when_followed, { POSITION_IMPROVED: 4 });

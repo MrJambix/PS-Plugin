@@ -779,13 +779,17 @@ return function(M)
             ceiling = risk and P.safe_reference(risk.usual, risk.median, nil) or nil
         end
         local vendor = D.vendor(id) or 0
+        -- No floor at what was paid: you post it, and the price the auction
+        -- house gives is the price, under what Auto paid or not (below_cost
+        -- says). Only a vendor paying more holds it back.
         local price, why = P.post_price({
-            market = market, lowest = lowest, vendor = vendor, cost = cost,
-            cut_pct = M.policy.cut(), margin_pct = M.cfg("post_margin", 10),
+            market = market, lowest = lowest, vendor = vendor, cost = nil,
+            cut_pct = M.policy.cut(), margin_pct = 0,
             undercut = M.money("undercut"), ceiling_pct = M.cfg("post_ceiling", 200), ceiling = ceiling,
             below_floor = "hold",
         })
-        return { price = price, why = why, market = market, lowest = lowest, vendor = vendor,
+        local below_cost = (price and cost and P.net(price, M.policy.cut()) < cost) or nil
+        return { price = price, why = why, market = market, lowest = lowest, vendor = vendor, below_cost = below_cost,
             deposit = M.policy.post_deposit(id, 1, POST_HOURS), per_day = rec and D.per_day(rec) or nil }
     end
 
@@ -829,9 +833,21 @@ return function(M)
         for _, e in ipairs(order) do
             local h = L.holding(e.id, e.var)
             local mine = (h and h.mode == "gear") and math.max(0, math.floor((h.qty or 0) + 0.5)) or 0
+            local cost_sum = mine > 0 and (h.cost or 0) or 0
+            -- A single item Auto bought for a vendor that the auction house pays
+            -- more for is yours to post too (bags.lua says "hand"; 1.2.4: a bag
+            -- bought for 4g would have gone to a vendor for 50s).
+            local hv = L.holding(e.id)
+            if hv and hv.mode == "vendor" and (hv.qty or 0) > 0 and M.bags then
+                local adv = M.bags.advise(e.id, e.count)
+                if adv.action == "hand" then
+                    mine = mine + math.floor((hv.qty or 0) + 0.5)
+                    cost_sum = cost_sum + (hv.cost or 0)
+                end
+            end
             e.auto = math.min(e.count, mine)
-            e.cost = (e.auto > 0 and h and (h.qty or 0) > 0) and (h.cost / h.qty) or nil
-            e.advice = G.advise(e.vkey, e.cost, e.auto > 0)
+            e.cost = (mine > 0) and (cost_sum / mine) or nil
+            e.advice = G.advise(e.vkey, e.cost, e.auto > 0 and h ~= nil and h.mode == "gear")
             local each = e.advice.price
             e.value = each and P.net(each, M.policy.cut()) * e.count or 0
         end
@@ -1032,6 +1048,7 @@ return function(M)
     ctx.tick(function()
         if not remind_at or core.time() < remind_at then return end
         remind_at = nil
+        if not M.cfg("enabled", false) then return end
         local list = G.to_post()
         if #list == 0 then return end
         local line = "Post these yourself (Gear tab), 48 hours: " .. G.post_line(list)

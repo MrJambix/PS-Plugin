@@ -1,10 +1,13 @@
 -- Jambix AIO, the WHOLE plugin: the Reactions tab and its window (1.76.0).
 --
 -- main.lua on top of the whole JCore under mock_core, as the Era client, with
--- a hunter logged in and the rotation on. The Reactions page has the switch
--- and the "Open Reactions UI" button; the button opens the window; every tab
--- draws through JCore's real toolkit with no error; a reaction saved for the
--- class goes into the engine and fires; the page's switch stops it.
+-- a hunter logged in and the rotation on. The Reactions page has, since
+-- 2026-10-11, neither a switch (the user: reactions are automatic, waking in
+-- PvP when it is detected, not an option) nor an "Open Reactions UI" button
+-- (out of the player's reach, the code kept); the window still opens from
+-- code; every tab draws through JCore's real toolkit with no error; a
+-- reaction saved for the class goes into the engine and fires; a saved
+-- "off" changes nothing.
 
 local boot = require("mock/aio_boot")
 
@@ -67,7 +70,7 @@ local function mine(reason_part)
     return n
 end
 
-T[#T + 1] = { "the Reactions tab: its switch (on by default) and the Open Reactions UI button", function()
+T[#T + 1] = { "the Reactions tab: reactions automatic (no switch), no Open Reactions UI button, the window opens from code", function()
     b = boot.run("Vanilla", "wow_vanilla_us", { "_classic_era_" })
     local me = hunter()
     core.object_manager.get_local_player = function() return me end
@@ -84,14 +87,16 @@ T[#T + 1] = { "the Reactions tab: its switch (on by default) and the Open Reacti
     set("Rotation", "rot_key", { vk = 0x58, active = true, toggled = true })
     assert_eq(b.errors(), "", "core.log_error during boot")
     assert(b.mock.menu.pages["Jambix AIO/Reactions"], "the Reactions page is declared")
-    assert_eq(b.P.opt("react_active", "unset"), true, "Use reactions in the rotation: on by default")
+    assert_eq(b.P.opt("react_active", "unset"), "unset", "no 'Use reactions in the rotation' switch on the page (2026-10-11)")
+    assert_eq(b.P.react.active(), true, "reactions are automatic: always on")
     local button = find_button("Jambix AIO/Reactions", "react_open_ui")
-    assert(button and type(button.on_click) == "function", "the Open Reactions UI button")
+    assert(button == nil, "no Open Reactions UI button: the window is out of the player's reach (2026-10-11)")
     b.mock.frame(30)
-    assert_eq(b.P.reactwin.state.shown, false, "the window is shut until the button is pressed")
-    button.on_click()
+    assert_eq(b.P.reactwin.state.shown, false, "the window is shut")
+    assert(type(b.P.reactwin.open) == "function", "the window's code stays: P.reactwin.open")
+    b.P.reactwin.open()
     b.mock.frame(5)
-    assert_eq(b.P.reactwin.state.shown, true, "the button opens the window")
+    assert_eq(b.P.reactwin.state.shown, true, "opened from code, it draws")
     assert_eq(b.errors(), "", "core.log_error")
 end }
 
@@ -239,10 +244,12 @@ T[#T + 1] = { "a reaction saved for the class goes into the engine and fires; th
     b.P.reactwin.state.tab = 5
     b.mock.frame(3)
     assert_eq(b.P.reactwin.state.err, nil, "cards and the live tab draw with it")
-    local before = mine("My: Test panic")
+    -- The switch is gone (2026-10-11): a value a player saved before changes nothing.
     set("Reactions", "react_active", false)
-    b.mock.frame(60)
-    assert_eq(mine("My: Test panic"), before, "the switch off: nothing more from it")
+    b.P.opt_invalidate()
+    b.mock.frame(5)
+    assert_eq(b.P.react.active(), true, "a saved 'off' changes nothing: reactions are automatic")
+    assert_eq(b.P.react.custom.master_on(), true, "the custom layer agrees")
     set("Reactions", "react_active", true)
     HP.now = 900
     assert_eq(b.errors(), "", "core.log_error")

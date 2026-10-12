@@ -33,7 +33,7 @@
 
 local MINIMUM_CORE = "1.7.9"      -- inventory.bag_rows (1.7.9 is the old 1.13.1, renumbered)
 local PACKAGE = "jambix_market"
-local VERSION = "1.2.2"
+local VERSION = "1.2.5"
 
 -- =============================================================================
 -- MODULE LOADING -- loader builds differ on whether a package-local require
@@ -156,8 +156,16 @@ local function start(JCore)
     end
 
     local general = menu:section("Jambix Market", "settings")
-    general:toggle("enabled", "Enable Jambix Market", true)
+    -- OFF EVERY TIME THE SCRIPTS LOAD (the user, 2026-10-10: "Market should
+    -- always be of and require us to turn it on"). Both switches are put back
+    -- off here, whatever was saved: nothing scans, opens, reads your auctions
+    -- or trades until you turn Market on, and nothing trades until you press
+    -- AUTO. (Off, it still writes down your gold and the sale mails you take,
+    -- so what Auto already posted settles in its books.)
+    general:toggle("enabled", "Turn Jambix Market on (it is off every time the scripts load)", false)
     general:toggle("auto_trade", "AUTO: trade by itself (the AUTO button in the window)", false)
+    menu:set("enabled", false)
+    menu:set("auto_trade", false)
     -- The one movement switch (the user, 2026-10-08: "make the Moving to AH and
     -- the Mailbox a checkbox if its not checked its gonna have to be manual!
     -- mainly cause im reworking pathing"). Off by default: you walk to the
@@ -173,12 +181,15 @@ local function start(JCore)
     general:label("long to post for. The lines below show what it has decided right now.")
 
     -- What the plugin has decided, live.
-    menu:live_lines(9, function()
+    menu:live_lines(10, function()
         local U, Pol = M.util, M.policy
         if not (U and Pol) then return {} end
         local cap = Pol.capital()
         local ok, n = Pol.record()
         return {
+            M.cfg("enabled", false) and (M.auto and M.auto.active() and "Market is ON and trading (AUTO)"
+                or "Market is ON: scanning; press AUTO to trade")
+                or "Market is OFF until you turn it on (above, or in the window): nothing scans or trades",
             string.format("Capital %s: gold %s + stock %s", U.money(cap.capital), U.money(cap.gold),
                 U.money(cap.invested)),
             string.format("Keeps %s (10%%); free to spend %s; stock room %s", U.money(cap.reserve),
@@ -264,9 +275,27 @@ local function start(JCore)
     menu:title(function()
         local g = M.ledger.gold()
         local last = M.db.meta().last_scan
+        if not M.cfg("enabled", false) then
+            return string.format("Market OFF (turn it on below)  |  Gold %s  |  last full scan %s",
+                g and U.money(g) or "...", last and (U.ago(U.now() - last) .. " ago") or "never")
+        end
         return string.format("Gold %s  |  projected profit %s  |  %d deal(s)  |  last full scan %s  |  Auto %s",
             g and U.money(g) or "...", U.signed(M.auto.projection().total), #M.deals.list(),
             last and (U.ago(U.now() - last) .. " ago") or "never", M.auto.active() and "ON" or "off")
+    end)
+
+    -- Market on: a scan cycle at once if the auction house is open. Market
+    -- off: AUTO goes off with it, so it never trades again by itself when
+    -- Market is turned back on.
+    menu:on_change("enabled", function(on_now)
+        if on_now then
+            M.activity("Jambix Market ON")
+            if M.ah.is_open() then M.scanner.cycle_now() end
+        else
+            if M.cfg("auto_trade", false) then M.menu:set("auto_trade", false) end
+            M.trader.stop_auto()
+            M.activity("Jambix Market OFF")
+        end
     end)
 
     local data_section = menu:section("Data", "settings")
@@ -301,15 +330,25 @@ local function start(JCore)
     _G.JambixMarket = M
 end
 
-if _G.JCore then
+-- Not before a character is in the world (1.2.5): at the character select
+-- screen the game has not loaded the tables an item or spell name is read
+-- from, and asking one there kills the client (ASSERT(IsLoaded())).
+local function jcore_in_world(J)
+    return type(J.in_world) ~= "function" or J.in_world()
+end
+
+if _G.JCore and jcore_in_world(_G.JCore) then
     start(_G.JCore)
 else
     local deadline, started = core.time() + 15.0, false
     core.register_on_update_callback(function()
         if started then return end
-        if _G.JCore then
-            started = true
-            start(_G.JCore)
+        local J = _G.JCore
+        if J then
+            if jcore_in_world(J) then
+                started = true
+                start(J)
+            end
         elseif core.time() > deadline then
             started = true
             core.log_error("[Jambix Market] JCore never loaded; plugin inactive")

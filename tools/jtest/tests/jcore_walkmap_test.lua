@@ -863,7 +863,7 @@ T[#T + 1] = { "boot: JCore 1.12.0 runs the walk map; a plugin's walk and request
     local ok, err = pcall(require, "jcore/main")
     assert_true(ok, "boot raised: " .. tostring(err))
     local JCore = _G.JCore
-    assert_eq(JCore.version, "1.7.9", "version")
+    assert_eq(JCore.version, "1.8.1", "version")
     assert_true(JCore.walkmap and JCore.walkmap.ahead, "JCore.walkmap published")
     assert_true(JCore.diagnostics().walkmap, "and in the diagnostics")
     local declared = false

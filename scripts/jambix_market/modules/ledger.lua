@@ -368,6 +368,87 @@ return function(M)
         end
     end
 
+    -- 1.2.4, ONCE: a search row of several single-item auctions at one price
+    -- was read as that many units for that price, and each bid -- which buys
+    -- ONE auction -- was booked as the row's whole count (the user's Minor
+    -- Wizard Oil, 2026-10-11: 20 bids of 4s booked as 1,353 oils, "expected"
+    -- to bring 67g at a vendor). Every buy of a single item (stack 1, not
+    -- gear) is one unit a buy row; the holdings of those items are rebuilt
+    -- from the rows (units bought less units sold, the cost as paid). An
+    -- item's stack is known once the client has told it, so this waits for
+    -- that, a few seconds at a time, and is done when every such row is judged.
+    local single_fix = nil
+    if not data.single_v then
+        single_fix = { judged = {}, started = core.time() }
+    end
+
+    local function repair_single_buys()
+        if not single_fix then return end
+        local all = rows()
+        local pending, touched = false, {}
+        for i = 1, #all do
+            local tr = all[i]
+            if tr.kind == "buy" and tr.id and tr.var == nil and (tr.qty or 0) > 1 and not single_fix.judged[i] then
+                local info = D.info(tr.id)
+                if info and info.s then
+                    single_fix.judged[i] = true
+                    if info.s == 1 then
+                        local gross = (tr.expected or 0) + (tr.copper or 0)
+                        tr.expected = tr.expected and (gross / tr.qty - (tr.copper or 0)) or nil
+                        tr.qty = 1
+                        touched[hkey(tr.id)] = true
+                    end
+                else
+                    pending = true
+                end
+            end
+        end
+        for k in pairs(touched) do
+            local h = data.holdings[k]
+            if h and (h.qty or 0) > 0 then
+                local bought, sold, cost, expected, since = 0, 0, 0, 0, type(h.lot) == "table" and h.lot.t or 0
+                for i = 1, #all do
+                    local tr = all[i]
+                    if tr.id and tr.var == nil and hkey(tr.id) == k and (tr.t or 0) >= since then
+                        if tr.kind == "buy" then
+                            bought, cost, expected = bought + (tr.qty or 0), cost + (tr.copper or 0), expected + (tr.expected or 0)
+                        elseif tr.kind == "sell" then
+                            sold = sold + (tr.mine or 0)
+                        end
+                    end
+                end
+                local was = h.qty
+                local qty = math.max(0, bought - sold)
+                if qty <= 0 then
+                    data.holdings[k] = nil
+                else
+                    h.expect = (h.expect or 0) / math.max(1, was) * qty
+                    h.qty = qty
+                    if type(h.lot) == "table" then
+                        h.lot.bought, h.lot.expected, h.lot.big = bought, expected, nil
+                        if type(h.lot.planned) == "number" then h.lot.planned = expected end
+                    end
+                end
+                M.activity(string.format("Books fixed: %s held %d, not %d (each bid bought one; cost unchanged, %s)",
+                    D.name(U.unvkey(k)), qty, math.floor(was + 0.5), U.money(cost)))
+            end
+        end
+        if next(touched) then
+            journal_store:touch()
+            totals, summary_cache = nil, {}
+            save()
+        end
+        -- Done once every row is judged, or after ten minutes of asking.
+        if not pending or core.time() - single_fix.started > 600 then
+            if not pending then
+                data.single_v = 1
+                save()
+            end
+            single_fix = nil
+        end
+    end
+    ctx.every(2, repair_single_buys)
+
     --- extra (gear, and any single item): { var = the roll held (mode
     --- "gear"), vname = its name, roll = the roll bought }.
     function L.bought(item_id, qty, cost, mode, expected_unit, confidence, planned, big, extra)
@@ -691,7 +772,16 @@ return function(M)
                 end
             end
         end
-        return { by_key = by_key, sold = sold, won = won, other = other, cod = cod, n = n }
+        -- Item mails by name, count and kind: one that leaves the inbox is an
+        -- item back in the bags (settle_mail), recorded then, not when the
+        -- loot was asked for (1.2.3 recorded each ask: with the bags full the
+        -- same mails were asked for every five seconds, 183 rows for 20 oils).
+        local won_keys = {}
+        for i = 1, #won do
+            local k = tostring(won[i].name) .. "\1" .. tostring(won[i].qty) .. "\1" .. tostring(won[i].why)
+            won_keys[k] = (won_keys[k] or 0) + 1
+        end
+        return { by_key = by_key, sold = sold, won = won, other = other, cod = cod, n = n, won_keys = won_keys }
     end
 
     --- The sale mails the inbox held the last time a mailbox was open, kept
@@ -733,6 +823,17 @@ return function(M)
 
     local function settle_mail(now_read, g)
         local before = mail.last
+        -- Item mails gone since the last look: back in the bags.
+        if before and before.won_keys then
+            for key, n in pairs(before.won_keys) do
+                local left = (now_read.won_keys or {})[key] or 0
+                if left < n then
+                    local name, qty, why = key:match("^(.-)\1(.-)\1(.*)$")
+                    local id, var = L.resolve(name)
+                    for _ = 1, n - left do L.returned(id, tonumber(qty) or 1, why, name, var) end
+                end
+            end
+        end
         if before and mail.gold and g then
             local gone, total = {}, 0
             for key, e in pairs(before.by_key) do
@@ -780,11 +881,8 @@ return function(M)
                 if job.kind == "money" then
                     U.try(core.mail.take_inbox_money, job.index)
                 else
+                    -- Recorded when the mail leaves the inbox (settle_mail).
                     U.try(core.mail.auto_loot_mail_item, job.index)
-                    if job.name then
-                        local id, var = L.resolve(job.name)
-                        L.returned(id, job.qty, job.why, job.name, var)
-                    end
                 end
                 mail.next_at = t + 0.8
             else

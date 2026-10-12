@@ -9,7 +9,8 @@
 -- bag-slot check, and the money policy.lua allows.
 --
 -- While the auction house is open, once a second when nothing else is
--- running (no job, no search, no scan), the first of these that has work:
+-- running (no job, no search, no scan), the first of these that has work --
+-- posting before buying, so stock back from the mailbox never waits:
 --
 --   buy     the best deal (most profit per day it takes to sell), at the size
 --           keeps gold above the reserve; each item at most every 5 minutes.
@@ -428,8 +429,11 @@ return function(M)
         if T.busy() or S.busy() or A.pending_except("quick") > 0 or A.locked() then return end
         -- Away at the mailbox: nothing to trade until the auction house is open again.
         if M.errands and M.errands.running() then return end
-        if try_buy(t) then return end
+        -- Post first, buy second (1.2.5): stock that came back by mail is up
+        -- again the moment the auction house is open, before any gold goes
+        -- into new deals (the user's Thick Spider's Silk sat four days).
         if try_sell(t) then return end
+        if try_buy(t) then return end
         try_repost(t)
     end, { interval = 0.25 })
 
@@ -570,6 +574,8 @@ return function(M)
     M.ctx.on("jambix.market.quick_done", function() announce("the quick scan found nothing worth buying") end)
 
     function X.start()
+        -- AUTO turns Market on too: it is off every time the scripts load.
+        if not M.cfg("enabled", false) then M.menu:set("enabled", true) end
         if M.cfg("auto_trade", false) then return started() end
         M.menu:set("auto_trade", true)      -- the on_change below does the rest
     end

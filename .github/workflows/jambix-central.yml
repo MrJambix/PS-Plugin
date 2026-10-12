@@ -6,11 +6,17 @@
 # fine-grained token that can only open issues here and read contents. This
 # workflow files each accepted issue into the data branch (jambix-data:
 # data/batches.jsonl, data/lessons.jsonl), answers and closes it, and every
-# six hours publishes a model version (data/models/vN.json + manifest.json)
-# the clients download. Refused issues get the reason in a comment.
+# six hours runs a learning cycle that publishes a model version
+# (data/models/vN.json + manifest.json) the clients download when its
+# gates pass. Refused issues get the reason in a comment.
 #
-# By hand: Actions > Jambix central > Run workflow ("ingest", "publish" or
-# "withdraw <version>").
+# The scheduled run is a learning cycle (tools/fightlog_server/release.js):
+# the candidate is built from every accepted record, judged on the fights
+# it never saw, and published as a canary only when the gates pass; a
+# "promote <version>" by hand rolls a canary out to everyone.
+#
+# By hand: Actions > Jambix central > Run workflow ("ingest", "publish",
+# "publish --force", "promote <version>", "withdraw <version>" or "evaluate").
 
 name: Jambix central
 
@@ -22,7 +28,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "ingest | publish | withdraw <version>"
+        description: "ingest | publish [--force] | promote <version> | withdraw <version> | evaluate"
         required: true
         default: "ingest"
 
@@ -79,8 +85,10 @@ jobs:
               set -- $ACTION
               case "$1" in
                 ingest) node tools/fightlog_server/github_ingest.js ingest ;;
-                publish) node tools/fightlog_server/github_ingest.js publish "by hand" ;;
+                publish) shift; node tools/fightlog_server/github_ingest.js publish "$@" "by hand" ;;
+                promote) node tools/fightlog_server/github_ingest.js promote "$2" ;;
                 withdraw) node tools/fightlog_server/github_ingest.js withdraw "$2" ;;
+                evaluate) node tools/fightlog_server/github_ingest.js evaluate ;;
                 *) echo "unknown action: $ACTION"; exit 1 ;;
               esac ;;
           esac

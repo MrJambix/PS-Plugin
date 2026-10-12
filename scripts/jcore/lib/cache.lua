@@ -211,7 +211,12 @@ return function(rt)
     function M.try(fn, a, b, c)
         if type(fn) ~= "function" then return nil end
         local ok, value = pcall(fn, a, b, c)
-        if not ok then return nil end
+        if not ok then
+            -- Swallowed, as ever; Jambix Debug's fault log hears of it (1.8.1).
+            local faults = rt.faults
+            if faults then faults.swallowed(fn, value) end
+            return nil
+        end
         return value
     end
 

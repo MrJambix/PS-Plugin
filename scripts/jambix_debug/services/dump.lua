@@ -276,54 +276,9 @@ return function(rt)
 
     function M.last() return last end
 
-    -- --- the click-to-move probe (1.6.13) -------------------------------------
-    --
-    -- The user (2026-10-04): "why not select and then interaction key?" There
-    -- is no call that presses a key, and the game's own Lua does not run on
-    -- Forever. Forever's core does expose an undocumented core.input.cm, never
-    -- called by anything of ours. In the client, click-to-move has a LOOT
-    -- action: the right-click on a corpse that walks there and opens it. Its
-    -- arguments are unknown, and the loader's own plugins that use it are
-    -- encrypted. This button asks it, pressed only by the player: once with
-    -- nothing, once with nil (a binding that checks its arguments names what
-    -- it expects in its error) and once with where the player stands (if it
-    -- takes a position, that is a click-to-move onto the player's own feet).
-    -- What each answers or raises goes to
-    -- scripts_data/jcore/jcore.probe.<client>.json and to the log.
-    function M.probe_cm()
-        local input = core.input
-        local fn = input and input.cm
-        local c = (rt.world and rt.world.client and call(rt.world.client)) or {}
-        local doc = { format = 1, jcore = rt.VERSION, client = plain(c.version), exact = plain(c.exact),
-            exists = type(fn) == "function", results = {} }
-        if type(fn) == "function" then
-            local me = rt.units and rt.units.player_position and rt.units.player_position() or nil
-            local unpack_ = table.unpack or unpack
-            local tries = {
-                { label = "cm()", args = {}, n = 0 },
-                { label = "cm(nil)", args = {}, n = 1 },
-                { label = "cm(where you stand)", args = { me }, n = 1 },
-            }
-            for i = 1, #tries do
-                local t = tries[i]
-                local packed = { pcall(fn, unpack_(t.args, 1, t.n)) }
-                local row = { label = t.label, ok = packed[1] == true }
-                if packed[1] then
-                    row.returned = {}
-                    for j = 2, #packed do row.returned[#row.returned + 1] = plain(packed[j]) end
-                else
-                    row.error = tostring(packed[2])
-                end
-                doc.results[#doc.results + 1] = row
-                log.fmt("info", "probe: core.input.%s -> %s", t.label,
-                    row.ok and ("returned " .. tostring(row.returned[1])) or ("raised: " .. row.error))
-            end
-        end
-        local filename = "jcore/jcore.probe." .. client_tag(c) .. ".json"
-        local storage = rt.storage
-        if storage and storage.write_json then storage.write_json(filename, doc, true) end
-        return filename, doc
-    end
+    -- The click-to-move probe (JCore 1.6.13) is gone (Jambix Debug 1.1.0):
+    -- it called core.input.cm, which is not in scripts/.api. The user,
+    -- 2026-10-12: "if its not in the .api remove it from game calls".
 
     -- --- menu page --------------------------------------------------------------
 
@@ -339,14 +294,6 @@ return function(rt)
             if not ok then log.fmt("error", "dump failed: %s", tostring(file)) end
             if ok and not file then log.fmt("warn", "dump: %s", tostring(info)) end
         end })
-        -- The click-to-move probe (1.6.13): pressed by the player only.
-        local s3 = page:section("Click-to-move probe (Forever)", "list", { column = "left" })
-        s3:label("Asks the client's undocumented core.input.cm what it takes: with nothing, with nil, and with where you stand (if it takes a position, that is a click-to-move onto your own feet). It may make your character take a step. The answers go to scripts_data/jcore/jcore.probe.<client>.json. Press it once, standing still out of combat.")
-        s3:button("probe_cm", "Probe click-to-move", { on_click = function()
-            local ok, err = pcall(M.probe_cm)
-            if not ok then log.fmt("error", "probe failed: %s", tostring(err)) end
-        end })
-
         -- The corpse and loot-window study (services/lootstudy.lua, 1.6.8).
         local study = rt.lootstudy
         if study then

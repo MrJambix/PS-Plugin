@@ -246,6 +246,7 @@ T[#T + 1] = { "boot at the auctioneer with Auto on and money sold", function()
     W.ah_open = true
     mock.game_event("AUCTION_HOUSE_SHOW", {})
     run(2)
+    MK.menu:set("enabled", true)               -- Market is off at every load
     MK.menu:set("auto_trade", true)
     assert_eq(MK.errands.walking_on(), false, "walking is off until the box is ticked")
     MK.menu:set("mail_runs", true)

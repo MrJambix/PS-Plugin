@@ -81,25 +81,14 @@ T[#T + 1] = { "the dump: spells with ids and details, trait nodes, active talent
     assert_eq(#mock.errors, 0, "no core.log_error")
 end }
 
-T[#T + 1] = { "the click-to-move probe: each call's answer or error, to a file (1.6.13)", function()
-    local seen = {}
-    rawset(mock.core.input, "cm", function(...)
-        local n = select("#", ...)
-        seen[#seen + 1] = n
-        local first = ...
-        if first == nil then error("cm: core.vec3 expected, got nil") end
-        return true
-    end)
-    local file, doc = ctx.dump.probe_cm()
-    assert_eq(file, "jcore/jcore.probe.forever.json", "the file is named for the client")
-    assert_eq(doc.exists, true, "cm exists here")
-    assert_eq(#doc.results, 3, "three calls")
-    assert_eq(seen[1], 0, "first with nothing")
-    assert_eq(seen[2], 1, "then with nil")
-    assert(doc.results[1].error:find("vec3 expected", 1, true), "its error says what it takes: " .. tostring(doc.results[1].error))
-    assert_eq(doc.results[3].label, "cm(where you stand)", "then with a position")
-    local back = JCore.json.decode(mock.data_fs[file])
-    assert_eq(back.results[1].ok, false, "written")
+T[#T + 1] = { "the click-to-move probe is gone: core.input.cm is not in .api (Jambix Debug 1.1.0)", function()
+    local calls = 0
+    rawset(mock.core.input, "cm", function() calls = calls + 1 end)
+    assert_eq(ctx.dump.probe_cm, nil, "no probe_cm")
+    ctx.dump.dump()
+    mock.frame(5)
+    assert_eq(calls, 0, "core.input.cm is never called")
+    assert_eq(mock.data_fs["jcore/jcore.probe.forever.json"], nil, "no probe file")
 end }
 
 return T

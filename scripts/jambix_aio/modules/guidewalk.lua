@@ -27,6 +27,19 @@
 --             the waypoint is walked to and the walk waits, saying what the
 --             step wants, until the step changes.
 --
+-- A SECOND SWITCH, OFF BY DEFAULT (1.8.1): "Act on the guide's marks as you
+-- walk up to them" (rxp_act). The user, 2026-10-11: "let's make RestedExp
+-- ESP - Allow Quest Grab, allow the Combat System to work with it and Turn
+-- in quests". You move, by the ESP's marks, its panel and its line; nothing
+-- walks you and nothing holds a key. Within ACT_REACH of the npc (or the
+-- object) the step's quest goes back to or comes from, it talks and answers
+-- the windows as the walk does, for the step's quests only (two switches:
+-- pick up, hand in). A mob the step wants killed, within pull range, is the
+-- rotation's to open on -- pulling() and pull_target(), as for the walk --
+-- and is never selected, faced or hit by this. No quest object is used,
+-- nothing is looted (auto-loot does that) and no mount is got off. Both
+-- switches on: the walk wins; it does all of this and moves you too.
+--
 -- HOW IT WALKS. Sentinel Navigation through JCore's ctx.nav, as the Market's
 -- mail run does (its log on 2026-10-09: "Sentinel is moving you (state
 -- navigating)"). Watched like the mail run: not moved within NAV_PROVE s, no
@@ -55,6 +68,7 @@ return function(P)
     local SCAN_EVERY = 0.5        -- s between looks at the step and the world
     local ARRIVE = 4.0            -- yd from a waypoint: there
     local TALK_REACH = 4.0        -- yd: close enough to talk or use (the client's ~5)
+    local ACT_REACH = 5.0         -- yd: you stood by the quest giver yourself (the ESP acting)
     local LOOT_REACH = 3.5
     local MELEE_PULL = 4.0        -- yd from a mob before a melee class opens
     local RANGED_PULL = 26        -- yd for a caster or a hunter
@@ -162,10 +176,32 @@ return function(P)
 
     -- --- the switch ---------------------------------------------------------------
 
-    local function switched_on()
-        if P.esp_only then return false end
-        if P.master_on and not P.master_on() then return false end
-        return opt("rxp_follow", false) == true
+    --- "walk" (Follow the guide with Sentinel Navigation), "act" (the ESP
+    --- acts as you walk up, 1.8.1) or nil. Both on: the walk, which does
+    --- everything the other does and moves you too.
+    local function mode()
+        if P.esp_only then return nil end
+        if P.master_on and not P.master_on() then return nil end
+        if opt("rxp_follow", false) == true then return "walk" end
+        if opt("rxp_act", false) == true then return "act" end
+        return nil
+    end
+
+    local function switched_on() return mode() ~= nil end
+    local function acting() return mode() == "act" end
+
+    --- What this mode looks for and answers: the walk's four switches, or
+    --- the ESP's three (no objects and no loot there).
+    local function wants_of()
+        local range = opt("rxp_follow_range", 60)
+        if acting() then
+            local accept, turnin = opt("rxp_act_accept", true) == true, opt("rxp_act_turnin", true) == true
+            return { talk = accept or turnin, accept = accept, turnin = turnin,
+                fight = opt("rxp_act_fight", true) == true, use = false, loot = false, range = range }
+        end
+        local talk = opt("rxp_follow_talk", true) == true
+        return { talk = talk, accept = talk, turnin = talk, fight = opt("rxp_follow_fight", true) == true,
+            use = opt("rxp_follow_use", true) == true, loot = opt("rxp_follow_loot", true) == true, range = range }
     end
 
     -- --- holding and letting go -----------------------------------------------------
@@ -475,22 +511,30 @@ return function(P)
     local KILL_TAGS = { kill = true, collect = true }
     local USE_TAGS = { use = true, collect = true }
 
-    --- Is this unit one the step wants to talk to? The quest it is for, or nil.
-    local function talk_quest(w, u, name, npc_id)
-        for qid in pairs(w.turnin) do
-            local people = P.quests.quest_people and P.quests.quest_people(qid)
-            if people and npc_id and people.enders[npc_id] then return qid, "turnin" end
+    --- Is this unit one the step wants to talk to, for a kind `wants` has
+    --- on (turnin, accept)? The quest it is for and the kind, or nil.
+    local function talk_quest(w, u, name, npc_id, wants)
+        if wants.turnin then
+            for qid in pairs(w.turnin) do
+                local people = P.quests.quest_people and P.quests.quest_people(qid)
+                if people and npc_id and people.enders[npc_id] then return qid, "turnin" end
+            end
         end
-        for qid in pairs(w.accept) do
-            local people = P.quests.quest_people and P.quests.quest_people(qid)
-            if people and npc_id and people.givers[npc_id] then return qid, "accept" end
+        if wants.accept then
+            for qid in pairs(w.accept) do
+                local people = P.quests.quest_people and P.quests.quest_people(qid)
+                if people and npc_id and people.givers[npc_id] then return qid, "accept" end
+            end
         end
         local ids = {}
-        for qid in pairs(w.turnin) do ids[qid] = true end
-        for qid in pairs(w.accept) do ids[qid] = true end
+        if wants.turnin then for qid in pairs(w.turnin) do ids[qid] = true end end
+        if wants.accept then for qid in pairs(w.accept) do ids[qid] = true end end
         local e = entry_for(quest_entries(u, name, npc_id, false), ids, TALK_TAGS)
         if e then return e.quest.id, e.turn_in and "turnin" or "accept" end
-        if in_names(w.talk_names, name, npc_id) then return 0, w.any_turnin and "turnin" or "accept" end
+        if in_names(w.talk_names, name, npc_id) then
+            local how = w.any_turnin and "turnin" or "accept"
+            if wants[how] then return 0, how end
+        end
         return nil
     end
 
@@ -508,7 +552,8 @@ return function(P)
         local player = units.player()
         local pos = me()
         if not player or not pos then return {} end
-        local range = opt("rxp_follow_range", 60)
+        local wants = wants_of()
+        local range = wants.range
         local want_ids, near_ids = {}, {}
         for qid in pairs(w.complete) do want_ids[qid] = true end
         for qid in pairs(w.near) do near_ids[qid] = true end
@@ -523,8 +568,7 @@ return function(P)
                 why = extra }
         end
 
-        local talk_on = opt("rxp_follow_talk", true)
-        local fight_on = opt("rxp_follow_fight", true)
+        local talk_on, fight_on = wants.talk, wants.fight
         local list = units.units() or {}
         for i = 1, #list do
             local u = list[i]
@@ -535,7 +579,7 @@ return function(P)
                 if npc_id and npc_id <= 0 then npc_id = nil end
                 if talk_on and (w.any_turnin or w.any_accept or #w.talk_names > 0) and not call(u, "is_dead")
                     and not call(u, "is_player") and call(player, "can_attack", u) ~= true then
-                    local qid, how = talk_quest(w, u, name, npc_id)
+                    local qid, how = talk_quest(w, u, name, npc_id, wants)
                     if qid then consider("talk", u, name, d, qid, how) end
                 end
                 if fight_on and hostile(player, u) then
@@ -558,8 +602,8 @@ return function(P)
 
         local objects = units.objects() or {}
         local talk_ids = {}
-        for qid in pairs(w.turnin) do talk_ids[qid] = "turnin" end
-        for qid in pairs(w.accept) do talk_ids[qid] = talk_ids[qid] or "accept" end
+        if wants.turnin then for qid in pairs(w.turnin) do talk_ids[qid] = "turnin" end end
+        if wants.accept then for qid in pairs(w.accept) do talk_ids[qid] = talk_ids[qid] or "accept" end end
         for i = 1, #objects do
             local o = objects[i]
             local d = units.distance(o)
@@ -574,14 +618,14 @@ return function(P)
                         if set and id and set[id] then consider("talk", o, name, d, qid, how) end
                     end
                 end
-                if opt("rxp_follow_use", true) and next(want_ids) then
+                if wants.use and next(want_ids) then
                     local e = entry_for(quest_entries(o, name, id, true), want_ids, USE_TAGS)
                     if e then consider("use", o, name, d, e.quest.id) end
                 end
             end
         end
 
-        if opt("rxp_follow_loot", true) and P.esp and P.esp.corpses then
+        if wants.loot and P.esp and P.esp.corpses then
             local corpses = P.esp.corpses() or {}
             local actions = P.actions
             for i = 1, #corpses do
@@ -598,7 +642,8 @@ return function(P)
 
         -- Last: a quest giver standing on the guide's waypoint, when the
         -- step wants a talk and nothing above named one.
-        if talk_on and not found.talk and (w.any_turnin or w.any_accept) and w.waypoint
+        local how = w.any_turnin and "turnin" or "accept"
+        if talk_on and wants[how] and not found.talk and (w.any_turnin or w.any_accept) and w.waypoint
             and flat(pos, w.waypoint) <= 12 then
             for i = 1, #list do
                 local u = list[i]
@@ -606,8 +651,7 @@ return function(P)
                 local up = units.position(u)
                 if floor(flags / QUESTGIVER) % 2 == 1 and up and flat(up, w.waypoint) <= 8
                     and not call(u, "is_player") then
-                    consider("talk", u, units.name and units.name(u) or call(u, "get_name"), units.distance(u), 0,
-                        w.any_turnin and "turnin" or "accept")
+                    consider("talk", u, units.name and units.name(u) or call(u, "get_name"), units.distance(u), 0, how)
                 end
             end
         end
@@ -637,9 +681,12 @@ return function(P)
         window = { kind = kind, at = t, due = t + REACT_MIN + math.random() * REACT_SPAN }
     end
 
+    local NONE = {}
     local function wanted_ids(kind)
         local w = current
-        if not w then return {} end
+        if not w then return NONE end
+        -- The ESP acting (1.8.1): a kind its switch has off is not answered.
+        if acting() and opt(kind == "turnin" and "rxp_act_turnin" or "rxp_act_accept", true) ~= true then return NONE end
         return kind == "turnin" and w.turnin or w.accept
     end
 
@@ -806,7 +853,7 @@ return function(P)
             greeting_step()
         elseif w.kind == "accept" then
             local qid = open_quest()
-            if qid == nil or (current and current.accept[qid]) then
+            if qid == nil or wanted_ids("accept")[qid] then
                 native("quests", "accept_quest")
                 note("accepted %s", qid and ("quest " .. qid) or "the quest on offer")
             else
@@ -815,7 +862,7 @@ return function(P)
             end
         elseif w.kind == "progress" then
             local qid = open_quest()
-            if qid == nil or (current and current.turnin[qid]) then
+            if qid == nil or wanted_ids("turnin")[qid] then
                 native("quests", "complete_quest")
             else
                 native("quests", "close_quest")
@@ -950,12 +997,8 @@ return function(P)
         return player and call(player, "is_mounted") == true
     end
 
-    local function do_talk(t, pos, w, thing)
-        local how = thing.why or "accept"
-        local label = (how == "turnin" and "hand in to " or "pick up from ") .. tostring(thing.name or "the quest giver")
-        begin("talk", thing, label)
-        if not go(t, pos, thing, TALK_REACH, thing.name or "the quest giver") then return end
-        if mounted() then try(input.dismount) return say("getting off to talk", "text") end
+    --- Standing by `thing`: talks to it, and its windows are ours to answer.
+    local function talk_here(t, thing, how)
         if not talk or talk.guid ~= thing.guid then
             talk = { guid = thing.guid, name = thing.name, at = 0, tries = 0, kind = how, qid = thing.qid }
         end
@@ -979,6 +1022,32 @@ return function(P)
             note("talking to %s to %s", tostring(thing.name), how == "turnin" and "hand in" or "pick up")
         end
         say("talking to " .. tostring(thing.name), "text")
+    end
+
+    local function do_talk(t, pos, w, thing)
+        local how = thing.why or "accept"
+        local label = (how == "turnin" and "hand in to " or "pick up from ") .. tostring(thing.name or "the quest giver")
+        begin("talk", thing, label)
+        if not go(t, pos, thing, TALK_REACH, thing.name or "the quest giver") then return end
+        if mounted() then try(input.dismount) return say("getting off to talk", "text") end
+        talk_here(t, thing, how)
+    end
+
+    --- The ESP acting (1.8.1): the step's quest giver is talked to once you
+    --- stand within ACT_REACH of it; farther, the line says to walk up. It
+    --- never gets you off your mount.
+    local function act_talk(t, thing)
+        local how = thing.why or "accept"
+        local name = tostring(thing.name or "the quest giver")
+        local verb = how == "turnin" and "hand in" or "pick up"
+        begin("talk", thing, verb .. " at " .. name)
+        local d = units.distance(thing.obj)
+        if d > ACT_REACH then
+            talk = nil
+            return say(string.format("walk up to %s to %s (%.0f yd)", name, verb, d), "text")
+        end
+        if mounted() then return say("get off your mount to " .. verb .. " at " .. name, "warning") end
+        talk_here(t, thing, how)
     end
 
     local function do_use(t, pos, thing)
@@ -1018,18 +1087,55 @@ return function(P)
         say("looting", "text")
     end
 
-    local function do_fight(t, pos, thing)
-        begin("fight", thing, "kill " .. tostring(thing.name))
+    --- Why no pull now -- resting, hardcore, health -- or nil.
+    local function pull_gate()
         local player = units.player()
         local health = player and units.health_fraction and units.health_fraction(player) or 1
         if P.rest and P.rest.recovering then
             local resting, why = P.rest.recovering()
-            if resting then return wait("resting before the next pull: " .. tostring(why)) end
+            if resting then return "resting before the next pull: " .. tostring(why) end
         end
         if P.hardcore and P.hardcore.may_pull and opt("hc_enabled", true) and not P.hardcore.may_pull() then
-            return wait("hardcore: no pull at this health")
+            return "hardcore: no pull at this health"
         end
-        if health < PULL_HP then return wait(string.format("health %.0f%%: waiting for it to come back", health * 100)) end
+        if health < PULL_HP then return string.format("health %.0f%%: waiting for it to come back", health * 100) end
+        return nil
+    end
+
+    --- The ESP acting (1.8.1): a mob the step wants, within pull range of
+    --- where you stand, is the rotation's to open on (pulling, pull_target).
+    --- Nothing here selects, faces or hits it.
+    local function act_fight(t, thing)
+        local name = tostring(thing.name)
+        begin("fight", thing, "kill " .. name)
+        local held_by = pull_gate()
+        if held_by then
+            pull = nil
+            return say(held_by, "text_dim")
+        end
+        local reach = pull_range()
+        local d = units.distance(thing.obj)
+        if d > reach + 0.5 then
+            pull = nil
+            return say(string.format("%s is %.0f yd away: the rotation opens on it within %.0f", name, d, reach), "text")
+        end
+        if not pull or pull.guid ~= thing.guid then
+            pull = { guid = thing.guid, obj = thing.obj, at = t, closer = 0, name = thing.name }
+            stats.pulls = stats.pulls + 1
+            note("%s in range (%.0f yd): the rotation may open on it", name, d)
+        end
+        pull.obj = thing.obj
+        if not rotation_runs() then
+            return say(name .. " in range: switch the rotation on (Rotation page) to fight it, or fight it yourself",
+                "warning")
+        end
+        say(name .. " in range: the rotation's to open on", "text")
+    end
+
+    local function do_fight(t, pos, thing)
+        begin("fight", thing, "kill " .. tostring(thing.name))
+        local held_by = pull_gate()
+        if held_by then return wait(held_by) end
 
         if not pull or pull.guid ~= thing.guid then
             pull = { guid = thing.guid, obj = thing.obj, at = nil, closer = 0, name = thing.name }
@@ -1086,11 +1192,65 @@ return function(P)
         say("pulling " .. tostring(thing.name), "text")
     end
 
+    --- One tick of the ESP acting (1.8.1): what the step wants that you
+    --- stand by is done; nothing moves you.
+    local function act_tick(t, pos)
+        if combat.in_combat() then
+            if rotation_runs() then return say("fighting (the rotation)", "text") end
+            return say("in combat: the fight is yours (the rotation is off)", "text")
+        end
+        local loot_count = native("game_ui", "get_loot_item_count")
+        if type(loot_count) == "number" and loot_count > 0 then return wait("loot window open") end
+        if window then return wait("answering a quest window", "text") end
+
+        if t >= next_scan then
+            next_scan = t + SCAN_EVERY
+            local w, why = read_step()
+            current, idle_why = w, why
+            state.step = w and w.num or nil
+            if not w then
+                found = {}
+                return wait(why)
+            end
+            found = scan(w, t)
+        end
+        local w = current
+        if not w then return wait(idle_why or "waiting for the guide") end
+        for _, kind in ipairs({ "fight", "talk" }) do
+            local th = found[kind]
+            if th and (skipped(th.guid, t) or call(th.obj, "is_valid") == false or call(th.obj, "is_dead") == true) then
+                found[kind], next_scan = nil, 0
+            end
+        end
+        if found.talk then return act_talk(t, found.talk) end
+        if found.fight then return act_fight(t, found.fight) end
+        pull, talk, job = nil, nil, nil
+
+        -- Nothing of the step's in sight: where the guide points, for the line.
+        local goal = w.waypoint
+        if goal and flat(pos, goal) > ARRIVE then
+            return say(string.format("follow the line to %s (%.0f yd)", w.waypoint_title or ("step " .. tostring(w.num)),
+                flat(pos, goal)), "text_dim")
+        end
+        if not goal and w.away then
+            return say("the guide's next stop is in " .. tostring(w.away.text) .. ": get there yourself", "warning")
+        end
+        if w.other then
+            return say("the step wants: " .. tostring(w.other.text or w.other.action) .. " -- do it yourself", "warning")
+        end
+        if w.any_complete then return say("at the step: watching for what it wants killed", "text_dim") end
+        if w.any_turnin or w.any_accept then return say("at the step: no quest giver for it in sight", "text_dim") end
+        say("at the step: waiting for RestedXP to move on", "text_dim")
+    end
+
+    local was_mode = nil
+
     local function tick()
         local t = now()
-        if not switched_on() then
+        local m = mode()
+        if not m then
             if was_on then
-                was_on = false
+                was_on, was_mode = false, nil
                 stop_walk()
                 pull, talk, window, job, current = nil, nil, nil, nil, nil
                 note("switched off")
@@ -1098,10 +1258,14 @@ return function(P)
             say(P.esp_only and ("not on " .. tostring(P.client_label or "this client")) or "off", "text_dim")
             return
         end
-        if not was_on then
-            was_on = true
+        if not was_on or was_mode ~= m then
+            -- The walk became the ESP's acting, or the other way: no route
+            -- or key of the walk's is left live, no pull or talk either.
+            if was_on then stop_walk() end
+            was_on, was_mode = true, m
             paused_until, nav_strikes, patrol = 0, 0, nil
-            note("switched on")
+            pull, talk, job = nil, nil, nil
+            note("switched on: %s", m == "walk" and "following the guide with Sentinel" or "acting as you walk up")
         end
 
         window_tick(t)
@@ -1113,6 +1277,7 @@ return function(P)
             pull = nil
             return wait("dead: waiting until you are alive", "warning")
         end
+        if m == "act" then return act_tick(t, pos) end
         if steering() then steer_until = t + STEER_PAUSE end
         if t < steer_until then
             pull = nil
@@ -1267,10 +1432,15 @@ return function(P)
     --- What it is doing, in a word or two, and the colour to say it in.
     function M.status() return state.text, state.tone end
 
+    --- Is either switch on here (the walk, or the ESP acting)? The guide
+    --- panel's first row (quests.lua) says what it is doing while one is.
+    ---@return boolean
+    function M.active() return mode() ~= nil end
+
     --- Three lines for the Quests page.
     function M.status_lines()
         local lines = {}
-        lines[1] = "Guide walk: " .. state.text
+        lines[1] = (acting() and "Guide ESP: " or "Guide walk: ") .. state.text
         local public = P.JCore and P.JCore.nav
         local version = type(public) == "table" and try(public.version) or nil
         local name = "Sentinel Navigation" .. (version and (" " .. tostring(version)) or "")
@@ -1288,7 +1458,7 @@ return function(P)
 
     function M.stats()
         return {
-            on = switched_on(), state = state.text, step = state.step, job = job and job.kind or nil,
+            on = switched_on(), switch = mode(), state = state.text, step = state.step, job = job and job.kind or nil,
             walking = leg and leg.label or nil, mode = leg and leg.mode or nil, pulling = pull and pull.name or nil,
             talking = talk and talk.name or nil, window = window and window.kind or nil,
             talks = stats.talks, accepted = stats.accepted, turned_in = stats.turned_in, pulls = stats.pulls,

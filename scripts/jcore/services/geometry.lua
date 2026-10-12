@@ -39,6 +39,155 @@ return function(rt)
 
     -- --- line of sight ------------------------------------------------------
 
+    -- NO MODEL RAYS ON FOREVER (1.8.0). Forever crashed four times on
+    -- 2026-10-11 with the client's own ASSERT(m_data) in M2HitTest.cpp, each
+    -- inside core.graphics.is_line_of_sight from the player to a mob (WoW's
+    -- Errors/ reports: the registers hold both ends, eye height at each),
+    -- twice in Duskwood as a hunter and twice in Teldrassil as a druid --
+    -- every one on build 70338, which the client patched itself to that
+    -- night; no report on 70170, 70205 or 70291 has it, through millions of
+    -- the same rays. M2HitTest is the client testing a ray against a model
+    -- (a tree, a rock, a unit) whose data has not loaded, and a plugin cannot
+    -- catch an assert in the client. Fewer rays (draw's half-second keep,
+    -- spells' one per target) still crashed at 14:50.
+    --
+    -- So on Forever the native is never asked. Sight is a trace_line through
+    -- buildings and terrain only, with a building's own doodads ignored: no
+    -- model on the way, no M2HitTest. A tree or a rock no longer blocks it;
+    -- a cast at a mob behind one is refused by the client instead, which the
+    -- refusal memory already handles. trace_line's boolean is not documented
+    -- either way, so it is calibrated first, as the walk map's rays are: a
+    -- ray down from the player's chest must hit the ground and a short one up
+    -- must not. Until both agree the answer is nil (unknown) -- never the
+    -- native. Every other client keeps is_line_of_sight.
+    --
+    -- NO RAYS AT ALL ON FOREVER, BY DEFAULT (1.8.1). From 16:50 the same day
+    -- Forever died a new way, four times (16:50, 17:08, 21:30, 21:36): the
+    -- client's "Fatal Error: Your game crashed" popup and NO report in
+    -- Errors/, no Windows crash event, 4.4 GB of commit still free. Never
+    -- seen before that day; the first came 1.5 hours after this ray replaced
+    -- the native, and since 18:40 the guard has sent every package's sight
+    -- ask through it. Until that is cleared, sight on Forever is unknown
+    -- without a ray -- the state before calibration, which every caller
+    -- already handles (the guard says "in sight", the server judges the
+    -- cast). set_forever_rays(true) brings the ray back.
+    local forever_rays = false
+    local SIGHT_FLAGS = { WmoCollision = 0x10, Terrain = 0x100, IgnoreWmoDoodad = 0x2000 }
+    do
+        local enums = rt.player and rt.player.enums
+        local cf = enums and enums.collision_flags
+        if type(cf) == "table" then
+            for name in pairs(SIGHT_FLAGS) do
+                if type(cf[name]) == "number" then SIGHT_FLAGS[name] = cf[name] end
+            end
+        end
+    end
+    local SIGHT_MASK = SIGHT_FLAGS.WmoCollision + SIGHT_FLAGS.Terrain + SIGHT_FLAGS.IgnoreWmoDoodad
+    local EYE = 2.0                  -- yards above the feet, each end (the native's own is ~2)
+    local CALIBRATE_RETRY = 5.0
+    local SIGHT_KEEP = 0.2           -- a frame-rate caller (the ESP's target row) shares one ray
+
+    local sight_cache = cache.new("geometry.sight", { scope = "ttl", ttl = SIGHT_KEEP })
+    local forever = nil              -- nil until the world service can say
+    local hit_value = nil            -- the boolean trace_line answers for a hit, once calibrated
+    local calibrated_at = -math.huge
+    local sight_rays = 0
+
+    local function is_forever()
+        if forever ~= nil then return forever end
+        local world = rt.world
+        if not (world and world.client) then return false end
+        local ok, c = pcall(world.client)
+        forever = ok and type(c) == "table" and c.forever == true or false
+        return forever
+    end
+
+    --- One model-free ray: the boolean trace_line gave, or nil.
+    local function sight_ray(ax, ay, az, bx, by, bz)
+        local fn = core.graphics and core.graphics.trace_line
+        if type(fn) ~= "function" then return nil end
+        sight_rays = sight_rays + 1
+        local ok, v = pcall(fn, M.vec(ax, ay, az), M.vec(bx, by, bz), SIGHT_MASK)
+        if not ok or type(v) ~= "boolean" then return nil end
+        return v
+    end
+
+    --- Learns which boolean means "hit", once a session. False until then.
+    local function calibrate()
+        if hit_value ~= nil then return true end
+        local now = core.time()
+        if now - calibrated_at < CALIBRATE_RETRY then return false end
+        calibrated_at = now
+        local player = units.player()
+        local p = player and units.position(player)
+        if not p then return false end
+        local chest = p.z + 1.5
+        local down = sight_ray(p.x, p.y, chest, p.x, p.y, p.z - 4.0)
+        local up = sight_ray(p.x, p.y, chest, p.x, p.y, chest + 1.0)
+        if down == nil or up == nil or down == up then
+            log.once("warn", "sight_calibrate", string.format(
+                "line of sight: trace_line did not tell the ground from the air (down=%s up=%s); sight is unknown until it does",
+                tostring(down), tostring(up)))
+            return false
+        end
+        hit_value = down
+        log.fmt("info", "line of sight: model-free trace_line, %s means a hit", tostring(hit_value))
+        return true
+    end
+
+    --- Can `from` see `to`? true, false, or nil when it cannot be told. On
+    --- Forever a model-free ray (above), kept SIGHT_KEEP seconds per pair;
+    --- elsewhere the client's is_line_of_sight. Nothing on Forever reaches
+    --- the native, whoever asks.
+    ---@param from game_object
+    ---@param to game_object
+    ---@return boolean|nil
+    function M.sight(from, to)
+        if not from or not to then return nil end
+        if not is_forever() then
+            local ok, v = pcall(core.graphics.is_line_of_sight, from, to)
+            if not ok or type(v) ~= "boolean" then return nil end
+            return v
+        end
+        if not forever_rays then return nil end
+        local ga, gb = units.guid(from), units.guid(to)
+        local key = ga and gb and (ga .. "|" .. gb) or nil
+        if key then
+            local value, hit = sight_cache:get(key)
+            if hit then return value end
+        end
+        local result = nil
+        if calibrate() then
+            local a, b = units.position(from), units.position(to)
+            if a and b then
+                local hit = sight_ray(a.x, a.y, a.z + EYE, b.x, b.y, b.z + EYE)
+                if hit ~= nil then result = hit ~= hit_value end
+            end
+        end
+        if key then sight_cache:put(key, result) end
+        return result
+    end
+
+    --- For the Core page and the tests.
+    function M.sight_stats()
+        return { forever = is_forever(), forever_rays = forever_rays, hit_value = hit_value,
+                 rays = sight_rays, mask = SIGHT_MASK }
+    end
+
+    --- Forever only: whether sight casts the model-free ray (off by default
+    --- since 1.8.1, see above). Off, sight is unknown and no ray is cast.
+    ---@param on boolean
+    function M.set_forever_rays(on)
+        forever_rays = on == true
+        sight_cache:clear()
+    end
+
+    --- Forgets the calibration and the kept answers (the tests).
+    function M._reset_sight()
+        hit_value, calibrated_at = nil, -math.huge
+        sight_cache:clear()
+    end
+
     --- Can `from` see `to`?
     ---
     --- Cached per ordered pair per tick. The ray is symmetric in practice, but
@@ -55,6 +204,8 @@ return function(rt)
     ---@return boolean
     function M.line_of_sight(from, to)
         if not from or not to then return false end
+        -- Forever: the model-free ray; unknown lets the client judge (1.8.0).
+        if is_forever() then return M.sight(from, to) ~= false end
 
         local a, b = units.guid(from), units.guid(to)
         if not a or not b then

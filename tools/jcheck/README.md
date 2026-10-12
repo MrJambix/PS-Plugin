@@ -102,14 +102,35 @@ so, rather than real code getting a clean bill of health it has not earned.
 
 ## Known warnings on current code
 
+`core.spell_book.is_usable_spell` used to warn here. The .api now declares it,
+as a `---@field` of the `spell_book` class (core.lua), which pass 2 does not
+read. `api_usage.js` does read it.
+
+## API usage against the .api
+
 ```
-jcore/services/spells.lua
-  166  WARN  core path not in .api stubs: core.spell_book.is_usable_spell
+node tools/jcheck/api_usage.js              # jcore + jambix_aio
+node tools/jcheck/api_usage.js --all        # every plugin of ours
+node tools/jcheck/api_usage.js --md <file>  # also as Markdown
 ```
 
-True positive, already handled: `spells.lua` tests for the function and assumes
-usable when the build does not have it. It is the correct shape for an optional
-native, and the warning is the checker doing its job.
+This lists everything our plugins touch of the loader and what of it
+`scripts/.api` does not document. The user asked for it on 2026-10-12: "Check
+all our rotation and ESP matches with .API". It is an inventory, not a gate
+(exit code 0). It has two sources:
+
+- **Static, from the source:**
+  - every `core.*` path, including those reached through a local alias (`local sb = core.spell_book`) and through a lookup helper called with two strings (`api("game_ui", "get_gossip_options")`), plus the bridge's `TOP_LEVEL` list;
+  - every `common/*` library required, and the members used from it;
+  - every method called on an object (`u:get_x()`, `u.get_x(u)`, `pcall(u.get_x, u)`). Each is sorted into: a native `game_object` method, a member of another .api class, an `izi_sdk` Lua extension (which exists only while izi is loaded), one of our own, or found nowhere.
+- **Runtime, from the recorder** (`scripts_data/jcore/jcore.recorder.json`): every function and method called in game that the .api lacks, with its call sites split into ours and the loader's own code.
+
+The .api surface it builds from:
+- `function core.x.y`, `core.x = {}`;
+- `---@field` under each `---@class`;
+- the fields of the class behind a `core.*` table (`---@type profession` over `core.profession = {}`, or a class named like it).
+
+A name bound to two different things in one file is not taken as an alias.
 
 ---
 

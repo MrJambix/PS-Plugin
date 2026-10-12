@@ -50,7 +50,7 @@ T[#T + 1] = { "whole plugin, rotation on: boots clean as Era with a hunter logge
     assert_eq(b.errors(), "", "core.log_error during boot")
     set(b, "Rotation", "rot_enabled", true)
     set(b, "Rotation", "rot_key", { vk = 0x58, active = true, toggled = true })
-    set(b, "Rotation", "react_overlay", true)
+    set(b, "Reactions", "react_overlay", true)
     assert_eq(b.P.rotation_active(), true, "the rotation's gate is open")
 end }
 

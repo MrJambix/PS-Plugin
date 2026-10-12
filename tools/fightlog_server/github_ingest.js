@@ -6,20 +6,24 @@
 // this script, run by the repository's Action, validates each one with the
 // same bounds as the HTTP service (validate.js), files the accepted ones in
 // the data branch's JSONL files, answers and closes the issue; on a
-// schedule it publishes a model version (learn.js) into data/models/.
+// schedule it runs a learning cycle (release.js: build, evaluate, gate) and
+// publishes a canary version into data/models/ when the gates pass.
 //
-//   node github_ingest.js ingest            open issues -> data files (GITHUB_TOKEN, GITHUB_REPOSITORY, DATA_DIR)
-//   node github_ingest.js publish [note]    data files -> data/models/vN.json + manifest.json
-//   node github_ingest.js withdraw N        the version marked withdrawn (the previous active stands)
+//   node github_ingest.js ingest                 open issues -> data files (GITHUB_TOKEN, GITHUB_REPOSITORY, DATA_DIR)
+//   node github_ingest.js publish [note]         one learning cycle; a version only when the gates pass
+//   node github_ingest.js publish --force [note] a version whatever the gates say (written in the audit)
+//   node github_ingest.js promote N              the canary rolled out to everyone
+//   node github_ingest.js withdraw N             the version marked withdrawn (the previous active stands)
+//   node github_ingest.js evaluate               the candidate, the gates and the holdout, nothing written
 //
 // Nothing here needs the game; nothing here runs in it.
 
-const fs = require('fs');
 const path = require('path');
-const { SCHEMA, validateBatch, validateLesson, validateDelete } = require('./validate');
-const learn = require('./learn');
+const { validateBatch, validateLesson, validateDelete } = require('./validate');
+const storeLib = require('./store');
+const release = require('./release');
 
-const MIN_PLUGIN = process.env.MIN_PLUGIN || '1.8.1';
+const MIN_PLUGIN = process.env.MIN_PLUGIN || release.DEFAULTS.minPlugin;
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS) || 180;
 
 // --- the GitHub API, minimal, through fetch (Node 18+) ---------------------------------
@@ -48,52 +52,16 @@ function githubApi(repo, token) {
     };
 }
 
-// --- the data files -------------------------------------------------------------------------
-function createStore(dataDir) {
-    fs.mkdirSync(path.join(dataDir, 'models'), { recursive: true });
-    const files = {
-        batches: path.join(dataDir, 'batches.jsonl'), lessons: path.join(dataDir, 'lessons.jsonl'),
-        ids: path.join(dataDir, 'ids.json'), deletions: path.join(dataDir, 'deletions.jsonl'),
-        manifest: path.join(dataDir, 'models', 'manifest.json'),
-    };
-    const readLines = f => fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\n').filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean) : [];
-    const writeLines = (f, rows) => fs.writeFileSync(f, rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : ''));
-    const ids = new Set(fs.existsSync(files.ids) ? JSON.parse(fs.readFileSync(files.ids, 'utf8')) : []);
-    const saveIds = () => fs.writeFileSync(files.ids, JSON.stringify(Array.from(ids).slice(-50000)));
-    const readManifest = () => fs.existsSync(files.manifest) ? JSON.parse(fs.readFileSync(files.manifest, 'utf8')) : { schema: SCHEMA, versions: [] };
-    const writeManifest = m => fs.writeFileSync(files.manifest, JSON.stringify(m, null, 2));
-    return {
-        files, readLines, writeLines, ids, saveIds, readManifest, writeManifest,
-        append(file, row) { fs.appendFileSync(file, JSON.stringify(row) + '\n'); },
-        purge(now) {
-            const cutoff = (now || Date.now()) - RETENTION_DAYS * 86400 * 1000;
-            for (const f of [files.batches, files.lessons]) {
-                const rows = readLines(f);
-                const kept = rows.filter(r => !r.received_at || Date.parse(r.received_at) >= cutoff);
-                if (kept.length !== rows.length) writeLines(f, kept);
-            }
-        },
-        publish(note) {
-            const m = readManifest();
-            const next = m.versions.reduce((n, v) => Math.max(n, Number(v.version) || 0), 0) + 1;
-            const model = learn.build(readLines(files.batches), readLines(files.lessons));
-            model.version = String(next);
-            fs.writeFileSync(path.join(dataDir, 'models', `v${next}.json`), JSON.stringify(model));
-            m.versions.push({ version: String(next), schema: SCHEMA, min_plugin: MIN_PLUGIN, status: 'active',
-                created_at: new Date().toISOString(), fights: model.fights, contributors: model.contributors, note: note || undefined });
-            writeManifest(m);
-            return model;
-        },
-        withdraw(version) {
-            const m = readManifest();
-            const e = m.versions.find(v => String(v.version) === String(version));
-            if (!e) return false;
-            e.status = 'withdrawn';
-            e.withdrawn_at = new Date().toISOString();
-            writeManifest(m);
-            return true;
-        },
-    };
+// --- the data files, with the release commands on them ---------------------------------------
+function createStore(dataDir, opts) {
+    const o = Object.assign({ retentionDays: RETENTION_DAYS, minPlugin: MIN_PLUGIN }, opts || {});
+    const store = storeLib.createStore(dataDir, { retentionDays: o.retentionDays, now: o.now });
+    const ro = extra => Object.assign({ minPlugin: o.minPlugin, learn: o.learn }, o.release || {}, extra || {});
+    store.publish = (note, extra) => release.cycle(store, ro(Object.assign({ note }, extra || {})));
+    store.promote = version => release.promote(store, version);
+    store.withdraw = version => release.withdraw(store, version);
+    store.evaluate = () => release.preview(store, ro());
+    return store;
 }
 
 // --- one issue -> one record ---------------------------------------------------------------
@@ -109,37 +77,25 @@ function parseIssue(issue) {
     return { kind, record };
 }
 
-function ingestOne(store, issue, now) {
+function ingestOne(store, issue) {
     const { kind, record, error } = parseIssue(issue);
     if (error) return { accepted: false, kind, reason: error };
     if (kind === 'delete') {
         const err = validateDelete(record);
         if (err) return { accepted: false, kind, reason: err };
-        let removed = 0;
-        for (const f of [store.files.batches, store.files.lessons]) {
-            const rows = store.readLines(f);
-            const kept = rows.filter(r => r.contributor !== record.contributor);
-            removed += rows.length - kept.length;
-            if (kept.length !== rows.length) store.writeLines(f, kept);
-        }
-        store.append(store.files.deletions, { contributor: record.contributor, at: new Date(now || Date.now()).toISOString(), removed });
-        return { accepted: true, kind, removed };
+        return { accepted: true, kind, removed: store.forget(record.contributor) };
     }
     const err = kind === 'batch' ? validateBatch(record) : validateLesson(record);
     if (err) return { accepted: false, kind, reason: err };
-    if (store.ids.has(record.id)) return { accepted: true, kind, duplicate: true };
-    record.received_at = new Date(now || Date.now()).toISOString();
-    store.append(kind === 'batch' ? store.files.batches : store.files.lessons, record);
-    store.ids.add(record.id);
-    store.saveIds();
-    return { accepted: true, kind };
+    const r = store.accept(kind, record);
+    return { accepted: true, kind, duplicate: !!r.duplicate };
 }
 
-async function ingest(store, api, now) {
+async function ingest(store, api) {
     const issues = await api.listIssues();
     const summary = { seen: issues.length, accepted: 0, refused: 0, duplicates: 0, deletions: 0 };
     for (const issue of issues) {
-        const r = ingestOne(store, issue, now);
+        const r = ingestOne(store, issue);
         if (r.accepted) {
             if (r.duplicate) summary.duplicates += 1; else summary.accepted += 1;
             if (r.kind === 'delete') summary.deletions += 1;
@@ -150,8 +106,18 @@ async function ingest(store, api, now) {
         }
         await api.close(issue.number);
     }
-    store.purge(now);
+    store.purge();
     return summary;
+}
+
+function sayCycle(r) {
+    if (r.version) {
+        console.log(`published model v${r.version} (${r.stage}): ${r.candidate.fights} fight(s), ${r.candidate.contributors} contributor(s), ${r.candidate.observations} observation(s)` +
+            (r.decision === 'forced' ? ` -- FORCED past the gates: ${r.verdict.failed.join(', ') || r.verdict.material.why}` : ''));
+    } else {
+        console.log(`${r.decision}: ${r.verdict.failed.length ? 'failed ' + r.verdict.failed.join(', ') : r.verdict.material.why}`);
+    }
+    for (const c of r.verdict.checks) console.log(`  ${c.pass === null ? 'skip' : c.pass ? 'pass' : 'FAIL'}  ${c.name}: ${c.detail}`);
 }
 
 if (require.main === module) {
@@ -165,12 +131,22 @@ if (require.main === module) {
             const s = await ingest(store, githubApi(repo, token));
             console.log(`ingest: ${s.seen} issue(s), ${s.accepted} accepted, ${s.duplicates} duplicate(s), ${s.refused} refused, ${s.deletions} deletion(s)`);
         } else if (cmd === 'publish') {
-            const model = store.publish(process.argv.slice(3).join(' '));
-            console.log(`published model v${model.version}: ${model.fights} fight(s), ${model.contributors} contributor(s), ${model.observations} observation(s)`);
+            const args = process.argv.slice(3);
+            const force = args.includes('--force');
+            sayCycle(store.publish(args.filter(a => a !== '--force').join(' '), { force }));
+        } else if (cmd === 'promote') {
+            console.log(store.promote(process.argv[3]) ? `promoted v${process.argv[3]} to everyone` : 'no such active version');
         } else if (cmd === 'withdraw') {
             console.log(store.withdraw(process.argv[3]) ? `withdrawn v${process.argv[3]}` : 'no such version');
+        } else if (cmd === 'evaluate') {
+            const r = store.evaluate();
+            console.log(`${r.verdict.decision} (production ${r.production ? 'v' + r.production : 'none'}): ${r.verdict.material.why}`);
+            for (const c of r.verdict.checks) console.log(`  ${c.pass === null ? 'skip' : c.pass ? 'pass' : 'FAIL'}  ${c.name}: ${c.detail}`);
+            const m = r.report.models;
+            console.log(`  holdout: ${r.report.holdout.train_fights} fight(s) teach, ${r.report.holdout.test_fights} test (${r.report.holdout.test_forecasts} forecast(s))` +
+                (m.candidate.n ? `; Brier candidate ${m.candidate.brier}, prior ${m.prior.brier}, baseline ${m.baseline.brier}${m.production ? ', production ' + m.production.brier : ''}` : ''));
         } else {
-            console.log('usage: github_ingest.js ingest | publish [note] | withdraw N');
+            console.log('usage: github_ingest.js ingest | publish [--force] [note] | promote N | withdraw N | evaluate');
             process.exit(2);
         }
     })().catch(e => { console.error(e.message); process.exit(1); });

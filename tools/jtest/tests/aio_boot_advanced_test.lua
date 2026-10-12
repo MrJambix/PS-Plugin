@@ -49,7 +49,8 @@ T[#T + 1] = { "simple: the fine tuning is hidden, the basics are not, and every 
     assert_eq(section_shown("ESP", "Look and placement"), false, "the look and placement rows")
     assert_eq(section_shown("ESP", "Elements"), true, "the elements most players change")
     assert_eq(section_shown("Automation", "Safety checks"), false, "the safety checks")
-    assert_eq(section_shown("Rotation", "Reactions"), false, "the reaction debug switches")
+    -- 1.8.0: the reactions' switches are the Reactions page's, shown plainly.
+    assert_eq(b.mock.menu:visible("Jambix AIO/Reactions", "react_overlay"), true, "the reactions' decision switches")
     assert_eq(b.mock.menu:visible("Jambix AIO/ESP", "alert_cooldown"), false, "an alert's cooldown slider")
     assert_eq(b.mock.menu:visible("Jambix AIO/ESP", "show_raid_marker"), false, "an advanced element")
     assert_eq(b.mock.menu:visible("Jambix AIO/ESP", "show_distance"), true, "distance stays")

@@ -209,7 +209,8 @@ T[#T + 1] = { "on Era the game's Lua is never touched (JCore 1.5.16)", function(
     mock.frame(400)
     local state, why = ctx.gamelua.state()
     assert_eq(state, "off", "the bridge is off")
-    assert_eq(why, "not Forever", "and says why")
+    -- JCore 1.8.1: off on every client, the calls not being in .api.
+    assert(tostring(why):find(".api", 1, true), "and says why: " .. tostring(why))
     assert_eq(ctx.gamelua.run("x", "out(1)", function() end), false, "a run is refused")
     assert_eq(executed, 0, "nothing executed")
     assert_eq(read, 0, "nothing read")

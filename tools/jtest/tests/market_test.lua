@@ -550,6 +550,9 @@ T[#T + 1] = { "boots on Forever and registers", function()
     JCore = _G.JCore
     -- The user's policy file before 1.1.0: a cut of 4.30% learned partly from a sale matched to the wrong post.
     mock.data_fs["jcore/jambix.market.policy.json"] = '{"cut": 4.3034380319801508, "cuts": 8, "bar": 0.99}'
+    -- Both switches saved ON last session: they come back OFF all the same
+    -- (the user, 2026-10-10: "Market should always be of and require us to turn it on").
+    mock.menu.values["Jambix Market"] = { enabled = true, auto_trade = true }
     local ok2, err2 = pcall(require, "jambix_market/main")
     if not ok2 then error("market boot raised: " .. tostring(err2)) end
     run(1.5)
@@ -559,6 +562,26 @@ T[#T + 1] = { "boots on Forever and registers", function()
     assert(JCore.is_running("jambix.market"), "registered and running")
     assert(MK.db.ready(), "the price file loaded once the realm read")
     assert(MK.window and MK.trader and MK.scanner, "modules built")
+    assert_eq(MK.menu:get("enabled"), false, "Market is off at load")
+    assert_eq(MK.menu:get("auto_trade"), false, "AUTO is off at load")
+    assert_eq(MK.auto.active(), false, "nothing trades")
+    -- Off, the window offers one thing: turning it on.
+    local drawn = {}
+    local real = mock.core.graphics.text_2d
+    mock.core.graphics.text_2d = function(text, ...)
+        drawn[#drawn + 1] = tostring(text)
+        return real(text, ...)
+    end
+    MK.window.show()
+    run(0.3)
+    mock.core.graphics.text_2d = real
+    MK.window.hide()
+    run(0.1)
+    assert(table.concat(drawn, " | "):find("MARKET IS OFF", 1, true), "the turn-it-on button")
+    MK.menu:set("enabled", true)
+    local said = false
+    for _, a in ipairs(MK.activity_log()) do if a.text == "Jambix Market ON" then said = true end end
+    assert(said, "turned on")
     -- No trading settings: the policy decides, from the gold (500g here).
     run(2.5)                                 -- gold is read every two seconds
     local Pol = MK.policy
@@ -702,6 +725,35 @@ local function activity_has(text)
     end
     return nil
 end
+
+T[#T + 1] = { "vendor flips: 15% under the vendor, 2s a stack, four bag slots kept, a fifth of capital at most", function()
+    local K, Pol = MK.deals, MK.policy
+    local o = K.options()
+    -- Heavy Leather: a vendor pays 60s. 10% under pays nothing now; 20% under does.
+    assert_eq(K.plan_for(LEATHER, { { unit = 5400, qty = 100 } }, o), nil, "a 15% margin is needed (was 5%)")
+    local plan = K.plan_for(LEATHER, { { unit = 4800, qty = 100 } }, o)
+    assert(plan and plan.mode == "vendor", "20% under: a vendor flip")
+    -- A stack must make 2s: 20 Copper Bars bought at 8c (a vendor pays 10c) make 40c.
+    assert_eq(P.vendor_stack_pays(10, 8, 20), false, "40c a stack of copper is not worth a bag slot")
+    assert_eq(P.vendor_stack_pays(6000, 4800, 20), true, "24s a stack of leather is")
+    assert_eq(P.vendor_stack_pays(5000, 4000, 1), true, "a single bag making 10s is")
+    assert_eq(K.plan_for(COPPER, { { unit = 8, qty = 10000 } }, o), nil, "copper at 8c: no vendor flip")
+    -- 250 leather at 51s (15% under): 1g 27s 50c of profit on 500g is not big money, so it is
+    -- held to a fifth of capital and to the bag room.
+    local cap = o.capital
+    assert_near(Pol.vendor_room(cap), cap.capital * 0.2 - cap.vendor_invested, 0.01, "the vendor room")
+    local small = K.plan_for(LEATHER, { { unit = 5100, qty = 250 } }, o)
+    assert(small, "a plan")
+    assert(small.cost <= cap.capital * 0.2 + 1e-6, "at most a fifth of capital: " .. small.cost)
+    local free = MK.ctx.inventory.free_slots()
+    assert(free and free > 4, "the bags have room in the test: " .. tostring(free))
+    assert(small.units <= (free - 4) * 20, "four bag slots are always left free: " .. small.units)
+    -- A wall of leather at 15s (a vendor pays 60s) is big money on its own: held to the deal
+    -- share like any big deal, not to the fifth.
+    local big = K.plan_for(LEATHER, { { unit = 1500, qty = 20000 } }, o)
+    assert(big and big.big, "big money")
+    assert(big.cost > cap.capital * 0.2, "not held to the fifth: " .. big.cost)
+end }
 
 T[#T + 1] = { "five minutes on, a quick scan re-checks what matters", function()
     -- The server's own listings for what will be searched, as the scan saw them.
@@ -874,6 +926,31 @@ T[#T + 1] = { "buying item auctions: whole buyouts, each counted by the gold it 
     assert_eq(count_calls("place_bid"), 2, "two buyouts")
     assert_eq(before - gold, 4500, "paid both")
     assert_eq(MK.ledger.summary().buys, 3, "three purchases recorded in all")
+    ah.items[SWORD] = {}
+end }
+
+T[#T + 1] = { "a search row of many single-item auctions at one price is one auction a bid, at the price of one", function()
+    -- The user's Minor Wizard Oil (2026-10-11): the search said "75 at 4s",
+    -- the scan showed 82 auctions of one at 4s each. Read as 75 for 4s, Auto
+    -- bid 4s, got one, and booked 75.
+    local rows = { { unit = 400, qty = 75, each = true } }
+    local plan = P.plan_vendor(rows, { vendor = 500, min_margin_pct = 5, whole = true })
+    assert_eq(plan.units, 1, "one oil a bid")
+    assert_eq(plan.cost, 400, "at 4s, not 4s for 75")
+    local flip = P.plan_flip(rows, { usual = 1000, cut_pct = 5, undercut = 1, min_margin_pct = 25, whole = true })
+    assert_eq(flip.units, 0, "no resale against 74 more at the same price")
+    -- Through the auction house: a grouped row of swords at 20s, a vendor paying 80s.
+    ah.items[SWORD] = { { aid = 650, qty = 75, buyout = 2000 } }
+    local held = (MK.ledger.holding(SWORD) or { qty = 0 }).qty
+    local before = gold
+    assert(MK.trader.buy(SWORD, { manual = true }), "queued")
+    run(4)
+    fail_on_errors("grouped row")
+    assert_eq(count_calls("place_bid"), 3, "one bid")
+    assert_eq(last_call("place_bid")[3], 2000, "at the price of one")
+    assert_eq(before - gold, 2000, "paid 20s")
+    assert_eq(MK.ledger.holding(SWORD).qty, held + 1, "one sword booked, not 75")
+    assert(MK.trader.state().last.text:find("Bought 1x", 1, true), MK.trader.state().last.text)
     ah.items[SWORD] = {}
 end }
 
@@ -1226,6 +1303,44 @@ T[#T + 1] = { "the mailbox: a sale's money arriving is a sale", function()
     assert_eq(MK.trader.mail_waiting().total, 0, "nothing waiting once collected")
 end }
 
+T[#T + 1] = { "an item mail is recorded when it leaves the inbox, not each time the loot is asked for", function()
+    local mails = { { subject = "Auction won: Iron Sword", money = 0, item_count = 1 } }
+    local asks = 0
+    mock.core.mail = {
+        get_num_inbox_items = function() return #mails end,
+        get_inbox_header_info = function(i) return mails[i] end,
+        take_inbox_money = function() end,
+        -- The bags are full: the first three asks take nothing.
+        auto_loot_mail_item = function(i)
+            asks = asks + 1
+            if asks >= 4 then table.remove(mails, i) end
+        end,
+    }
+    local function returned()
+        local n = 0
+        for _, r in ipairs(MK.ledger.trades()) do
+            if r.kind == "returned" and r.name == "Iron Sword" then n = n + 1 end
+        end
+        return n
+    end
+    local before = returned()
+    mock.game_event("MAIL_SHOW", {})
+    run(1)
+    -- Asked again and again (as Auto does every five seconds while mail waits).
+    for _ = 1, 6 do
+        if #mails > 0 then
+            assert(MK.ledger.collect(), "collecting")
+            run(1.5)
+        end
+    end
+    fail_on_errors("mail asks")
+    assert(asks >= 4, "asked more than once: " .. asks)
+    assert_eq(#mails, 0, "taken in the end")
+    assert_eq(returned() - before, 1, "one item back, recorded once")
+    mock.game_event("MAIL_CLOSED", {})
+    run(0.5)
+end }
+
 T[#T + 1] = { "every tab of the window draws", function()
     local drawn = {}
     local real = mock.core.graphics.text_2d
@@ -1428,6 +1543,10 @@ T[#T + 1] = { "big money: judged at what Auto may spend; smaller deals stop at h
     MK.db.info(SMALL_GEM)
     ah.commodity[LEATHER] = {}
     run(1)
+    -- The stock held is resale stock here: a vendor flip that is not big money
+    -- may only fill a fifth of capital with vendor stock (1.2.5), and this
+    -- test is about the half line, not that.
+    for _, h in pairs(MK.ledger.holdings()) do if h.mode == "vendor" then h.mode = "flip" end end
     -- Stock is 60% of capital: 10% of it is left for a deal, none under the half line.
     local inv = MK.policy.capital().invested
     gold = math.floor(inv * 2 / 3) + 1

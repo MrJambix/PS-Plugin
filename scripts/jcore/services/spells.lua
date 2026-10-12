@@ -32,6 +32,9 @@ return function(rt)
     -- spell_id -> { tick, cooldown, usable, known }
     local tick_cache = {}
     local tick_id = 0
+    -- Forever only: guid -> { tick, sight }, one line-of-sight ray per
+    -- target per tick (see forever_sight).
+    local sight_cache = {}
     -- Forever only: the spell the global cooldown is read off (see M.gcd).
     local probe = nil
     local probe_checked = {}         -- spell_id -> true once asked
@@ -40,6 +43,9 @@ return function(rt)
     --- per update, immediately after the unit sweep.
     function M._new_tick()
         tick_id = tick_id + 1
+        -- Rows are stamped with their tick, so a stale one is never read;
+        -- this only drops the units a long session has walked past.
+        if tick_id % 600 == 0 then sight_cache = {} end
     end
 
     --- SPELLS_CHANGED, a talent swap or a level-up can change a spell's range
@@ -303,6 +309,13 @@ return function(rt)
     ---@param target game_object
     ---@return boolean
     function M.in_line_of_sight(spell_id, target)
+        -- Forever: geometry's model-free ray, never the native (1.8.0).
+        if is_forever() then
+            local geometry = rt.geometry
+            local player = units.player()
+            if not (geometry and geometry.sight and player and target) then return true end
+            return geometry.sight(player, target) ~= false
+        end
         if not spell_helper then
             local ok, value = pcall(core.graphics.is_line_of_sight, units.player(), target)
             return ok and value and true or false
@@ -348,15 +361,36 @@ return function(rt)
         return edge <= max_range + SLACK and edge >= (tonumber(info.min_range) or 0) - SLACK
     end
 
+    -- ONE RAY PER TARGET PER TICK (1.8.0). Every spell asked about on one
+    -- target used to cast its own line-of-sight ray: a priority list of ten
+    -- rules was ten rays at one mob each tick, and the reactions' checks on
+    -- the same mob added theirs. The answer cannot differ between spells,
+    -- so it is asked once a tick. Each ray is also a chance at the
+    -- client's own assert: Forever crashed twice in Forlorn Rowe, Duskwood
+    -- (2026-10-11, ASSERT(m_data) in M2HitTest.cpp) inside a ray from the
+    -- player to a mob, so fewer rays is fewer crashes.
+    local function forever_sight(player, target)
+        local guid = units.guid(target)
+        local row = guid and sight_cache[guid]
+        if row and row.tick == tick_id then return row.sight end
+        -- Not the native: on Forever it asserts in M2HitTest on build 70338.
+        -- geometry.sight is a model-free ray there, nil when unknown (1.8.0).
+        local geometry = rt.geometry
+        local sight = nil
+        if geometry and geometry.sight then sight = geometry.sight(player, target) end
+        if guid then
+            if row then row.tick, row.sight = tick_id, sight
+            else sight_cache[guid] = { tick = tick_id, sight = sight } end
+        end
+        return sight
+    end
+
     local function forever_castable(spell_id, target, opts, player)
         if not opts.skip_learned and not M.known(spell_id) then return false end
         if not opts.skip_usable and not M.usable(spell_id) then return false end
         if M.cooldown(spell_id) > 0 and M.charges(spell_id) < 1 then return false end
         if not opts.skip_range and not forever_in_range(spell_id, target, player) then return false end
-        if target ~= player then
-            local ok, sight = pcall(core.graphics.is_line_of_sight, player, target)
-            if ok and sight == false then return false end
-        end
+        if target ~= player and forever_sight(player, target) == false then return false end
         return true
     end
 

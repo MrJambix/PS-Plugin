@@ -4,6 +4,8 @@
 -- and Jambix AIO and make it its own ... where I don't upload it to users".
 -- So they live here, and JCore and Jambix AIO run without this folder:
 --
+--   services/faults.lua     every error, native raise and nil, logged on the
+--                           hit, and the crash black box (1.1.0)
 --   services/recorder.lua   the Forever API recorder and its trace (was JCore)
 --   services/lootstudy.lua  the corpse and loot-window study (was JCore)
 --   services/dump.lua       the Dump page: spells, talents and the API, the
@@ -49,7 +51,8 @@ local function load(relative)
 end
 
 local D = {
-    VERSION = "1.0.0",
+    VERSION = "1.1.0",
+    faults = load("services/faults"),
     recorder = load("services/recorder"),
     lootstudy = load("services/lootstudy"),
     dump = load("services/dump"),

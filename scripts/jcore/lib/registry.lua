@@ -196,6 +196,8 @@ return function(rt)
         end
         -- Its overlay windows, retained bodies and widget state go too.
         if rt.ui then rt.ui.remove_owner(id) end
+        -- And its reactions (1.8.0): the rules; the subscriptions went above.
+        if rt.react then rt.react.remove_owner(id) end
         events.emit("jcore.plugin.unregistered", id)
 
         record.state = STATE.STOPPED

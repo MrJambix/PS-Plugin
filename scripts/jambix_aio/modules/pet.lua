@@ -180,6 +180,52 @@ return function(P)
         return target
     end
 
+    --- The mob the pet is fighting: the client's answer, else (a client that
+    --- does not say, Forever: 1.73.1) the mob it was last sent at, while that
+    --- lives and for 30 s -- the same reading as the reactions' picture
+    --- (react/world.lua). 1.8.1: Intimidation and Bestial Wrath asked the
+    --- client alone, and on Forever never saw the pet on anything.
+    ---@return game_object|nil
+    function M.fighting()
+        local held = M.pet_target()
+        if held then return held end
+        if not M.alive() or not designated_guid or not units.by_guid then return nil end
+        if (core.time() - designated_at) >= 30 then return nil end
+        local ok, unit = pcall(units.by_guid, designated_guid)
+        if not ok or not unit then return nil end
+        local ok_v, valid = pcall(unit.is_valid, unit)
+        local ok_d, dead = pcall(unit.is_dead, unit)
+        if not (ok_v and valid == true) or (ok_d and dead == true) then return nil end
+        return unit
+    end
+
+    -- --- crowd control (1.8.1) ----------------------------------------------
+    --
+    -- The user: "ensure to have better Pet management when things like CC
+    -- kick off on a mob we dont want our pet to attack it". A mob held by
+    -- control that damage breaks -- anyone's sheep, sap, blind or fear, our
+    -- Freezing Trap, Scatter Shot or Scare Beast -- wakes at the pet's first
+    -- bite. The reactions' out_of_fight says which (JCore's control read; on
+    -- Forever the mob's debuffs). 1.7.6 kept the pet off YOUR TARGET when it
+    -- was held. Now nothing sends the pet at a held mob or aims its skills
+    -- there (M.send, M.cast, an assignment), and the mob it is actually on
+    -- is checked every pass, whoever sent it there: the defence, a
+    -- reaction's add, Tank, Focus (decide, off_held).
+
+    local function guid_of(unit)
+        if not unit then return nil end
+        local ok, guid = pcall(unit.get_guid, unit)
+        return ok and guid or nil
+    end
+
+    --- Held by crowd control that damage breaks (or immune to us).
+    local function cc_held(unit)
+        local react = P.react
+        if not (unit and react and react.out_of_fight) then return false end
+        local ok, yes = pcall(react.out_of_fight, unit)
+        return ok and yes == true
+    end
+
     -- --- designation --------------------------------------------------------
 
     --- Sends the pet at a unit, unless it is already going there.
@@ -202,6 +248,8 @@ return function(P)
         -- Kept off it: an evading mob takes nothing and leads the pet home.
         local off_until = shunned[guid]
         if off_until and now < off_until then return false end
+        -- Never at a mob held by crowd control that damage breaks (1.8.1).
+        if cc_held(unit) then return false end
 
         if not force and guid == designated_guid
             and (now - designated_at) < REFRESH_SECONDS then
@@ -750,6 +798,9 @@ return function(P)
             if player then ok_h, hostile = pcall(player.can_attack, player, target) end
             if ok_h and hostile and not rawequal(target, M.pet()) then return false end
         end
+        -- Nor at a mob held by crowd control (1.8.1): a Growl or a Claw
+        -- there wakes it like a bite.
+        if target and not rawequal(target, M.pet()) and cc_held(target) then return false end
 
         -- The client's range answer is about the pet's own target. A spell
         -- aimed at another mob (the aimed taunt) had its reach measured by
@@ -1016,7 +1067,8 @@ return function(P)
     function M.assigned()
         if not pinned_guid or core.time() >= pinned_until then return nil end
         local unit = units.by_guid(pinned_guid)
-        if not unit or not unit:is_valid() or unit:is_dead() then
+        -- Nor once crowd control holds it (1.8.1): the pin ends there.
+        if not unit or not unit:is_valid() or unit:is_dead() or cc_held(unit) then
             pinned_guid = nil
             return nil
         end
@@ -1248,6 +1300,42 @@ return function(P)
         if M.recall("nothing selected: " .. why, nil, nil, home_said) then home_said = true end
     end
 
+    --- The pet off a mob held by crowd control (1.8.1), whichever mob it is
+    --- on, your target or not: to your target when that is free and in the
+    --- fight, else to what is hitting it or you, else called back. Kept off
+    --- that mob a few seconds while it turns round (it still reads it as
+    --- its target a moment); after that M.send refuses it while it is held.
+    --- True when an order went out.
+    local CC_OFF = 3            -- s the pet is kept off a held mob once moved
+    local function off_held()
+        if not P.react then return false end
+        local on = M.pet_target()
+        local guid = guid_of(on)
+        if not on and designated_guid and units.by_guid then
+            on, guid = units.by_guid(designated_guid), designated_guid
+        end
+        if not on or not guid or not cc_held(on) then return false end
+        local now = core.time()
+        if shunned[guid] and now < shunned[guid] then return false end
+        pinned_guid = nil
+
+        local next_mob = nil
+        local target = combat.target()
+        if target and guid_of(target) ~= guid and not cc_held(target) then
+            local player = units.player()
+            local ok_d, dead = pcall(target.is_dead, target)
+            local ok_a, hostile = false, nil
+            if player then ok_a, hostile = pcall(player.can_attack, player, target) end
+            if not (ok_d and dead == true) and ok_a and hostile and may_follow(target) then next_mob = target end
+        end
+        next_mob = next_mob or attacker()
+        if next_mob and guid_of(next_mob) ~= guid and M.send(next_mob, "off a crowd-controlled mob", true) then
+            shunned[guid] = now + CC_OFF
+            return true
+        end
+        return M.recall("its mob is held by crowd control", guid, CC_OFF)
+    end
+
     local function decide()
         -- Before the gates: autocast back on whatever the engine has let go of.
         M.release_all()
@@ -1271,6 +1359,10 @@ return function(P)
 
         local player = units.player()
         if not player then return end
+
+        -- Off a mob crowd control holds, whoever sent it there (1.8.1):
+        -- before the pin, Focus and Tank, which would leave it biting.
+        if off_held() then return end
 
         -- Pinned by an assignment: leave it where it was sent.
         if M.assigned() then return end
@@ -1305,28 +1397,11 @@ return function(P)
         -- NEVER ONTO CROWD CONTROL THAT DAMAGE BREAKS (1.7.6). A target in a
         -- Freezing Trap, a Scatter Shot or a sheep wakes at the first bite,
         -- and the PvP hunter's trap is worth nothing if its own pet breaks
-        -- it. The pet is not sent there; on it already, it goes at what is
-        -- hitting it or you, else it is called back off it until the control
-        -- ends. The same for a player in Divine Shield or Ice Block.
-        local react = P.react
-        local held = target ~= nil and react ~= nil and react.out_of_fight ~= nil
-            and react.out_of_fight(target) == true
-        if held then
-            local guid = units.guid(target)
-            local on = M.pet_target()
-            local on_it = (on ~= nil and units.guid(on) == guid) or (designated_guid ~= nil and designated_guid == guid)
-            -- Once per call back: the pet still reads that target for a
-            -- moment while it turns round.
-            local kept_off = shunned[guid] ~= nil and core.time() < shunned[guid]
-            if on_it and not kept_off then
-                local other = attacker()
-                if other and units.guid(other) ~= guid then
-                    M.send(other, "off a held target", true)
-                else
-                    M.recall("its target is held by crowd control", guid, 3)
-                end
-            end
-            ordered = on_it
+        -- it. The pet is not sent there (M.send refuses it too, 1.8.1); on it
+        -- already, off_held above has moved it. The same for a player in
+        -- Divine Shield or Ice Block. What is hitting it or you, below.
+        if target ~= nil and cc_held(target) then
+            ordered = false
         elseif target and not target:is_dead() and player:can_attack(target) then
             if may_follow(target) then
                 M.send(target, "assist")
