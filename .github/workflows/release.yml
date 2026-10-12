@@ -88,12 +88,33 @@ jobs:
         shell: bash
         env:
           JAMBIX_CENTRAL_CONFIG: ${{ secrets.JAMBIX_CENTRAL_CONFIG }}
+        # The site compiles every file and refuses the whole plugin over one
+        # that is not Lua (2026-10-12: "central_config.lua:1: '=' expected
+        # near '/'"), so the secret is checked first: its first line of code
+        # must be `return {` and it must close with `}`. Otherwise the plugin
+        # ships without the address and the run says so. Nothing of the
+        # secret is printed.
         run: |
-          if [ -n "$JAMBIX_CENTRAL_CONFIG" ]; then
-            printf '%s\n' "$JAMBIX_CENTRAL_CONFIG" > scripts/jambix_aio/modules/central_config.lua
+          if [ -z "$JAMBIX_CENTRAL_CONFIG" ]; then
+            echo "no JAMBIX_CENTRAL_CONFIG secret: the plugin ships without a central address"
+            exit 0
+          fi
+          text=$(printf '%s\n' "$JAMBIX_CENTRAL_CONFIG" | tr -d '\r')
+          first=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*--' | grep -v '^[[:space:]]*$' | head -1)
+          last=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*--' | grep -v '^[[:space:]]*$' | tail -1)
+          case "$first" in
+            return*"{"*) ok_first=1 ;;
+            *) ok_first=0 ;;
+          esac
+          case "$last" in
+            *"}"*) ok_last=1 ;;
+            *) ok_last=0 ;;
+          esac
+          if [ "$ok_first" = 1 ] && [ "$ok_last" = 1 ]; then
+            printf '%s\n' "$text" > scripts/jambix_aio/modules/central_config.lua
             echo "central_config.lua written from the JAMBIX_CENTRAL_CONFIG secret"
           else
-            echo "no JAMBIX_CENTRAL_CONFIG secret: the plugin ships without a central address"
+            echo "::warning::JAMBIX_CENTRAL_CONFIG is not central_config.lua's Lua text (its first line of code must be 'return {' and it must end with '}'): the plugin ships without a central address. Paste the whole file into the secret."
           fi
 
       - name: Upload
