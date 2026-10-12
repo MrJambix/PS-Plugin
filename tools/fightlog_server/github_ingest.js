@@ -110,7 +110,14 @@ async function ingest(store, api) {
     return summary;
 }
 
+// The learning log's entry on the Action run's summary page, too.
+function toSummary(text) {
+    if (!text || !process.env.GITHUB_STEP_SUMMARY) return;
+    try { require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, text + '\n'); } catch (e) { /* the summary is a nicety */ }
+}
+
 function sayCycle(r) {
+    toSummary(r.log);
     if (r.version) {
         console.log(`published model v${r.version} (${r.stage}): ${r.candidate.fights} fight(s), ${r.candidate.contributors} contributor(s), ${r.candidate.observations} observation(s)` +
             (r.decision === 'forced' ? ` -- FORCED past the gates: ${r.verdict.failed.join(', ') || r.verdict.material.why}` : ''));
@@ -145,6 +152,8 @@ if (require.main === module) {
             const m = r.report.models;
             console.log(`  holdout: ${r.report.holdout.train_fights} fight(s) teach, ${r.report.holdout.test_fights} test (${r.report.holdout.test_forecasts} forecast(s))` +
                 (m.candidate.n ? `; Brier candidate ${m.candidate.brier}, prior ${m.prior.brier}, baseline ${m.baseline.brier}${m.production ? ', production ' + m.production.brier : ''}` : ''));
+            console.log('\n--- the learning log entry this would write ---\n' + r.log);
+            toSummary('(evaluate: nothing written)\n\n' + r.log);
         } else {
             console.log('usage: github_ingest.js ingest | publish [--force] [note] | promote N | withdraw N | evaluate');
             process.exit(2);

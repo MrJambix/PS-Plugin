@@ -17,6 +17,7 @@
 const learn = require('./learn');
 const evaluate = require('./evaluate');
 const { SCHEMA } = require('./validate');
+const reportLib = require('./report');
 
 const DEFAULTS = {
     minPlugin: process.env.MIN_PLUGIN || '1.7.8',
@@ -36,6 +37,25 @@ function summarizeCandidate(model) {
         for (const t of G.tactics || []) { tactics += 1; if (t.validated) validated += 1; }
     }
     return { entries, usable, tactics, validated };
+}
+
+/** The model the clients run: the active version, unless it holds no fight at all
+ *  (an empty version -- the first scheduled publish of 2026-10-12 -- is not a
+ *  production to compare with, roll back to, or stage behind). */
+function productionOf(store, active) {
+    const m = active ? store.readModel(active.version) : null;
+    return m && Number(m.fights) > 0 ? m : null;
+}
+
+/** The learning log's entry for a cycle, written unless `dry` (report.js). */
+function logCycle(store, result, records, production, dry) {
+    const prev = store.readSnapshot();
+    const e = reportLib.entry(result, prev, records, { current: production ? production.version : null });
+    if (!dry) {
+        store.writeLearningLog(reportLib.prepend(store.readLearningLog(), e.markdown));
+        store.writeSnapshot(e.snapshot);
+    }
+    return e;
 }
 
 /** The gates, each with its verdict and what it saw. */
@@ -107,7 +127,7 @@ function cycle(store, opts) {
     if (!o.force && last && last.records === records && last.newest === newest && (last.published || last.production) === (active ? active.version : null)) {
         return { decision: 'unchanged', version: null, verdict: { failed: [], checks: [], material: { yes: false, why: `no record since the last cycle (${last.at})` } }, report: null, candidate: null };
     }
-    const production = active ? store.readModel(active.version) : null;
+    const production = productionOf(store, active);
     const candidate = learn.build(batches, lessons, o.learn);
     const report = evaluate.evaluate(batches, lessons, production, Object.assign({}, o.learn, o.evaluate));
     const verdict = gates(candidate, report, production, o);
@@ -119,7 +139,9 @@ function cycle(store, opts) {
     if (verdict.decision !== 'publish' && !o.force) {
         store.recordEvaluation(row);
         store.audit({ kind: 'cycle', action: verdict.decision, failed: verdict.failed, material: verdict.material.why, candidate: row.candidate });
-        return { decision: verdict.decision, version: null, verdict, report, candidate };
+        const result = { decision: verdict.decision, version: null, verdict, report, candidate };
+        result.log = logCycle(store, result, { batches, lessons }, production).markdown;
+        return result;
     }
     const version = store.nextVersion();
     row.published = String(version);
@@ -136,7 +158,9 @@ function cycle(store, opts) {
     });
     store.writeManifest(m);
     store.audit({ kind: 'publish', version: String(version), stage, rollout: stage === 'canary' ? o.canaryRollout : 100, forced: !!o.force, decision: verdict.decision, failed: verdict.failed, candidate: row.candidate });
-    return { decision: o.force && verdict.decision !== 'publish' ? 'forced' : 'publish', version: String(version), stage, verdict, report, candidate: pkg };
+    const result = { decision: o.force && verdict.decision !== 'publish' ? 'forced' : 'publish', version: String(version), stage, verdict, report, candidate: pkg };
+    result.log = logCycle(store, result, { batches, lessons }, production).markdown;
+    return result;
 }
 
 /** The canary becomes the version for everyone. */
@@ -166,11 +190,13 @@ function preview(store, opts) {
     const o = Object.assign({}, DEFAULTS, opts || {});
     const batches = store.batches(), lessons = store.lessons();
     const active = store.activeVersion();
-    const production = active ? store.readModel(active.version) : null;
+    const production = productionOf(store, active);
     const candidate = learn.build(batches, lessons, o.learn);
     const report = evaluate.evaluate(batches, lessons, production, Object.assign({}, o.learn, o.evaluate));
     const verdict = gates(candidate, report, production, o);
-    return { verdict, report, candidate: packageOf(candidate, 'candidate', report, verdict, production, o), production: active ? active.version : null };
+    const pkg = packageOf(candidate, 'candidate', report, verdict, production, o);
+    const log = logCycle(store, { decision: verdict.decision, version: null, verdict, report, candidate: pkg }, { batches, lessons }, production, true).markdown;
+    return { verdict, report, candidate: pkg, production: active ? active.version : null, log };
 }
 
 module.exports = { DEFAULTS, gates, cycle, promote, withdraw, preview, packageOf, summarizeCandidate };

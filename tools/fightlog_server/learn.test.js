@@ -391,3 +391,52 @@ test('release: preview writes nothing', () => {
     assert.strictEqual(store.readManifest().versions.length, 0);
     assert.strictEqual(store.evaluations().length, 0);
 });
+
+// --- the learning log ---------------------------------------------------------------------------
+test('the learning log: each cycle writes an entry -- what arrived, what the network knows and how far each habit is from being used, what changed, what players get; nothing arrived, nothing written; newest first', () => {
+    const report = require('./report');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jambix-log-'));
+    let clock = Date.UTC(2026, 9, 20);
+    const store = createStore(dir, { now: () => clock });
+    // One player's fights: rejected, and the entry says why and how far.
+    const one = network(1, 4, 3, 0.8);
+    for (const b of one.batches) store.accept('batch', b);
+    for (const l of one.lessons) store.accept('lesson', l);
+    let r = release.cycle(store, {});
+    assert.strictEqual(r.decision, 'reject');
+    let log = store.readLearningLog();
+    assert.match(log, /^# Jambix central -- learning log/);
+    assert.match(log, /no new version: not enough to go on yet/);
+    assert.match(log, /\*\*New since the last cycle:\*\* 4 fight\(s\) from 1 contributor\(s\) -- Forever: hunter vs warrior x4/);
+    assert.match(log, /Nothing changes for players\. Gates not passed: contributors \(1 contributor\(s\), needs 2\)/);
+    assert.match(log, /\| Warrior \| closes the gap when slowed \| \d+% \| 12 \| 4 \| not used yet: 12 of 20 checks, 1 of 2 players/);
+    assert.match(log, /The first entry: everything above is new\./);
+    assert.ok(fs.existsSync(store.files.snapshot), 'the snapshot the next entry compares with');
+    // Nothing new: unchanged, and the log is as it was.
+    r = release.cycle(store, {});
+    assert.strictEqual(r.decision, 'unchanged');
+    assert.strictEqual(store.readLearningLog(), log, 'nothing written');
+    // Two more players, a day later: the habit is used, a model goes out, and the entry says what moved.
+    clock += 86400 * 1000;
+    const more = network(2, 8, 3, 0.8, { start: 2, day: 5 });
+    for (const b of more.batches) store.accept('batch', b);
+    for (const l of more.lessons) store.accept('lesson', l);
+    r = release.cycle(store, {});
+    assert.strictEqual(r.decision, 'publish');
+    log = store.readLearningLog();
+    assert.strictEqual((log.match(/^# Jambix central/gm) || []).length, 1, 'one title');
+    const first = log.indexOf('\n## ') + 1, second = log.indexOf('\n## ', first) + 1;
+    assert.match(log.slice(first, second), /model v1 published \(to every player\)/, 'the newest entry first');
+    assert.match(log.slice(first, second), /16 fight\(s\) from 2 contributor\(s\)/);
+    assert.match(log.slice(first, second), /Version 1: \d+ opponent rate\(s\) a player's predictor may start from/);
+    assert.match(log.slice(first, second), /\| Warrior \| closes the gap when slowed \| \d+% \| 60 \| 20 \| \*\*used\*\*/);
+    assert.match(log.slice(first, second), /now used: Forever warrior: closes the gap when slowed at \d+%/);
+    assert.match(log.slice(second), /no new version: not enough to go on yet/, 'the older entry below');
+    // A preview writes nothing and returns the entry it would write.
+    const before = store.readLearningLog();
+    const p = release.preview(store, {});
+    assert.match(p.log, /^## /);
+    assert.strictEqual(store.readLearningLog(), before);
+    // The words for a fight set.
+    assert.strictEqual(report.describeFights([]), 'no fight');
+});

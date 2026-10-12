@@ -536,6 +536,52 @@ network". The machinery to measure that exists and is tested on
 synthetic records. **Whether it happens is unknown**: no contributor has
 sent a record yet, so no model has been judged on real fights.
 
+## 12. The first live fights, and the learning log (2026-10-12)
+
+**The first uploads.** AIO 1.7.8 went live at about 21:40 UTC; by 22:05 the
+user's own client had filed one fight (a level 29 hunter against a rogue,
+won in 15 s: 19 forecast checks, 3 decision episodes) -- five times, issues
+#2 to #6, each after a doubling wait. GitHub had taken every one (the
+Action answered "accepted (duplicate)" from the second), but the client
+counted each try a failure, so it tried again and the fight's lesson and
+two more fights waited behind it in the queue. What the client read is
+unknown (the recorder logs calls, not answers); every reading of it is now
+handled: a 2xx is delivered whatever its answer says; a try that ends with
+no status or a server error makes the next one ask GitHub for the issue by
+title first and stop if it is there; every failure is logged with its
+status; a queue read from disk is due at once (its waits were on the last
+session's clock) and an item tried before is looked for first. The fix is
+in the client and needs a release to reach players. Test: `aio_intel_central_test`
+("live 2026-10-12: a fight filed five times").
+
+**The empty v1.** The old schedule (before the gated cycle was pushed)
+published an empty v1 at 18:41. A production with no fight is now no
+production: the first real model goes to every player, with no rollback
+to an empty one.
+
+**The learning log** (`tools/fightlog_server/report.js`). Each learning
+cycle that saw something new writes an entry, newest first, to
+`data/LEARNING_LOG.md` on the data branch, and the same text on the
+Action run's summary page:
+
+- what arrived since the last cycle (fights, players, the matchups, the
+  outcomes) and what was set aside, with the reasons;
+- what players get: a new version and what is in it, or "nothing changes"
+  with the gates that held it back;
+- what the network knows per game: each opponent habit's rate, checks and
+  fights, and either **used** with its interval or how far it is from the
+  bars ("15 of 20 checks, 1 of 2 players, 1 of 10 independent fights'
+  worth"); the validated tactics, and the nearest ones with their counts;
+- what changed since the last cycle: new habits, ones that became used or
+  stopped being used, rates that moved five points or more, tactics found
+  or lost, lessons confirmed.
+
+A compact snapshot (`data/models/last_cycle.json`) is what the next entry
+is compared with; "new" means received after the newest record the last
+cycle saw. A cycle with nothing new writes nothing. `evaluate` prints the
+entry it would write and writes nothing. Test: `learn.test.js` ("the
+learning log").
+
 ## 8. Not done, and why
 
 - Movement-based recommendations are judged by the target's gap and your

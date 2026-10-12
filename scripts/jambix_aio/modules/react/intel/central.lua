@@ -207,6 +207,14 @@ return function(P, lib, data, K)
         if type(q) == "table" and type(q.items) == "table" and q.schema == M.SCHEMA then
             queue = q.items
             while #queue > KC.queue_max do table.remove(queue, 1) end
+            -- The wait was on the last session's clock (core.time restarts
+            -- with the game): every item is due now. One tried before may
+            -- already have been filed: looked for first.
+            for i = 1, #queue do
+                local it = queue[i]
+                it.next_at = 0
+                if (tonumber(it.tries) or 0) > 0 then it.check_first = true end
+            end
         end
         T.queued = #queue
         local m = st and st.read_json and try(st.read_json, MODEL) or nil
@@ -392,6 +400,15 @@ return function(P, lib, data, K)
                  ["X-GitHub-Api-Version"] = "2022-11-28", ["User-Agent"] = "jambix-aio/" .. tostring(plugin_version()) }
     end
 
+    --- An item's issue title: the kind and the record's id (a deletion: the
+    --- contributor's), the same on every try.
+    local function issue_title(item)
+        local body = item.body or {}
+        local who = item.kind == "delete" and tostring(body.contributor) or tostring(body.id)
+        return string.format("jambix-%s %s", item.kind, who)
+    end
+    M.issue_title = issue_title
+
     --- The upload as a GitHub issue: the kind and the id in the title, the
     --- record as a fenced JSON block, trimmed to the body limit (the batch
     --- loses observations from the end and says so).
@@ -407,14 +424,57 @@ return function(P, lib, data, K)
                 text = encode_json(body)
             end
         end
-        local who = item.kind == "delete" and tostring(body.contributor) or tostring(body.id)
-        return { title = string.format("jambix-%s %s", item.kind, who), body = "```json\n" .. text .. "\n```",
+        return { title = issue_title(item), body = "```json\n" .. text .. "\n```",
                  labels = { "jambix", "jambix-" .. item.kind } }
     end
 
     --- A refusal the service will repeat: the record is wrong, not the moment.
     local function refused_for_good(status)
         return status == 400 or status == 401 or status == 404 or status == 410 or status == 413 or status == 422
+    end
+
+    -- An outcome that cannot be read: the request may have reached the
+    -- service (no status, or the server's own error). Live on 2026-10-12 one
+    -- fight's batch was filed five times (issues #2-#6) while the client
+    -- counted each try a failure, and the rest of the queue waited behind it.
+    local function ambiguous(status) return status == 0 or status >= 500 end
+
+    local function remove_item(item)
+        for i = 1, #queue do
+            if queue[i] == item then table.remove(queue, i) return true end
+        end
+        return false
+    end
+
+    local function warn(fmt, ...)
+        if P.log and P.log.fmt then pcall(P.log.fmt, "warn", "central: " .. fmt, ...) end
+    end
+
+    --- Before trying again an item whose last try ended unclear, GitHub is
+    --- asked whether its issue is already there (the last hundred of the
+    --- network's issues, by title); found, it is done and never sent twice.
+    local function check_filed(n, item)
+        item.check_first = nil
+        T.in_flight = true
+        local title = issue_title(item)
+        local url = string.format("%s/repos/%s/issues?state=all&labels=jambix&per_page=100", GITHUB_API, cfg.github.repo)
+        local asked = try(n.get_json, url, { headers = github_headers(), ttl = 0, fresh = true }, function(list)
+            T.in_flight = false
+            if type(list) == "table" then
+                for i = 1, #list do
+                    local issue = list[i]
+                    if type(issue) == "table" and issue.title == title then
+                        remove_item(item)
+                        T.uploaded, T.already = T.uploaded + 1, (T.already or 0) + 1
+                        T.last_status = string.format("%s already filed (#%s): not sent again", item.kind, tostring(issue.number))
+                        save_queue()
+                        return
+                    end
+                end
+            end
+            save_queue()                    -- not found (or not asked): the next pass sends it
+        end)
+        if asked == false or asked == nil then T.in_flight = false end
     end
 
     local function pump_uploads(now)
@@ -424,6 +484,7 @@ return function(P, lib, data, K)
         local n = net()
         if not (n and cfg.backend) then return end
         if now < (item.next_at or 0) then return end
+        if item.check_first and cfg.backend == "github" then return check_filed(n, item) end
         local url, payload, opts
         if cfg.backend == "github" then
             url = string.format("%s/repos/%s/issues", GITHUB_API, cfg.github.repo)
@@ -437,22 +498,31 @@ return function(P, lib, data, K)
             function(data_in, err, result)
                 T.in_flight = false
                 T.last_at = clock()
-                local status = result and result.status or 0
-                if not err or refused_for_good(status) then
+                local status = tonumber(result and result.status) or 0
+                -- A 2xx is delivered whatever its answer says: the answer
+                -- (GitHub's issue, the service's word) is not needed, and a
+                -- reply the client could not read must not send it again.
+                local delivered = not err or (result ~= nil and result.ok == true) or (status >= 200 and status < 300)
+                if delivered or refused_for_good(status) then
                     -- Accepted, or refused for good (a bad record, a bad key): off the queue either way.
-                    if queue[1] == item then table.remove(queue, 1) end
-                    if not err then
+                    remove_item(item)
+                    if delivered then
                         T.uploaded = T.uploaded + 1
-                        T.last_status = string.format("%s accepted%s", item.kind, data_in and data_in.duplicate and " (duplicate)" or "")
+                        T.last_status = string.format("%s accepted%s%s", item.kind, data_in and data_in.duplicate and " (duplicate)" or "",
+                            err and (" (its answer unread: " .. tostring(err) .. ")") or "")
+                        if err then warn("%s delivered (status %d) but its answer was unread: %s", item.kind, status, tostring(err)) end
                     else
+                        warn("%s refused for good (status %d): %s", item.kind, status, tostring(err))
                         T.dropped = T.dropped + 1
                         T.last_status = string.format("%s refused (%s)", item.kind, tostring(err))
                     end
                 else
                     item.tries = (item.tries or 0) + 1
                     T.failed = T.failed + 1
+                    if cfg.backend == "github" and ambiguous(status) then item.check_first = true end
+                    warn("%s try %d failed (status %d): %s", item.kind, item.tries, status, tostring(err))
                     if item.tries >= KC.max_tries then
-                        if queue[1] == item then table.remove(queue, 1) end
+                        remove_item(item)
                         T.dropped = T.dropped + 1
                         T.last_status = string.format("%s dropped after %d tries (%s)", item.kind, item.tries, tostring(err))
                     else

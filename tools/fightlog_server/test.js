@@ -154,8 +154,10 @@ test('versions: the gates refuse an empty database and say why; a forced publish
         assert.strictEqual(r.body.version, '2');
         let m = (await req(port, 'GET', '/v1/models/manifest', undefined, KEY)).body;
         assert.deepStrictEqual(m.versions.map(v => [v.version, v.status, v.schema, v.min_plugin]), [['1', 'active', 1, '1.7.8'], ['2', 'active', 1, '1.7.8']]);
-        assert.strictEqual(m.versions[0].gates.forced, true); assert.strictEqual(m.versions[0].stage, 'full'); assert.strictEqual(m.versions[1].stage, 'canary');
-        assert.strictEqual(m.versions[1].rollout, 25); assert.strictEqual(m.versions[1].rollback, '1');
+        assert.strictEqual(m.versions[0].gates.forced, true); assert.strictEqual(m.versions[0].stage, 'full');
+        // v1 holds no fight: it is no production to stage behind or roll back to (the live empty v1 of 2026-10-12).
+        assert.strictEqual(m.versions[1].stage, 'full', 'an empty production: the next version goes to everyone');
+        assert.strictEqual(m.versions[1].rollout, 100); assert.strictEqual(m.versions[1].rollback, null);
         const audit = (await req(port, 'GET', '/v1/admin/audit', undefined, ADMIN)).body.rows;
         assert.deepStrictEqual(audit.map(a => [a.kind, a.action || a.forced]), [['cycle', 'reject'], ['publish', true], ['publish', true]]);
         assert.strictEqual((await req(port, 'POST', '/v1/admin/promote', { version: '2' }, ADMIN)).status, 200);

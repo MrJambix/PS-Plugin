@@ -34,6 +34,12 @@ address (60), `RETENTION_DAYS` (180, purged daily).
 
 ## Learn and publish
 
+Every cycle that saw something new writes an entry to `data/LEARNING_LOG.md`
+(`report.js`): what arrived, what the network knows and how far each habit
+is from being used, what changed, and what players get. On GitHub it is at
+`https://github.com/MrJambix/PS-Plugin/blob/jambix-data/data/LEARNING_LOG.md`,
+and each Action run's summary page shows its entry.
+
 A publish is a **learning cycle**: the candidate is built from every
 accepted record that passes the trust screen, judged on the later fights
 it never saw against production, the plain prior and the baseline, and

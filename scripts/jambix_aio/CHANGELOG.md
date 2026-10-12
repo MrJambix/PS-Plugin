@@ -4,6 +4,9 @@ Jambix AIO 1.7.8 · JCore 1.8.1 · Jambix Debug 1.1.0
 
 # Jambix AIO
 
+## Next (not released yet)
+**The shared network sent the same fight five times.** The first live uploads (2026-10-12): one fight's batch was filed as issues #2 to #6 while the client counted every try a failure, and the fight's lesson and two more fights waited behind it. Now a 2xx answer is delivered whatever the reply says; after a try that ends with no status or a server error, the next asks GitHub whether the issue is already there (by its title, among the network's last hundred issues) and stops if it is; every failure is logged with its status (`central: batch try 2 failed (status 0): ...`); a queue saved by an earlier session is due at once, and an item tried before is looked for first. `modules/react/intel/central.lua`. Test: `aio_intel_central_test` (+1). Not yet seen in game.
+
 ## 1.7.8 (2026-10-12)
 **Released as 1.7.8, with JCore 1.8.1.** The work below was done under the working labels 1.8.0 and 1.8.1, never uploaded; 1.7.8 is the number chosen for this upload (the last version committed to the repository is 1.7.6), and the code's comments still tag things 1.8.0 or 1.8.1. AIO needs JCore 1.8.0 or newer (`MINIMUM_CORE`): released without JCore 1.8.1 it would refuse to start on the live JCore 1.7.9, so the two go up together. The shared PvP network ships off on every client (three consent switches, all off), and with an address only when the release carries the `JAMBIX_CENTRAL_CONFIG` secret.
 

@@ -501,4 +501,70 @@ T[#T + 1] = { "nothing from a model becomes a rule: adopting one with validated 
     assert(not unvalidated, "an unvalidated one is not")
 end }
 
+T[#T + 1] = { "live 2026-10-12: a fight filed five times -- a 201 whose answer is unread is delivered, an unclear failure looks for its issue before trying again, and a queue saved mid-retry is due at once and looked for first", function()
+    local G = bundle()
+    G.files[CONFIG] = { github = { repo = "MrJambix/PS-Plugin", branch = "jambix-data", token = "github_pat_x" } }
+    G.settings.net_contribute = true
+    fight(G)
+    step(G)
+    assert_eq(#G.net.posts, 1, "the batch's issue in flight")
+    local title = G.net.posts[1].payload.title
+    -- GitHub created it (201) but the client could not read the answer.
+    G.net.posts[1].cb(nil, "malformed json", { ok = true, status = 201 })
+    step(G)
+    assert_eq(#central(G).queue(), 1, "the batch is off the queue")
+    assert_eq(central(G).T.uploaded, 1, "counted delivered")
+    has(central(G).status(), "accepted (its answer unread: malformed json)", "and says so")
+    assert_eq(#G.net.posts, 2, "the lesson goes straight after, not five retries of the batch")
+    -- The lesson's try ends with no status at all: unclear.
+    G.net.posts[2].cb(nil, "http 0", { ok = false, status = 0 })
+    step(G)
+    local item = central(G).queue()[1]
+    assert_eq(item.check_first, true, "an unclear failure: looked for before the next try")
+    G.clock = G.clock + 31; step(G)
+    assert_eq(#G.net.posts, 2, "not posted again yet")
+    local ask = G.net.gets[#G.net.gets]
+    has(ask.url, "/repos/MrJambix/PS-Plugin/issues?state=all&labels=jambix", "GitHub asked for the network's issues")
+    assert_eq(ask.opts.headers["Authorization"], "Bearer github_pat_x", "with the token")
+    ask.cb({ { number = 7, title = central(G).issue_title(item) }, { number = 2, title = title } }, nil, { ok = true, status = 200 })
+    step(G)
+    assert_eq(#central(G).queue(), 0, "found filed: done, never sent twice")
+    has(central(G).status(), "lesson already filed (#7): not sent again", "said")
+    assert_eq(#G.net.posts, 2, "two posts in all")
+
+    -- Not found: it is sent.
+    local G2 = bundle()
+    G2.files[CONFIG] = { github = { repo = "MrJambix/PS-Plugin", branch = "jambix-data", token = "github_pat_x" } }
+    G2.settings.net_contribute = true
+    fight(G2)
+    step(G2)
+    G2.net.posts[1].cb(nil, "http 502", { ok = false, status = 502 })
+    G2.clock = G2.clock + 31; step(G2)
+    G2.net.gets[#G2.net.gets].cb({}, nil, { ok = true, status = 200 })
+    step(G2)
+    assert_eq(#G2.net.posts, 2, "not filed: posted again")
+    assert_eq(G2.net.posts[2].payload.title, G2.net.posts[1].payload.title, "the same issue title")
+
+    -- A queue the old client saved mid-retry (the live one: tries 5, a wait on the last session's clock).
+    local G3 = bundle()
+    G3.files[CONFIG] = { github = { repo = "MrJambix/PS-Plugin", branch = "jambix-data", token = "github_pat_x" }, contributor = string.rep("8", 24) }
+    G3.files[QUEUE] = { schema = 1, items = {
+        { kind = "batch", route = "/v1/combat/batches", tries = 5, next_at = 1145.7, id = string.rep("a", 24),
+          body = { schema = 1, id = string.rep("a", 24), contributor = string.rep("8", 24), observations = {} } },
+        { kind = "lesson", route = "/v1/lessons", tries = 0, next_at = 0, id = string.rep("b", 24),
+          body = { schema = 1, id = string.rep("b", 24), contributor = string.rep("8", 24) } },
+    } }
+    G3.settings.net_contribute = true
+    step(G3)
+    local q = central(G3).queue()
+    assert_eq(q[1].next_at, 0, "due now: the old session's clock is not this one's")
+    assert_eq(q[2].check_first, nil, "never tried: sent as it is")
+    assert_eq(#G3.net.posts, 0, "the batch is looked for, not posted")
+    has(G3.net.gets[#G3.net.gets].url, "/issues?state=all&labels=jambix", "tried before: looked for first, on the first pass")
+    G3.net.gets[#G3.net.gets].cb({ { number = 2, title = "jambix-batch " .. string.rep("a", 24) } }, nil, { ok = true, status = 200 })
+    step(G3); step(G3)
+    assert_eq(#G3.net.posts, 1, "then the lesson goes")
+    has(G3.net.posts[1].payload.title, "jambix-lesson ", "the lesson")
+end }
+
 return T

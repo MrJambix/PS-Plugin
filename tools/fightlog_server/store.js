@@ -29,6 +29,7 @@ function createStore(dataDir, opts) {
         batches: path.join(dataDir, 'batches.jsonl'), lessons: path.join(dataDir, 'lessons.jsonl'),
         ids: path.join(dataDir, 'ids.json'), deletions: path.join(dataDir, 'deletions.jsonl'), audit: path.join(dataDir, 'audit.jsonl'),
         manifest: path.join(modelsDir, 'manifest.json'), evaluations: path.join(modelsDir, 'evaluations.jsonl'),
+        learningLog: path.join(dataDir, 'LEARNING_LOG.md'), snapshot: path.join(modelsDir, 'last_cycle.json'),
     };
     const readLines = f => {
         if (!fs.existsSync(f)) return [];
@@ -69,6 +70,11 @@ function createStore(dataDir, opts) {
         readAudit: limit => readLines(files.audit).slice(-(limit || 200)),
         evaluations: () => readLines(files.evaluations),
         recordEvaluation: row => append(files.evaluations, row),
+        /** The learning log (report.js): the last cycle's snapshot, and the log's text. */
+        readSnapshot: () => { try { return fs.existsSync(files.snapshot) ? JSON.parse(fs.readFileSync(files.snapshot, 'utf8')) : null; } catch (e) { return null; } },
+        writeSnapshot: snap => fs.writeFileSync(files.snapshot, JSON.stringify(snap)),
+        readLearningLog: () => (fs.existsSync(files.learningLog) ? fs.readFileSync(files.learningLog, 'utf8') : ''),
+        writeLearningLog: text => fs.writeFileSync(files.learningLog, text),
         /** A record accepted: stored once (its id), stamped. Returns { duplicate } or { stored }. */
         accept(kind, record) {
             if (ids.has(record.id)) return { duplicate: true };
