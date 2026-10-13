@@ -2155,6 +2155,14 @@ return function(P)
         -- (press_blocked) casts one, whatever a rule or a role asks, and no
         -- rule can opt out of this.
         if row.exclusive == "aspect" then return "aspects are switched in the Aspects window" end
+        -- The PvP intelligence's veto (Stage 14): a spell with a cast time
+        -- that an enemy player sure to interrupt, in its interrupt's reach,
+        -- would kick. Instants pass; no rule opts out of it.
+        local intel = P.react and P.react.intel
+        if intel and intel.press_veto and ((tonumber(row.cast) or 0) > 0 or row.kind == "channel" or (tonumber(row.channel) or 0) > 0) then
+            local ok, why = pcall(intel.press_veto, rule[1] or rule.name, target, row)
+            if ok and why then return why end
+        end
         -- A rule may opt out of a check it knows better about.
         if rule.ignore_catalog then return nil end
 

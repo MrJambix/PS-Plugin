@@ -419,7 +419,8 @@ return function(R, P, lib)
             local function consider(cast, unit, guid, current, dist)
                 if not unit or cast.remaining <= 0.15 then return end
                 local mech = pvp.SPELL_MECH[cast.name]
-                local wanted = (cast.danger or 0) >= detect.DANGEROUS or mech ~= nil
+                local pick = lib.team_pick and lib.team_pick(W) or nil
+                local wanted = (cast.danger or 0) >= detect.DANGEROUS or mech ~= nil or (pick ~= nil and pick.guid == guid)
                 if not wanted then return end
                 local key = lib.cast_key(guid, cast)
 
@@ -481,9 +482,12 @@ return function(R, P, lib)
                 consider(tg.cast, tg.unit, tg.guid, true, dist_to(tg.unit, tg.distance))
             end
             local en = W.enemies
+            local pick = lib.team_pick and lib.team_pick(W) or nil
             for i = 1, en.casting_n do
                 local cast = en.casting[i]
-                if cast.player and not cast.current and (cast.engaged or cast.at_group or cast.at_me) then
+                local picked = pick ~= nil and cast.guid == pick.guid
+                if cast.player and not cast.current and (cast.engaged or cast.at_group or cast.at_me or picked) then
+                    cast.team_pick = picked and pick or nil
                     consider(cast, cast.unit, cast.guid, false, dist_to(cast.unit, cast.dist))
                 end
             end
@@ -498,6 +502,7 @@ return function(R, P, lib)
                 c:add(12, string.format("cast ends in %.1fs", cast.remaining))
             end
             if cast.at_me then c:add(8, "aimed at you") end
+            if cast.team_pick then c:add(15, "the team's first cast to stop: " .. tostring(cast.team_pick.why or cast.team_pick.kind)) end
             if c.preempt then
                 c:add(5, "it lands on nothing")
             else

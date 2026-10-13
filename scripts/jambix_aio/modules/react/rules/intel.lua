@@ -24,10 +24,21 @@
 --                                 is pet.lua's, the Auto Shot already
 --                                 running is the hunter class's to stop
 --
--- The rest of what the layer concludes -- the state, the move, what to
--- keep -- is advice: the readout, the alerts, the window's conditions.
--- The existing reactions already press the clip, the trap, the Feign
--- Death and the defensives; this file does not press them twice.
+--   78  Intel: peel for an ally     (Stage 14) the team read's peel: the
+--                                 first tool of yours that reaches the
+--                                 enemy on your healer or a hurt ally
+--   69  Intel: switch target         (Stage 14) off a player an ally holds,
+--                                 or onto a clearly better kill window
+--   58  Intel: drain the healer      (Stage 14) Viper Sting on a free enemy
+--                                 healer
+--   The hold above also keeps an ally's breakable control (Stage 14).
+--
+-- Elsewhere, reading the same tables (Stage 14): the three cast-stopping
+-- reactions take the team read's pick (lib.team_pick); "Defensive
+-- cooldown" fires on a HIGH or CRITICAL PvP threat; "Break contact" on the
+-- DISENGAGE state; the rotation refuses a cast-time spell a sure
+-- interrupter in reach would kick (intel.press_veto). Only the move is
+-- left to you: nothing here walks the character.
 
 return function(R, P, lib)
     local book = P.spellbook
@@ -117,15 +128,121 @@ return function(R, P, lib)
             local S = picture(W)
             local C = S and S.cc or nil
             local h = C and C.hold or nil
-            if not (h and W.target.guid and h.guid == W.target.guid) then return end
-            local c = offer({ name = "No damage on " .. tostring(h.name), kind = "hold", why = h.why })
-            c.hold_value, c.hold_conf = h.value, h.conf
+            if h and W.target.guid and h.guid == W.target.guid then
+                local c = offer({ name = "No damage on " .. tostring(h.name), kind = "hold", why = h.why })
+                c.hold_value, c.hold_conf = h.value, h.conf
+                return
+            end
+            -- An ally's control that damage breaks on your target (Stage 14,
+            -- team.lua's overlap): yours would break it just the same. The
+            -- switch below moves you off it; until then, nothing on it.
+            local o = S and S.team and S.team.overlap or nil
+            if o and W.target.guid and o.guid == W.target.guid and opt("intel_team", true) then
+                local c = offer({ name = "No damage on " .. tostring(o.name), kind = "hold", why = o.why })
+                c.ally_control = o.control
+            end
         end,
         score = function(W, c)
+            if c.ally_control then c:add(15, "an ally's " .. tostring(c.ally_control)) return end
             local I = R.intel
             local KC = I and I.weights and I.weights.CC or nil
             local pts = KC and (KC.value_points[c.hold_value] or 0) * (c.hold_conf or 1) or 0
             if pts > 0 then c:add(pts, string.format("%s (%.2f)", tostring(c.hold_value), c.hold_conf or 1)) end
         end,
+    })
+
+    -- --- Stage 14: what the team read says, pressed ------------------------------------
+
+    --- The threat on you HIGH or worse: the team's moves wait (the
+    --- defensives and the escapes come first).
+    local function in_danger(S)
+        local T = S.threat
+        return T ~= nil and (T.level == "HIGH" or T.level == "CRITICAL")
+    end
+
+    -- The peel: an enemy on your healer or on an ally under half health, not
+    -- held, and the first tool of yours ready that reaches it (team.lua has
+    -- already checked the range, the dead zone and the pet for Intimidation).
+    R.add_rule({
+        name = "Intel: peel for an ally",
+        category = "cc", priority = 78,
+        needs = { "combat" },
+        every = 0.2,
+        retry = { hold = 2.0 },
+        enabled = function() return opt("intel_team", true) end,
+        propose = function(W, offer)
+            local S = picture(W)
+            local p = S and S.team and S.team.peel or nil
+            if not (p and p.action) or in_danger(S) then return end
+            local f = S.foes[p.guid]
+            if not (f and f.unit and not f.dead) then return end
+            if not (book.known(p.action) and book.ready(p.action)) then return end
+            local pet_tool = p.action == "Intimidation"
+            local c = offer({ name = p.action, target = pet_tool and W.player.unit or f.unit,
+                              target_kind = pet_tool and "self" or "enemy",
+                              event_key = "intel_peel:" .. tostring(p.guid), handled_for = 4, why = p.why })
+            c.peel = p
+        end,
+        score = function(W, c)
+            c:add(c.peel.ally_healer and 18 or 12, "peel: " .. tostring(c.peel.why))
+        end,
+    })
+
+    -- The switch: off a player an ally holds with a control damage breaks,
+    -- or onto a kill window elsewhere that team.lua found clearly better
+    -- (in reach, and high confidence or well lower). An immune target is
+    -- "PvP: off the immune target"'s. Held 0.6 s before it goes, so the
+    -- target does not flicker between two near-equal players.
+    local SWITCH_DWELL = 0.6
+    local switch_seen = { key = nil, at = -math.huge }
+    R.add_rule({
+        name = "Intel: switch target",
+        category = "utility", priority = 69, kind = "set_target", lane = "fast",
+        needs = { "combat", "target" },
+        every = 0.25,
+        retry = { hold = 2.0 },
+        enabled = function() return opt("intel_team", true) end,
+        propose = function(W, offer)
+            local S = picture(W)
+            local sw = S and S.team and S.team.switch or nil
+            if not (sw and sw.guid and sw.guid ~= W.target.guid) then switch_seen.key = nil return end
+            local tg = W.target.guid and S.foes[W.target.guid] or nil
+            if tg and tg.st and tg.st.immune then return end
+            local to = S.foes[sw.guid]
+            if not (to and to.unit and not to.dead) then return end
+            local key = tostring(W.target.guid) .. ">" .. tostring(sw.guid)
+            if switch_seen.key ~= key then switch_seen.key, switch_seen.at = key, W.now return end
+            if (W.now - switch_seen.at) < SWITCH_DWELL then return end
+            offer({ name = "Target " .. tostring(to.name), kind = "set_target", target = to.unit, target_kind = "enemy",
+                    event_key = "intel_switch:" .. key, handled_for = 4, why = sw.why })
+        end,
+        score = function(W, c) c:add(10, c.why or "switch") end,
+    })
+
+    -- The enemy healer free to heal: Viper Sting on it for its mana, when it
+    -- is not already stung and you are not in danger.
+    R.add_rule({
+        name = "Intel: drain the healer",
+        category = "utility", priority = 58,
+        needs = { "combat" },
+        every = 0.5,
+        retry = { hold = 3.0 },
+        enabled = function() return opt("intel_team", true) end,
+        propose = function(W, offer)
+            local S = picture(W)
+            local h = S and S.team and S.team.healer or nil
+            if not (h and h.free and h.action and h.action:find("Viper Sting", 1, true)) or in_danger(S) then return end
+            local f = S.foes[h.guid]
+            if not (f and f.unit and not f.dead) then return end
+            if not (book.known("Viper Sting") and book.ready("Viper Sting")) then return end
+            local helpers = P.rotation and P.rotation.helpers or {}
+            if helpers.debuff_up then
+                local ok, up = pcall(helpers.debuff_up, f.unit, "Viper Sting")
+                if ok and up == true then return end
+            end
+            offer({ name = "Viper Sting", target = f.unit, target_kind = "enemy",
+                    event_key = "intel_viper:" .. tostring(h.guid), handled_for = 8, why = h.why })
+        end,
+        score = function(W, c) c:add(8, "the enemy healer: " .. tostring(c.why)) end,
     })
 end

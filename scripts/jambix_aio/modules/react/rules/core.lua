@@ -194,6 +194,16 @@ return function(R, P, lib)
     end
     lib.cast_key = cast_key
 
+    --- The cast the PvP intelligence's team read says to stop first (react/
+    --- intel/team.lua, Stage 10: a heal on a low enemy, a control at one of
+    --- us, a dangerous cast), or nil. The three cast-stopping reactions take
+    --- its caster even when it is not engaged with us (Stage 14).
+    function lib.team_pick(W)
+        local S = W and W.intel
+        local T = S and S.active and not S.off and S.team or nil
+        return T and T.interrupt or nil
+    end
+
     --- Does this spell take this unit at all (1.77.4)? A class may say a spell
     --- works only on some creature types (`creature_types`: Repentance
     --- humanoids). One that does not take it is passed over, so the next in
@@ -264,13 +274,17 @@ return function(R, P, lib)
                 consider(cast, tg.unit, tg.guid)
             end
             -- At most three more, nearest first: a raid full of casters must
-            -- not turn into a candidate per caster per frame.
+            -- not turn into a candidate per caster per frame. The team read's
+            -- pick (a healer healing its friend is engaged with nobody) is
+            -- taken whatever the count.
             local en, extra = W.enemies, 0
+            local pick = lib.team_pick(W)
             for i = 1, en.casting_n do
                 local cast = en.casting[i]
-                if extra >= 3 then break end
-                if not cast.current and (cast.engaged or cast.at_group) then
-                    extra = extra + 1
+                local picked = pick ~= nil and cast.guid == pick.guid
+                if not cast.current and (picked or (extra < 3 and (cast.engaged or cast.at_group))) then
+                    if not picked then extra = extra + 1 end
+                    cast.team_pick = picked and pick or nil
                     consider(cast, cast.unit, cast.guid)
                 end
             end
@@ -278,6 +292,7 @@ return function(R, P, lib)
         score = function(W, c)
             local cast = c.cast
             local label = (cast.name ~= "" and cast.name) or "a cast"
+            if cast.team_pick then c:add(15, "the team's first cast to stop: " .. tostring(cast.team_pick.why or cast.team_pick.kind)) end
             if cast.danger >= detect.DANGEROUS then
                 c:add(cast.danger, string.format("dangerous cast (%s)", label))
             elseif cast.danger > 0 then
@@ -318,6 +333,21 @@ return function(R, P, lib)
     -- escapes best first; a fear or a blink breaks contact with everything,
     -- a slow with one pursuer. Key-gated abilities stay gated here too.
 
+    --- The PvP intelligence's word (Stage 14): its tactical state, or nil
+    --- without an active picture.
+    local function intel_state(W)
+        local S = W.intel
+        local X = S and S.active and not S.off and S.tactic or nil
+        return X and X.state or nil
+    end
+    --- Its threat level with a player on you, or nil.
+    local function intel_threat(W)
+        local S = W.intel
+        local T = S and S.active and not S.off and (S.attackers or 0) > 0 and S.threat or nil
+        if not T or not opt("intel_threat", true) then return nil end
+        return T.level, T.highest and T.highest.why or nil
+    end
+
     R.add_rule({
         name = "Break contact",
         category = "escape", priority = 88,
@@ -325,7 +355,10 @@ return function(R, P, lib)
         retry = { hold = 5 },
         propose = function(W, offer)
             local bail = W.bailout and opt("hc_enabled", true)
-            local losing = W.sit.flee or W.mode == "ESCAPE"
+            -- Or the PvP intelligence's DISENGAGE (Stage 14): the threat
+            -- CRITICAL with no defensive left, or the fight cannot be won.
+            local disengage = intel_state(W) == "DISENGAGE"
+            local losing = W.sit.flee or W.mode == "ESCAPE" or disengage
             if not bail and not losing then return end
             local list = (W.class and W.class.escapes) or {}
             for i = 1, #list do
@@ -334,8 +367,8 @@ return function(R, P, lib)
                     local target = escape_target(name, W)
                     if target then
                         local c = offer({ name = name, target = target, target_kind = kind_of(target, W),
-                                          why = bail and "hardcore bail-out" or W.field.reason })
-                        c.bail, c.losing = bail, losing
+                                          why = bail and "hardcore bail-out" or (disengage and "PvP: disengage") or W.field.reason })
+                        c.bail, c.losing, c.disengage = bail, losing, disengage
                         return
                     end
                 end
@@ -346,6 +379,7 @@ return function(R, P, lib)
             if on > 1 then c:add(min(20, (on - 1) * 10), string.format("%d on you", on)) end
             if c.bail then c:add(10, "hardcore bail-out") end
             if c.losing and W.sit.flee then c:add(10, "the fight cannot be won") end
+            if c.disengage then c:add(10, "PvP: " .. tostring(W.intel.tactic.why)) end
         end,
     })
 
@@ -489,6 +523,11 @@ return function(R, P, lib)
                 trigger = "surrounded"
             elseif pl.hp_rate < -0.03 and pl.projected <= W.thresholds.defensive_hp then
                 trigger = "on course for the line"
+            else
+                -- A player fight the threat read calls HIGH or CRITICAL
+                -- (Stage 14): before the health says so.
+                local level = intel_threat(W)
+                if level == "HIGH" or level == "CRITICAL" then trigger = "PvP threat " .. level end
             end
             if not trigger then return end
 
@@ -528,6 +567,10 @@ return function(R, P, lib)
                 c:add(10, string.format("%d in melee with you", W.enemies.melee_on_me))
             end
             if c.trigger == "losing the race" then c:add(5, W.field.reason ~= "" and W.field.reason or "losing") end
+            if c.trigger and c.trigger:find("^PvP threat") then
+                local level, why = intel_threat(W)
+                c:add(level == "CRITICAL" and 20 or 12, c.trigger .. (why and (": " .. why) or ""))
+            end
         end,
         -- Against players (intel/cooldowns.lua, Stage 3): held while a
         -- protection already up covers what is hitting you -- never under

@@ -179,8 +179,21 @@ return function(P, lib, data, K)
             end
         end
 
-        -- Switch: a better target than yours.
+        -- Switch: a better target than yours. Another player is offered only
+        -- in reach (Stage 14: the switch is pressed now), and over a target
+        -- that is not itself a kill window only when its own is high
+        -- confidence or it is clearly lower.
         local kw = S.kill
+        local best = kw and kw.best or nil
+        if best then
+            local bf = S.foes[best.guid]
+            if not (bf and (bf.dist or huge) <= KT.switch_reach) then best = nil end
+        end
+        local alt_kw = best
+        if alt_kw and tg and alt_kw.v ~= "HIGH_CONFIDENCE_KILL_WINDOW" and not ((alt_kw.hp or 1) + KT.switch_margin < (tg.hp or 1)) then
+            alt_kw = nil
+        end
+        kw = { best = best, target = kw and kw.target or nil }
         if tg and tg.st and tg.st.immune then
             local alt = kw and kw.best or nil
             T.switch = { guid = alt and alt.guid or nil, name = alt and alt.name or "another",
@@ -188,8 +201,9 @@ return function(P, lib, data, K)
         elseif T.overlap then
             local alt = kw and kw.best or nil
             T.switch = { guid = alt and alt.guid or nil, name = alt and alt.name or "another", why = T.overlap.why }
-        elseif kw and kw.best and (not kw.target or (kw.target.v ~= "HIGH_CONFIDENCE_KILL_WINDOW" and kw.target.v ~= "PREPARE_BURST")) then
-            T.switch = { guid = kw.best.guid, name = kw.best.name, why = string.format("%s: %s", kw.best.name, kw.best.v:lower():gsub("_", " ")) }
+        elseif alt_kw and (not kw.target or (kw.target.v ~= "HIGH_CONFIDENCE_KILL_WINDOW" and kw.target.v ~= "PREPARE_BURST")) then
+            T.switch = { guid = alt_kw.guid, name = alt_kw.name,
+                         why = string.format("%s: %s at %d%%", alt_kw.name, alt_kw.v:lower():gsub("_", " "), pct(alt_kw.hp)) }
         end
 
         -- The enemy healer.

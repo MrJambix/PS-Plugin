@@ -384,6 +384,10 @@ S.TEAM = {
     near = 30, ally_reach = 30, overextend_enemies = 2, disengage_on_me = 2,
     -- The enemy healer is read as one from healer_conf; Viper Sting reaches it.
     healer_conf = 0.5, sting_reach = 35,
+    -- A switch onto another player (Stage 14, pressed): within switch_reach,
+    -- and over a target that is no kill window only at high confidence or
+    -- switch_margin lower in health.
+    switch_reach = 35, switch_margin = 0.15,
     -- Which cast to stop first: a heal (more for a lower player), a control
     -- at one of us, a damaging cast at one of us (plus its danger), the rest.
     weight = { heal = 3.0, heal_low = 2.0, control = 2.5, damage = 1.0, other = 0.3 },

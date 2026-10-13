@@ -137,7 +137,8 @@ return function(R, P, lib)
         end,
     })
 
-    local CONTROL = { "Scatter Shot", "Intimidation" }
+    -- Wyvern Sting (Stage 14): a sleep stops a cast as surely as a disorient.
+    local CONTROL = { "Scatter Shot", "Intimidation", "Wyvern Sting" }
 
     R.add_rule({
         name = "Stop the cast with crowd control",
@@ -147,7 +148,8 @@ return function(R, P, lib)
         propose = function(W, offer)
             local function consider(cast, unit, guid, current)
                 if not unit or cast.remaining <= 0.15 then return end
-                if cast.danger < detect.DANGEROUS then return end
+                local pick = lib.team_pick and lib.team_pick(W) or nil
+                if cast.danger < detect.DANGEROUS and not (pick and pick.guid == guid) then return end
                 local key = lib.cast_key(guid, cast)
                 for i = 1, #CONTROL do
                     local name = CONTROL[i]
@@ -155,7 +157,7 @@ return function(R, P, lib)
                         -- Intimidation is cast on ourselves and lands on what the
                         -- PET is hitting: only for the mob the pet is on.
                         local on_pet = W.pet.alive and W.pet.target_guid == guid
-                        if name == "Scatter Shot" or on_pet then
+                        if name ~= "Intimidation" or on_pet then
                             local c = offer({
                                 name = name,
                                 target = name == "Intimidation" and W.player.unit or unit,
@@ -180,10 +182,15 @@ return function(R, P, lib)
             -- on its friend is not a cast at us.
             local ph = P.pvphunter
             local pvp_on = ph ~= nil and ph.mode ~= nil and ph.mode() == true
+            -- And the PvP intelligence's team pick (Stage 14), in any fight with
+            -- players: the cast the team read says to stop first.
             local en = W.enemies
+            local pick = lib.team_pick and lib.team_pick(W) or nil
             for i = 1, en.casting_n do
                 local cast = en.casting[i]
-                if not cast.current and (cast.engaged or (pvp_on and cast.player and cast.kind == "heal")) then
+                local picked = pick ~= nil and cast.guid == pick.guid
+                if not cast.current and (cast.engaged or picked or (pvp_on and cast.player and cast.kind == "heal")) then
+                    cast.team_pick = picked and pick or nil
                     consider(cast, cast.unit, cast.guid, false)
                 end
             end
@@ -197,6 +204,7 @@ return function(R, P, lib)
                 c:add(12, string.format("cast ends in %.1fs", cast.remaining))
             end
             if cast.at_me then c:add(8, "aimed at you") end
+            if cast.team_pick then c:add(15, "the team's first cast to stop: " .. tostring(cast.team_pick.why or cast.team_pick.kind)) end
             -- Spending a thirty-second control on a cast is worth it; on a
             -- cast a real interrupt could have taken, less so.
             c:add(-6, "crowd control used as an interrupt")

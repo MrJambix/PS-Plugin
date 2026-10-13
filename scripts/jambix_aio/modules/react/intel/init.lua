@@ -248,6 +248,40 @@ return function(P, lib)
 
     local function clock() return core.time() end
 
+    --- Stage 14: the rotation's gate (and every reaction's, through
+    --- press_blocked) asks before a press. A spell with a cast time or a
+    --- channel is refused while an enemy player the predictor is sure
+    --- interrupts casts stands within its interrupt's reach and that
+    --- interrupt is not seen on its cooldown: "show it a cheap cast first"
+    --- (the interrupt bait) is the way through. Instants are never refused.
+    ---@param name string
+    ---@param target game_object|nil
+    ---@param row table|nil the catalogue's row (its cast time)
+    ---@return string|nil why
+    function I.press_veto(name, target, row)
+        if not (row and I.enabled() and I.module_on("predict")) then return nil end
+        local timed = (tonumber(row.cast) or 0) > 0 or row.kind == "channel" or (tonumber(row.channel) or 0) > 0
+        if not timed then return nil end
+        local S = state.S
+        if not S.active or S.off then return nil end
+        local KP = weights.PREDICT
+        for i = 1, #S.foe_list do
+            local f = S.foe_list[i]
+            local e = f.predict and f.predict.interrupts_casts or nil
+            if e and e.sure and not e.adapting and not f.dead and lib.sure(e, KP.threshold) ~= nil then
+                local kick = f.class and data.CLASS_INTERRUPT[f.class] or nil
+                local reach = kick and data.INTERRUPT_REACH[kick] or nil
+                if reach and (f.dist or math.huge) <= reach then
+                    local seen = cooldowns.seen(S, f.guid, kick)
+                    if not (seen and seen.state == "down") then
+                        return string.format("predicted: %s interrupts your casts (p %.2f) and its %s reaches you", tostring(f.name), e.p or 0, kick)
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
     local function opt(id, default)
         if not P.opt then return default end
         local v = P.opt(id, default)
@@ -281,7 +315,12 @@ return function(P, lib)
     local hold_stop = { key = nil, at = -math.huge, stops = 0 }
     I.hold_stop = hold_stop
     local function enforce_hold(W, S, now)
-        local h = S.cc and S.cc.hold or nil
+        local h = I.module_on("cc") and S.cc and S.cc.hold or nil
+        -- An ally's breakable control on the target (Stage 14, team.lua's
+        -- overlap) is kept the same way: the hold reaction halts the walk,
+        -- this stops the attack already running.
+        local o = (not h) and I.module_on("team") and S.team and S.team.overlap or nil
+        if o then h = { guid = o.guid, name = o.control, why = o.why } end
         if not h or h.guid == nil or h.guid ~= (S.env and S.env.target and S.env.target.guid) then
             hold_stop.key = nil
             return
@@ -319,11 +358,12 @@ return function(P, lib)
         if I.module_on("threat") then threat.update(W, W.intel, now) else threat.reset() end
         if I.module_on("cooldowns") then cooldowns.update(W, W.intel, now) else cooldowns.reset() end
         if I.module_on("cc") then ccplan.update(W, W.intel, now) else ccplan.reset() end
-        if I.module_on("cc") then enforce_hold(W, W.intel, now) end
         if I.module_on("predict") then predict.update(W, W.intel, now) else predict.reset() end
         if I.module_on("bait") then bait.update(W, W.intel, now) else bait.reset() end
         if I.module_on("kill") then killwindow.update(W, W.intel, now) else killwindow.reset() end
         if I.module_on("team") then team.update(W, W.intel, now) else team.reset() end
+        -- After the control plan and the team read (an ally's control too, Stage 14).
+        if I.module_on("cc") or I.module_on("team") then enforce_hold(W, W.intel, now) end
         if I.module_on("tactics") then states.update(W, W.intel, now) else states.reset() end
         if I.module_on("position") then position.update(W, W.intel, now) else position.reset() end
         explain.update(W.intel, now)
