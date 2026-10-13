@@ -14,6 +14,11 @@
 --   feign_cast      Feign Death while a player's cast at you is on its bar:
 --                   did that cast land anyway, or fail? (needs the enemy's
 --                   cast events: see the debrief's "Enemy events" line)
+--   stop_cast       (Stage 14, the layer presses now) a stop of yours --
+--                   Scatter Shot, a kick, a stun -- sent while the team's
+--                   pick or your target was casting: did its bar end early?
+--   peel            (Stage 14) a peel of yours sent while an enemy was on
+--                   your ally: did it leave the ally within 3 s?
 --   dr              Forever: how long each of your controls lasted on a
 --                   player, by its place in a chain (first, second, third
 --                   within 18 s): the diminishing returns, measured.
@@ -32,16 +37,19 @@ return function(P, lib, data, K)
         disengage = "Disengage turns the mob off you",
         sting_add = "Serpent Sting goes out at a mob that is not your target",
         feign_cast = "Feign Death makes a player's cast at you fail",
+        stop_cast = "a stop of yours (Scatter Shot, a kick, a stun) ends the player's cast",
+        peel = "a peel of yours takes the enemy off your ally",
     }
-    local ORDER = { "trap_in_melee", "disengage", "sting_add", "feign_cast" }
+    local ORDER = { "trap_in_melee", "disengage", "sting_add", "feign_cast", "stop_cast", "peel" }
     local TRAPS = { ["Immolation Trap"] = true, ["Explosive Trap"] = true, ["Freezing Trap"] = true, ["Frost Trap"] = true }
     local CONTROLS = { ["Freezing Trap Effect"] = true, ["Scatter Shot"] = true, ["Intimidation"] = true, ["Scare Beast"] = true,
                        ["Wyvern Sting"] = true, ["Wing Clip"] = false }
 
     local store = nil
     local dirty, saved_at = false, -huge
-    local pending = { traps = {}, disengage = {}, stings = {}, feign = {} }
+    local pending = { traps = {}, disengage = {}, stings = {}, feign = {}, stops = {}, peels = {} }
     local chains = {}                 -- guid|name -> { step, ends_at }
+    local stopper_name, stop_job          -- (below: Stage 14's two checks)
     M.pending = pending
 
     local function storage() local ctx = P.ctx return ctx and ctx.storage or nil end
@@ -108,6 +116,29 @@ return function(P, lib, data, K)
 
     -- --- our casts, and the jobs they start -------------------------------------------------
 
+    --- Stage 14: is this one of the casts that stop a cast (any class's kit,
+    --- the hunter's crowd control)?
+    local STOP_NAMES = nil
+    function stopper_name(name)
+        if not STOP_NAMES then
+            STOP_NAMES = { ["Scatter Shot"] = true, ["Intimidation"] = true, ["Wyvern Sting"] = true }
+            for _, kit in pairs(data.CLASS_KIT or {}) do
+                for _, t in ipairs(kit.stoppers or {}) do STOP_NAMES[t.name] = true end
+            end
+        end
+        return STOP_NAMES[name] == true
+    end
+    --- The cast it was for: the team read's pick, else your target's.
+    function stop_job(name, S, now)
+        local pick = S.team and S.team.interrupt or nil
+        local guid = pick and pick.guid or (S.env and S.env.target and S.env.target.guid) or nil
+        local f = guid and S.foes[guid] or nil
+        local c = f and f.casting or nil
+        if not (c and c.name and c.name ~= "" and (c.left or 0) > 0.2) then return false end
+        pending.stops[#pending.stops + 1] = { guid = guid, cast = c.name, name = name, at = now, end_at = now + (c.left or 0) }
+        return true
+    end
+
     function M.on_our_cast(name, W, S, now)
         if type(name) ~= "string" then return end
         local list, n = rows(W)
@@ -138,6 +169,14 @@ return function(P, lib, data, K)
                     table.remove(pending.stings, i)
                     break
                 end
+            end
+        elseif S and S.foes and stopper_name(name) and stop_job(name, S, now) then
+            -- (opened in stop_job)
+        elseif S and S.team and S.team.peel and S.team.peel.action == name then
+            local p = S.team.peel
+            local f = S.foes[p.guid]
+            if f and f.target_guid then
+                pending.peels[#pending.peels + 1] = { guid = p.guid, ally = f.target_guid, name = name, at = now }
             end
         elseif name == "Feign Death" and S and S.foes then
             for guid, f in pairs(S.foes) do
@@ -264,6 +303,33 @@ return function(P, lib, data, K)
             elseif (now - p.at) >= KF.disengage_window then
                 answer("disengage", false, string.format("still on you %.0f s after Disengage", KF.disengage_window), now)
                 table.remove(pending.disengage, i)
+            end
+        end
+        -- A stop of yours: the cast's bar gone before its end (stopped), or
+        -- still on it a second later, or run to its end (went through).
+        for i = #pending.stops, 1, -1 do
+            local p = pending.stops[i]
+            local f = S and S.foes and S.foes[p.guid] or nil
+            local c = f and f.casting or nil
+            local same = c and c.name == p.cast
+            if not same and now < (p.end_at - 0.3) then
+                answer("stop_cast", true, string.format("your %s ended %s's %s early", p.name, tostring(f and f.name or "?"), p.cast), now)
+                table.remove(pending.stops, i)
+            elseif (same and (now - p.at) >= 1.0) or (not same and now >= (p.end_at - 0.3)) then
+                answer("stop_cast", false, string.format("your %s: %s's %s went on", p.name, tostring(f and f.name or "?"), p.cast), now)
+                table.remove(pending.stops, i)
+            end
+        end
+        -- A peel of yours: the enemy off your ally within 3 s.
+        for i = #pending.peels, 1, -1 do
+            local p = pending.peels[i]
+            local f = S and S.foes and S.foes[p.guid] or nil
+            if f and f.target_guid ~= p.ally then
+                answer("peel", true, string.format("your %s took %s off your ally", p.name, tostring(f.name)), now)
+                table.remove(pending.peels, i)
+            elseif (now - p.at) >= 3.0 then
+                answer("peel", false, string.format("your %s: %s still on your ally after 3 s", p.name, tostring(f and f.name or "?")), now)
+                table.remove(pending.peels, i)
             end
         end
         -- A sting at an add with nothing heard either way: no answer.

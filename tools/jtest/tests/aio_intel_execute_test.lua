@@ -201,4 +201,53 @@ T[#T + 1] = { "the press veto: a cast-time spell refused while a sure interrupte
     assert_eq(G.I.press_veto("Aimed Shot", G.target, { cast = 3 }), nil, "its Kick seen down")
 end }
 
+-- --- the field checks: does what it presses work in the game? ------------------------------
+
+local function fc_line(G)
+    local out = {}
+    for _, l in ipairs(G.I.fieldcheck.lines() or {}) do out[#out + 1] = l end
+    return table.concat(out, " / ")
+end
+
+T[#T + 1] = { "field check stop_cast: the priest's heal stopped by your Scatter Shot (its bar gone early) is a yes; one that runs on is a no", function()
+    local G = bundle()
+    G.files = {}
+    G.P.ctx.storage = { read_json = function(n) return G.files[n] end, write_json = function(n, v) G.files[n] = v return true end }
+    G.known["Scatter Shot"] = true
+    G.target.get_class = function() return WARRIOR end
+    G.in_combat, G.fight_age = true, 8
+    G.row.in_combat, G.row.targeting_me, G.row.dist, G.distance = true, true, 20, 20
+    G.row.hp, G.health[G.target.guid] = 0.2, 0.2
+    group(G, { { name = "Mate", dist = 10 } })
+    foe(G, 1, PRIEST, { name = "Priesty", row = { targeting_me = false, dist = 12, target_guid = G.target.guid, engaged = false } })
+    G.rows[2].casting = G.casting("Flash Heal", 2.5, 3.0)
+    step(G); step(G)
+    G.fire("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", { "player", 0, G.id_of("Scatter Shot") })
+    G.rows[2].casting = nil                                   -- the bar gone at once
+    step(G)
+    has(fc_line(G), "ends the player's cast: yes (1 of 1)", "stopped")
+    -- A second one that runs on.
+    G.rows[2].casting = G.casting("Greater Heal", 2.5, 3.0)
+    step(G)
+    G.fire("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", { "player", 0, G.id_of("Scatter Shot") })
+    step(G, 0.6); step(G, 0.6)
+    has(fc_line(G), "ends the player's cast: mixed (1 of 2)", "one went on")
+end }
+
+T[#T + 1] = { "field check peel: the warrior off your healer within 3 s after your peel is a yes", function()
+    local G = bundle()
+    G.files = {}
+    G.P.ctx.storage = { read_json = function(n) return G.files[n] end, write_json = function(n, v) G.files[n] = v return true end }
+    G.known["Scatter Shot"] = true
+    G.target.get_class = function() return WARRIOR end
+    G.in_combat, G.fight_age = true, 8
+    local allies = group(G, { { name = "Heals", dist = 14, healer = true } })
+    G.row.in_combat, G.row.targeting_me, G.row.target_guid, G.row.dist, G.distance = true, false, allies[1].guid, 12, 12
+    step(G); step(G)
+    G.fire("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", { "player", 0, G.id_of("Scatter Shot") })
+    G.row.target_guid = nil                                   -- scattered: off the healer
+    step(G)
+    has(fc_line(G), "takes the enemy off your ally: yes (1 of 1)", "peeled")
+end }
+
 return T
