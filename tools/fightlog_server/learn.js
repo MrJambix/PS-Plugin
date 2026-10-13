@@ -551,12 +551,14 @@ function build(batchesIn, lessonsIn, opts) {
     ];
     for (const [s, why] of Object.entries(NOT_MEASURED)) limitations.push(`${s.replace(/_/g, ' ')}: not measured (${why})`);
     for (const [gname, g] of Object.entries(out_games)) if (g.contributors < o.minContributors) limitations.push(`${gname}: ${g.contributors} contributor(s); nothing on it is offered`);
-    const reasons = {};
+    const reasons = {}, repairs = {};
     for (const q of screened.quarantined) for (const r of q.reasons) reasons[r.replace(/\d+/g, 'N')] = (reasons[r.replace(/\d+/g, 'N')] || 0) + 1;
+    for (const q of screened.repaired || []) for (const r of q.reasons) repairs[r] = (repairs[r] || 0) + 1;
     return {
         schema: 1, built_at: new Date().toISOString(), fights: fightIds.size, contributors: contributors.size, observations,
         episodes: episodesSeen, lessons: lessons.length, games: out_games, evaluation: evaluationOut, limitations,
-        screen: { quarantined: screened.quarantined.length, reasons, contributors: Object.keys(screened.contributors).length },
+        screen: { quarantined: screened.quarantined.length, reasons, repaired: (screened.repaired || []).length, repairs,
+                  contributors: Object.keys(screened.contributors).length },
         thresholds: o,
     };
 }

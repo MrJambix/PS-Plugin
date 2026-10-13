@@ -37,11 +37,12 @@
 -- debrief. Priors, never facts.
 
 return function(P, lib, data, K)
-    local floor, max, min, huge = math.floor, math.max, math.min, math.huge
+    local floor, ceil, max, min, huge = math.floor, math.ceil, math.max, math.min, math.huge
     local KC = K.CENTRAL
 
     local M = {}
     M.SCHEMA = 1
+    M.REV = 2           -- the record's revision (client_block)
 
     local function opt(id, default)
         if not P.opt then return default end
@@ -306,9 +307,14 @@ return function(P, lib, data, K)
     local function client_block()
         local c = lib.client or {}
         -- `model`: the version this client ran under, so the service can read
-        -- what the rollout did in play (learn.js monitoring).
+        -- what the rollout did in play (learn.js monitoring). `rev`: the
+        -- record's revision. 2 (2026-10-13): what an enemy used and its habits
+        -- are its own doing only (an aura's caster, a spell's class:
+        -- state.own); episodes and forecasts are timed from their own fight;
+        -- the duration is rounded up. The service repairs a record of
+        -- revision 1 (no rev) and holds a 2 to it (trust.js).
         return { plugin = tostring(plugin_version()), game = game_name(), build = tostring(c.exact or "?"),
-                 schema = M.SCHEMA, model = T.model_version }
+                 schema = M.SCHEMA, model = T.model_version, rev = M.REV }
     end
 
     local function enqueue(kind, route, body)
@@ -337,7 +343,9 @@ return function(P, lib, data, K)
         end
         local client = client_block()
         local me = { class = tostring(f.me.class or "?"), level = f.me.level }
-        local encounter = { type = tostring(f.mode or "?"), duration = floor((f.duration or 0) + 0.5), outcome = tostring(f.outcome or "?"),
+        -- Whole seconds, rounded up: a fight of 0.3 s with forecasts in it
+        -- read "0 s" to the service and was set aside (live 2026-10-13).
+        local encounter = { type = tostring(f.mode or "?"), duration = ceil(f.duration or 0), outcome = tostring(f.outcome or "?"),
                             enemies = #f.foe_order }
         local enemies = {}
         for _, guid in ipairs(f.foe_order) do

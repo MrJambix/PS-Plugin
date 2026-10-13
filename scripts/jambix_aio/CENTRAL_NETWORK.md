@@ -636,6 +636,39 @@ been built; the user: "let's fix the first 9". In the network's terms:
   malformed or implausible; a relay service in front of GitHub is the way
   to remove the token from the plugin, and does not exist.
 
+## 14. The second live batch: the repair (2026-10-13)
+
+Seventeen more fights (issues #14 to #30) showed two faults in what the
+clients up to AIO 1.7.8 send (PVP_INTEL_PLAN §3.22): an enemy credited with
+what was only on it (another's shield, another class's spell) in the
+lesson's `used` and in that class's defensive habits; and episodes and
+forecasts timed from the fight before, past this fight's end, with a
+sub-second fight sent as 0 s. The client is fixed and marks its records
+`client.rev = 2`. Records without it are revision 1, and the trust screen
+now **repairs** them before it screens (`trust.js repair`), rather than
+quarantining a whole fight for one stray episode:
+
+- a name in an enemy's `used` that the client's tables give to another
+  class (`owners.js`, read off `scripts/jambix_aio/modules/pvp_data.lua`,
+  the file the plugin reads) is taken out;
+- when such a name is a defensive (Power Word: Shield, Blessing of
+  Protection, ...), that class's `defensive_threshold` and
+  `saving_cooldowns_until_low` observations in the same fight's batch are
+  taken out;
+- episodes and forecasts timed more than 5 s past the fight's end are
+  taken out; a 0 s fight with records is its rounding, not suspect.
+
+The repair only takes away; the stored records never change (it works on
+copies at every cycle); each repair is an audit row (`action: repaired`)
+with its reasons. A revision 2 record is held to its numbers as before: a
+forecast past its end or a 0 s fight with records in it is quarantined.
+
+The learning log gains **The fights**: one row per fight (the new ones; the
+first time, every one) with when it was received, the matchup and levels,
+the result, the length, its checks and episodes, and what became of it
+(used, used and repaired with why, or set aside with why); and a
+**Repaired** line beside *Set aside*.
+
 ## 8. Not done, and why
 
 - Movement-based recommendations are judged by the target's gap and your

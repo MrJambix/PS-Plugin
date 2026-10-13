@@ -102,7 +102,8 @@ test('trust: the same fight under a new id is quarantined as duplicate content; 
     const eps = [episode('gap_close_attempt', 'POSITION_IMPROVED', true), episode('gap_close_attempt', 'POSITION_IMPROVED', true)];
     const e1 = batch(c, 1, [], { episodes: eps });
     const e2 = batch(c, 2, [obs('same_opener', 'ROGUE', 0.5, false)], { episodes: eps.map(e => Object.assign({}, e, { id: id() })) });
-    const late = batch(c, 3, [obs('mobility_when_slowed', 'WARRIOR', 0.6, true, { t: 200 })]);
+    // (revision 2: held to its numbers; revision 1 is repaired, the next test)
+    const late = batch(c, 3, [obs('mobility_when_slowed', 'WARRIOR', 0.6, true, { t: 200 })], { client: { plugin: '1.7.9', game: 'Forever', build: '1.60.1.70338', rev: 2 } });
     const flood = batch(c, 4, Array.from({ length: 150 }, () => obs('mobility_when_slowed', 'WARRIOR', 0.6, true)));
     const perfect = batch(c, 5, Array.from({ length: 20 }, () => obs('mobility_when_slowed', 'WARRIOR', 0.9, true)));
     const r = trust.screen([a, again, e1, e2, late, flood, perfect], [], { maxPerDay: 40 });
@@ -125,6 +126,57 @@ test('trust: the same fight under a new id is quarantined as duplicate content; 
     const f = trust.screen([b1, b2], []);
     assert.strictEqual(f.batches.length, 1);
     assert.match(f.quarantined[0].reasons[0], /another contributor filed/);
+});
+
+test('trust, the repair (live 2026-10-13): a revision-1 record loses only what that client got wrong -- another class\'s spell in "used", the defensive habits read off another\'s shield, episodes and forecasts timed past the end -- every repair in the audit; a 0 s fight is its rounding; revision 2 is held to its numbers', () => {
+    const c = who(7);
+    const ok = () => obs('mobility_when_slowed', 'ROGUE', 0.6, true, { t: 2 });
+    const shieldOnRogue = obs('defensive_threshold', 'ROGUE', 0.5, true, { t: 3 });
+    const priestOwn = obs('defensive_threshold', 'PRIEST', 0.5, true, { t: 4 });
+    // The fight of issue #24: a priest's shield credited to the rogue; an episode from the fight before.
+    const b = batch(c, 0, [ok(), shieldOnRogue, priestOwn, obs('targeting_pet', 'ROGUE', 0.5, false, { t: 70 })],
+        { encounter: { type: 'world_pvp', duration: 9, outcome: 'won', enemies: 2 },
+          episodes: [episode('kill_opportunity', 'DAMAGE_OPPORTUNITY_CREATED', false, { t: 5 }), episode('kill_opportunity', 'SITUATION_WORSENED', false, { t: 48 })] });
+    const l = lesson(c, 0, b.fight, 'won', [], [
+        { class: 'PRIEST', used: { 'Power Word: Shield': 1, 'Flash Heal': 2 }, controls_on_me: {}, bursts: 0, hp_min: 0.2, died: true },
+        { class: 'ROGUE', used: { 'Power Word: Shield': 2, Evasion: 1 }, controls_on_me: {}, bursts: 0, hp_min: 0.1, died: true }]);
+    // The fight of issue #17: an Aimed Shot on a paladin, no hunter in the fight; nothing on the batch to take.
+    const b2 = batch(c, 0, [obs('defensive_threshold', 'PALADIN', 0.5, true, { t: 6 })]);
+    const l2 = lesson(c, 0, b2.fight, 'lost', [], [{ class: 'PALADIN', used: { 'Aimed Shot': 1, 'Divine Protection': 1 }, controls_on_me: {}, bursts: 0, hp_min: 0.5 }]);
+    // A fight of 0.3 s sent as 0 s by revision 1, its forecasts at 0.2 and 0.3.
+    const zero = batch(c, 0, [obs('targeting_pet', 'DRUID', 0.5, false, { t: 0.2 }), obs('targeting_pet', 'DRUID', 0.5, false, { t: 0.3 })],
+        { encounter: { type: 'world_pvp', duration: 0, outcome: 'won', enemies: 1 } });
+    // Revision 2 sends the same: impossible for it.
+    const zero2 = batch(c, 0, [obs('targeting_pet', 'DRUID', 0.5, false, { t: 0.2 })],
+        { client: { plugin: '1.7.9', game: 'Forever', build: '1.60.1.70338', rev: 2 }, encounter: { type: 'world_pvp', duration: 0, outcome: 'won', enemies: 1 } });
+    const r = trust.screen([b, b2, zero, zero2], [l, l2]);
+    const B = Object.fromEntries(r.batches.map(x => [x.id, x]));
+    const Lr = Object.fromEntries(r.lessons.map(x => [x.id, x]));
+    // The lesson: another class's names gone, the class's own kept.
+    assert.deepStrictEqual(Lr[l.id].enemies[1].used, { Evasion: 1 }, 'the rogue: Evasion, not the shield');
+    assert.deepStrictEqual(Lr[l.id].enemies[0].used, { 'Power Word: Shield': 1, 'Flash Heal': 2 }, 'the priest keeps its own shield');
+    assert.deepStrictEqual(Lr[l2.id].enemies[0].used, { 'Divine Protection': 1 }, 'the paladin: no Aimed Shot');
+    assert.strictEqual(l.enemies[1].used['Power Word: Shield'], 2, 'the stored record is never changed');
+    // The batch: the rogue's defensive habit (read off the shield) and the late forecast out; the rest kept.
+    assert.deepStrictEqual(B[b.id].observations.map(x => `${x.pattern}|${x.enemy_class}`), ['mobility_when_slowed|ROGUE', 'defensive_threshold|PRIEST']);
+    assert.deepStrictEqual(B[b.id].episodes.map(e => e.t), [5], 'the episode from the fight before out');
+    assert.strictEqual(B[b2.id].observations.length, 1, 'the paladin\'s own defensive habit: Aimed Shot is no shield');
+    assert.ok(B[zero.id], 'revision 1: a 0 s fight with records is its rounding');
+    assert.strictEqual(B[zero2.id], undefined, 'revision 2: quarantined');
+    assert.match(r.quarantined[0].reasons.join('; '), /a fight of 0 s with records in it/);
+    // Every repair in the audit, with its reasons.
+    const why = Object.fromEntries(r.repaired.map(x => [x.id, x.reasons.join('; ')]));
+    assert.match(why[l.id], /another class's spell/);
+    assert.match(why[l2.id], /another class's spell/);
+    assert.match(why[b.id], /forecast timed past the fight's end/);
+    assert.match(why[b.id], /episode timed past the fight's end/);
+    assert.match(why[b.id], /defensive habit read off another's shield/);
+    assert.strictEqual(r.audit.filter(a => a.action === 'repaired').length, 3);
+    // The learning log's table of the fights says what became of each.
+    const rows = require('./report').fightRows({ batches: [b, b2, zero, zero2], lessons: [l, l2] }, () => true, {});
+    assert.strictEqual(rows.length, 4);
+    assert.match(rows.find(x => /priest \+ rogue/.test(x.what)).status, /^used, repaired: /);
+    assert.match(rows.find(x => x.status.startsWith('set aside')).status, /a fight of 0 s with records in it/);
 });
 
 // --- the opponent model ----------------------------------------------------------------------------------

@@ -13,6 +13,18 @@
 //                       levels or two games)
 //   volume              more than maxPerDay fights from one contributor on a day
 //
+// Before the screen, the repair (2026-10-13): a record of revision 1 (no
+// client.rev: AIO 1.7.8 and earlier) carries two known faults of that
+// client, read off the second live batch -- an enemy credited with what was
+// only ON it (a priest's Power Word: Shield on a rogue, a paladin's Blessing
+// of Protection on a priest, an Aimed Shot a late token pinned on a
+// paladin), in the lesson's "used" and in that class's defensive habits;
+// and episodes and forecasts timed from the fight before (past this one's
+// end), a fight under half a second sent as 0 s. The repair only takes
+// away -- those names, those habit observations, those records -- and each
+// repair is in the audit; the screen then reads what is left. A record of
+// revision 2 is held to its numbers as before (suspicious).
+//
 // Weights (the learner's): a forecast with its inputs verified live weighs
 // 1, one without 0.5 (source quality); an episode with a quality flag
 // weighs nothing in a result; a contributor's share of a group is capped
@@ -21,6 +33,7 @@
 
 const crypto = require('crypto');
 const { normalize } = require('./validate');
+const owners = require('./owners');
 
 const DEFAULTS = {
     maxPerDay: 40,              // fights one contributor may file on one day; the rest quarantined
@@ -57,6 +70,64 @@ function dayOf(r) {
     return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : '?';
 }
 
+// --- the repair of revision 1 -----------------------------------------------------------------
+
+const revOf = r => Number(r && r.client && r.client.rev) || 1;
+const clone = r => JSON.parse(JSON.stringify(r));
+const fightKey = r => `${r.contributor}|${r.fight || ''}`;
+// The defensives the plugin counts (data.lua PROTECTION, fear aside): one of
+// these on a class not its owner moved that class's defensive habits.
+const PROTECTION = new Set(['Divine Shield', 'Divine Protection', 'Ice Block', 'Blessing of Protection', 'Deterrence', 'Evasion',
+    'Power Word: Shield', 'Ice Barrier', 'Shield Wall', 'Barkskin']);
+const DEFENSIVE_HABITS = new Set(['defensive_threshold', 'saving_cooldowns_until_low']);
+
+/**
+ * Revision 1 records repaired (see the header): new copies where something
+ * was taken away, the rest as they came, and an audit row per repair.
+ */
+function repair(batches, lessons, o) {
+    const audit = [];
+    const row = (kind, r, reasons) => audit.push({ at: r.received_at || null, kind, id: r.id, contributor: r.contributor, action: 'repaired', reasons });
+    const shielded = {};                    // contributor|fight -> classes whose defensive habits rest on another's shield
+    const lessonsOut = lessons.map(l => {
+        if (revOf(l) >= 2 || !Array.isArray(l.enemies)) return l;
+        let out = null;
+        l.enemies.forEach((e, i) => {
+            if (!e || !e.used || typeof e.used !== 'object') return;
+            for (const name of Object.keys(e.used)) {
+                const owner = owners.ownerOf(l.client && l.client.game, name, o.owners);
+                if (!owner || !e.class || owner === e.class) continue;
+                out = out || clone(l);
+                delete out.enemies[i].used[name];
+                if (PROTECTION.has(name)) (shielded[fightKey(l)] || (shielded[fightKey(l)] = new Set())).add(e.class);
+            }
+        });
+        if (!out) return l;
+        row('lesson', l, ["an enemy credited with another class's spell (revision 1)"]);
+        return out;
+    });
+    const batchesOut = batches.map(b => {
+        if (revOf(b) >= 2) return b;
+        const limit = (Number(b.encounter && b.encounter.duration) || 0) + o.tPastDuration;
+        const late = x => typeof x.t === 'number' && x.t > limit;
+        const classes = shielded[fightKey(b)];
+        const notTheirs = x => !!classes && DEFENSIVE_HABITS.has(x.pattern) && classes.has(x.enemy_class);
+        const obs = Array.isArray(b.observations) ? b.observations : [];
+        const eps = Array.isArray(b.episodes) ? b.episodes : [];
+        const reasons = [];
+        if (obs.some(late)) reasons.push("a forecast timed past the fight's end (revision 1)");
+        if (eps.some(late)) reasons.push("an episode timed past the fight's end (revision 1)");
+        if (obs.some(x => !late(x) && notTheirs(x))) reasons.push("a defensive habit read off another's shield (revision 1)");
+        if (!reasons.length) return b;
+        const out = clone(b);
+        out.observations = obs.filter(x => !late(x) && !notTheirs(x));
+        if (Array.isArray(b.episodes)) out.episodes = eps.filter(e => !late(e));
+        row('batch', b, reasons);
+        return out;
+    });
+    return { batches: batchesOut, lessons: lessonsOut, audit };
+}
+
 /** The reasons a batch's own numbers make it suspect; empty when none. */
 function suspicious(b, o) {
     const why = [];
@@ -67,7 +138,8 @@ function suspicious(b, o) {
     if (obs.length >= o.perfectMin && obs.every(x => x.sure && x.correct)) why.push(`${obs.length} forecasts, every one sure and right`);
     const eps = b.episodes || [];
     if (eps.some(e => typeof e.t === 'number' && e.t > d + o.tPastDuration)) why.push('an episode past the fight\'s end');
-    if (d === 0 && (obs.length > 0 || eps.length > 0)) why.push('a fight of 0 s with records in it');
+    // (revision 1 rounded a fight under half a second to 0 s; 2 rounds up)
+    if (d === 0 && revOf(b) >= 2 && (obs.length > 0 || eps.length > 0)) why.push('a fight of 0 s with records in it');
     return why;
 }
 
@@ -80,10 +152,12 @@ function screen(batchesIn, lessonsIn, opts) {
     const o = Object.assign({}, DEFAULTS, opts || {});
     // Every record in the shapes the learner reads (an empty {} list or [] map
     // from an older ingest), and nothing that is not a record at all.
-    const batches = (batchesIn || []).filter(r => r && typeof r === 'object').map(normalize);
-    const lessons = (lessonsIn || []).filter(r => r && typeof r === 'object').map(normalize);
+    const fixed = repair((batchesIn || []).filter(r => r && typeof r === 'object').map(normalize),
+        (lessonsIn || []).filter(r => r && typeof r === 'object').map(normalize), o);
+    const batches = fixed.batches, lessons = fixed.lessons;
+    const repaired = fixed.audit.map(a => ({ kind: a.kind, id: a.id, contributor: a.contributor, received_at: a.at, reasons: a.reasons }));
     const quarantined = [];
-    const audit = [];
+    const audit = fixed.audit.slice();
     const perDay = {};                  // contributor|day -> fights filed
     const fightsSeen = {};              // fight id -> { contributor, level, game }
     const batchPrints = new Set();
@@ -154,7 +228,7 @@ function screen(batchesIn, lessonsIn, opts) {
         stat(l.contributor).lessons += 1;
         lessonsOut.push(l);
     }
-    return { batches: batchesOut, lessons: lessonsOut, quarantined, audit, contributors, options: o };
+    return { batches: batchesOut, lessons: lessonsOut, quarantined, repaired, audit, contributors, options: o };
 }
 
 /** The weight of one forecast observation (source quality). */
@@ -171,4 +245,4 @@ function episodeCounts(e) {
     return !!r && r !== 'UNKNOWN';
 }
 
-module.exports = { DEFAULTS, screen, batchFingerprint, episodeFingerprint, lessonFingerprint, suspicious, observationWeight, episodeCounts };
+module.exports = { DEFAULTS, screen, repair, revOf, batchFingerprint, episodeFingerprint, lessonFingerprint, suspicious, observationWeight, episodeCounts };

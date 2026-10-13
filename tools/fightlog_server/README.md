@@ -35,8 +35,14 @@ address (60), `RETENTION_DAYS` (180, purged daily).
 ## Learn and publish
 
 Every cycle that saw something new writes an entry to `data/LEARNING_LOG.md`
-(`report.js`): what arrived, what the network knows and how far each habit
-is from being used, what changed, and what players get. On GitHub it is at
+(`report.js`): what arrived, every fight in a table (what it brought and
+what the screen did with it), what the network knows and how far each habit
+is from being used, what changed, and what players get. Records of an older
+client (no `client.rev`) are repaired before the screen (`trust.js repair`:
+another class's spell in "used", the defensive habits read off another's
+shield, episodes and forecasts timed past the fight's end; `owners.js` reads
+which class owns a spell off `scripts/jambix_aio/modules/pvp_data.lua`);
+each repair is in the audit. On GitHub it is at
 `https://github.com/MrJambix/PS-Plugin/blob/jambix-data/data/LEARNING_LOG.md`,
 and each Action run's summary page shows its entry.
 
@@ -108,8 +114,8 @@ node --test tools/fightlog_server/test.js tools/fightlog_server/github_ingest.te
 `test.js`: authorisation, invalid data, duplicates, the body and rate
 limits, privacy deletion, the gated publish with forced versions, canary
 and promotion, the audit, the knowledge routes, episodes, retention.
-`learn.test.js`: the groups and the backoff, the trust screen, the
-opponent model (caps, outliers, clusters, drift, conditions, a matchup
+`learn.test.js`: the groups and the backoff, the trust screen and the
+repair of older records, the fights table, the opponent model (caps, outliers, clusters, drift, conditions, a matchup
 apart), tactics (association, counterexamples, staleness), the
 evaluation, the release (reject, full, hold, canary, promote, withdraw,
 force, a worse candidate, the monitoring, preview).

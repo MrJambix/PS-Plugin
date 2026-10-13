@@ -126,7 +126,9 @@ return function(P, lib, data, K)
                     if e and e.source == "UNIT_SPELLCAST_START" and (r.at - (e.seen_at or -huge)) < 10 then
                         e.ready_at, e.conf, e.interrupted = nil, 0, true
                     end
-                elseif kind == "cast" or kind == "start" or kind == "channel" or kind == "buff" then
+                elseif (kind == "cast" or kind == "start" or kind == "channel" or kind == "buff")
+                    and not (lib.own and lib.own(f, r) == false) then
+                    -- (another's shield on it, another class's spell: not its cooldown)
                     local row = M.fact(r.name, f.class)
                     local e = entry_of(f, r.name)
                     e.id, e.seen_at, e.source, e.kind, e.interrupted = r.id, r.at, r.source, kind, nil

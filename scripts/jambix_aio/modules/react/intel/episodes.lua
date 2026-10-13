@@ -89,7 +89,7 @@ return function(P, lib, data, K)
 
     local T = {
         open = {}, closed = {}, count = 0, by_type = {}, last = nil,
-        dropped_dup = 0, dropped_full = 0, comparable = {},
+        dropped_dup = 0, dropped_full = 0, dropped_outside = 0, comparable = {},
         fight_start = nil,
     }
     M.T = T
@@ -471,8 +471,13 @@ return function(P, lib, data, K)
     end
 
     local function open_windows(W, S, now)
-        local fight = lib.debrief and lib.debrief.T and lib.debrief.T.fight or nil
-        T.fight_start = fight and fight.started_at or T.fight_start
+        -- The fight running now, or none (never the last one: live 2026-10-13
+        -- an episode opened between fights, or on a fight's first tick before
+        -- the debrief opened it, was timed from the fight before). The
+        -- debrief's T.fight stays on a closed fight: T.open says it runs.
+        local D = lib.debrief and lib.debrief.T or nil
+        local fight = D and D.open and D.fight or nil
+        T.fight_start = fight and fight.started_at or nil
         -- You: a root under pressure, the dead zone, the pet, the numbers.
         local me = S.me
         local rooted = me.root ~= nil
@@ -638,14 +643,28 @@ return function(P, lib, data, K)
 
     --- The fight ended (debrief.lua): the open windows are cut; the fight's
     --- episodes and their summary are handed back, and the slate wiped.
-    function M.close_fight(S, now)
+    --- started_at (the fight's start, the debrief's clock): each episode is
+    --- timed from it, one that opened just before it at 0; one whose window
+    --- closed before the fight began is no part of it and is dropped (counted).
+    function M.close_fight(S, now, started_at)
         for i = #T.open, 1, -1 do close(T.open[i], S, now, "the fight ended") end
+        if started_at then
+            for i = #T.closed, 1, -1 do
+                local e = T.closed[i]
+                if (e.t_open + (e.horizon or 0)) < started_at then
+                    table.remove(T.closed, i)
+                    T.dropped_outside = T.dropped_outside + 1
+                else
+                    e.t = math.max(0, e.t_open - started_at)
+                end
+            end
+        end
         local list = {}
         for i = 1, #T.closed do list[i] = M.compact(T.closed[i]) end
         local summary = M.summary()
         -- The slate wiped for the next fight; the last episode stays readable.
         for i = #T.closed, 1, -1 do T.closed[i] = nil end
-        T.count, T.dropped_dup, T.dropped_full = 0, 0, 0
+        T.count, T.dropped_dup, T.dropped_full, T.dropped_outside = 0, 0, 0, 0
         for k in pairs(T.by_type) do T.by_type[k] = nil end
         for k in pairs(prev) do prev[k] = nil end
         return list, summary
@@ -656,7 +675,7 @@ return function(P, lib, data, K)
         local s = { episodes = #T.closed, by_type = {}, prediction = { HIT = 0, MISS = 0, CENSORED = 0, INVALID = 0, NONE = 0 },
                     recommendation = { FOLLOWED = 0, NOT_FOLLOWED = 0, UNKNOWN = 0 }, results = {},
                     threats = {}, cooldowns = { ours = {}, theirs = {} }, position_changes = 0, lessons = {},
-                    dropped_duplicates = T.dropped_dup, dropped_full = T.dropped_full,
+                    dropped_duplicates = T.dropped_dup, dropped_full = T.dropped_full, dropped_outside = T.dropped_outside,
                     inputs = lib.predict and lib.predict.inputs_text and lib.predict.inputs_text() or "" }
         local seen_lesson = {}
         for i = 1, #T.closed do
@@ -716,7 +735,7 @@ return function(P, lib, data, K)
     function M.reset()
         for i = #T.open, 1, -1 do T.open[i] = nil end
         for i = #T.closed, 1, -1 do T.closed[i] = nil end
-        T.count, T.dropped_dup, T.dropped_full, T.last = 0, 0, 0, nil
+        T.count, T.dropped_dup, T.dropped_full, T.dropped_outside, T.last = 0, 0, 0, 0, nil
         for k in pairs(T.by_type) do T.by_type[k] = nil end
         for k in pairs(T.comparable) do T.comparable[k] = nil end
         for k in pairs(prev) do prev[k] = nil end

@@ -380,7 +380,7 @@ return function(P, lib)
             if type(args) ~= "table" or args[1] ~= "added" then return end
             local token = args[2]
             if token == "player" or token == "pet" then return end
-            local guid = state.on_aura(token, args[4], args[5], args[10] == true, clock())
+            local guid = state.on_aura(token, args[4], args[5], args[10] == true, clock(), args[9])
             -- One of our controls landing on a player: its duration, for the field checks.
             if guid and args[9] == "player" then pcall(fieldcheck.on_control_aura, guid, args[5], args[7], clock()) end
         end)

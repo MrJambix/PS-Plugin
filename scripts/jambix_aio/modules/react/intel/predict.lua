@@ -213,7 +213,11 @@ return function(P, lib, data, K)
         if lib.central and lib.central.observe then
             local S = S_now
             local ok, data_why = needs_live(key)
-            local fight = lib.debrief and lib.debrief.T and lib.debrief.T.fight or nil
+            -- The fight running (the debrief's T.fight stays on a closed one:
+            -- a forecast scored between fights was timed from the last and sent
+            -- with the next, past its end -- live 2026-10-13); none, no time.
+            local D = lib.debrief and lib.debrief.T or nil
+            local fight = D and D.open and D.fight or nil
             lib.central.observe({
                 pattern = key, enemy_class = f and f.class or "?", p = fc.p, reliability = fc.rel, sure = fc.sure,
                 basis = c.basis, evidence = fc.n, inputs_ok = ok, hit = hit,
@@ -339,6 +343,10 @@ return function(P, lib, data, K)
                 else
                     T.inputs.enemy_casts = T.inputs.enemy_casts + 1
                 end
+                -- A habit is the player's own doing: a row that is not (a
+                -- priest's shield on a rogue, another class's spell) is no
+                -- chance and no hit of any pattern (live 2026-10-13).
+                if lib.own and lib.own(f, row) == false then kind = "not_own" end
                 if (kind == "cast" or kind == "start" or kind == "channel" or kind == "buff") and data.MOBILITY[name] then
                     p.last_mobility_at = row.at
                 end

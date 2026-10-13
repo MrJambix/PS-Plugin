@@ -132,7 +132,7 @@ return function(P, lib, data, K)
             foes = {}, foe_order = {},
             moments = {}, unused = {}, lessons = {},
             windows = { danger_defensive = 0, melee_unslowed = 0, melee_on_me = 0, kill = {}, stoppable = 0 },
-            predictions = { forecasts = 0, right = 0, brier = 0, patterns = {} },
+            predictions = { forecasts = 0, right = 0, brier = 0, brier_sum = 0, patterns = {} },
             baits = { offered = 0, kinds = {} }, holds = 0,
             threat_peak = { level = "INFORMATIONAL", score = 0, at = 0 },
             states = {}, last_scan = {}, ledger_at_start = {},
@@ -174,7 +174,7 @@ return function(P, lib, data, K)
         local by = {}
         for k, v in pairs(ev.unresolved_by or {}) do by[k] = v end
         return { casts = ev.casts or 0, auras = ev.auras or 0, unresolved = ev.unresolved or 0, by = by,
-                 not_player = ev.not_player or 0, not_hostile = ev.not_hostile or 0 }
+                 not_player = ev.not_player or 0, not_hostile = ev.not_hostile or 0, not_own = ev.not_own or 0 }
     end
 
     local function start(S, now)
@@ -287,7 +287,15 @@ return function(P, lib, data, K)
                 for i = 1, #(foe.recent or {}) do
                     local row = foe.recent[i]
                     if row.at > since then
-                        if row.kind == "cast" or row.kind == "start" or row.kind == "channel" then
+                        -- What it used is its own doing: another's shield on
+                        -- it, another class's spell, is said, not counted.
+                        local own = not (lib.own and lib.own(foe, row) == false)
+                        if not own then
+                            local cover = row.kind == "buff" and data.PROTECTION[row.name]
+                            if cover and cover ~= "fear" then
+                                moment(f, now, string.format("%s gets %s from another at %d%%", r.name, row.name, floor((foe.hp or 1) * 100 + 0.5)))
+                            end
+                        elseif row.kind == "cast" or row.kind == "start" or row.kind == "channel" then
                             bump(r.used, row.name)
                         elseif row.kind == "buff" then
                             local cover = data.PROTECTION[row.name]
@@ -469,7 +477,7 @@ return function(P, lib, data, K)
         -- The predictor's score this fight.
         local pr = f.predictions
         if pr.forecasts > 0 then
-            add("forecasts", string.format("%d forecast(s) made this fight, %d on the right side (Brier %.2f)", pr.forecasts, pr.right, pr.brier / pr.forecasts), 0)
+            add("forecasts", string.format("%d forecast(s) made this fight, %d on the right side (Brier %.2f)", pr.forecasts, pr.right, pr.brier), 0)
         end
         table.sort(L, function(a, b) return a.seconds > b.seconds end)
         local out = {}
@@ -503,9 +511,12 @@ return function(P, lib, data, K)
             if d > 0 then
                 f.predictions.forecasts = f.predictions.forecasts + d
                 f.predictions.right = f.predictions.right + (l.right - before.right)
-                f.predictions.brier = f.predictions.brier + (l.brier - before.brier)
+                f.predictions.brier_sum = f.predictions.brier_sum + (l.brier - before.brier)
             end
         end
+        -- The fight's Brier score is the mean over its forecasts (0 = every one
+        -- right and sure, 0.25 = a coin): until 2026-10-13 the sum went up as it.
+        f.predictions.brier = f.predictions.forecasts > 0 and f.predictions.brier_sum / f.predictions.forecasts or 0
         for _, guid in ipairs(f.foe_order) do
             local foe = S.foes[guid]
             local cats = foe and foe.pat and foe.pat.cats or nil
@@ -530,12 +541,12 @@ return function(P, lib, data, K)
                 if d > 0 then by[k] = d end
             end
             f.feeds = { casts = b.casts - a.casts, auras = b.auras - a.auras, unresolved = b.unresolved - a.unresolved,
-                        unresolved_by = by, not_hostile = b.not_hostile - a.not_hostile }
+                        unresolved_by = by, not_hostile = b.not_hostile - a.not_hostile, not_own = b.not_own - a.not_own }
             f.events_at_start = nil
         end
         -- The decision episodes of the fight, and their summary (the collector).
         if lib.episodes and lib.episodes.close_fight then
-            f.episodes, f.episodes_summary = lib.episodes.close_fight(S, now)
+            f.episodes, f.episodes_summary = lib.episodes.close_fight(S, now, f.started_at)
         end
         moment(f, now, string.format("the fight ends: %s (%s)", f.outcome, f.outcome_why))
         f.last_scan, f.ledger_at_start, f.windows_text = nil, nil, nil
@@ -703,8 +714,9 @@ return function(P, lib, data, K)
                 local by = {}
                 for k, v in pairs(f.feeds.unresolved_by or {}) do by[#by + 1] = k .. " " .. v end
                 table.sort(by)
-                out[#out + 1] = string.format("Enemy events this fight: %d cast(s), %d aura(s) kept; %d dropped%s",
-                    f.feeds.casts, f.feeds.auras, f.feeds.unresolved, #by > 0 and (" (unresolved: " .. table.concat(by, ", ") .. ")") or "")
+                out[#out + 1] = string.format("Enemy events this fight: %d cast(s), %d aura(s) kept; %d dropped%s%s",
+                    f.feeds.casts, f.feeds.auras, f.feeds.unresolved, #by > 0 and (" (unresolved: " .. table.concat(by, ", ") .. ")") or "",
+                    (f.feeds.not_own or 0) > 0 and string.format("; %d not the player's own (another's aura, another class's spell)", f.feeds.not_own) or "")
             end
             out[#out + 1] = string.format("You: low %d%%, controlled %.0f s; threat peak %s %d at %s; states %s",
                 floor((f.me.hp_min or 1) * 100 + 0.5), f.me.controlled_for, f.threat_peak.level, floor(f.threat_peak.score + 0.5),

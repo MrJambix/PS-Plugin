@@ -143,9 +143,10 @@ return function(P, lib)
         -- Every enemy event, kept or dropped and why (live 2026-10-12: three
         -- fights with no enemy ability recorded although the recorder shows
         -- Forever firing them for "target" and "softenemy"): unresolved by the
-        -- token's kind, not a player, not attackable.
+        -- token's kind, not a player, not attackable; and kept but not the
+        -- player's own doing (M.own: another's shield on it, another class's spell).
         events = { casts = 0, auras = 0, combat_log = 0, unresolved = 0, last = nil,
-                   unresolved_by = {}, not_player = 0, not_hostile = 0 },
+                   unresolved_by = {}, not_player = 0, not_hostile = 0, not_own = 0 },
     }
     M.S = S
 
@@ -192,12 +193,57 @@ return function(P, lib)
         return world and world.spell_name and world.spell_name(id) or nil
     end
 
+    -- --- whose a row is --------------------------------------------------------------
+    -- A row in a player's ring is something seen ON it: its own cast, or an
+    -- aura anyone put there. Live 2026-10-13 the fights credited a rogue
+    -- with a priest's Power Word: Shield, a priest with a paladin's Blessing
+    -- of Protection, and a paladin with an Aimed Shot (no enemy hunter in
+    -- that fight: a token read a moment late). What the player itself did
+    -- (its cooldowns, its habits, what it used) reads M.own; what is on it
+    -- (a shield up, a speed buff) reads every row.
+
+    -- A spell the client's tables give one class only (pvp_data.lua; PET,
+    -- RACIAL and a name two classes share give none). Built on first use:
+    -- the tables load after this file.
+    local owners = nil
+    local function owner_of(name)
+        if owners == nil then
+            local half = lib.pvp_data and lib.pvp_data[(lib.client and lib.client.forever) and "forever" or "vanilla"] or nil
+            if not (half and half.classes) then return nil end
+            owners = {}
+            for cls, tbl in pairs(half.classes) do
+                if cls ~= "PET" and cls ~= "RACIAL" then
+                    for n in pairs(tbl) do
+                        if owners[n] == nil then owners[n] = cls elseif owners[n] ~= cls then owners[n] = false end
+                    end
+                end
+            end
+        end
+        return type(name) == "string" and owners[name] or nil
+    end
+    M.owner_of = owner_of
+
+    --- Whether a row in a player's ring is the player's own doing: false
+    --- when the aura's caster was another unit or the spell is another
+    --- class's, true when the caster was the player, nil when nothing says.
+    ---@return boolean|nil
+    function M.own(f, row)
+        if not row then return nil end
+        if row.by == "other" then return false end
+        local owner = owner_of(row.name)
+        if owner and f and f.class and f.class ~= owner then return false end
+        if row.by == "self" then return true end
+        return nil
+    end
+    lib.own = M.own
+
     local function push_recent(f, row)
         local list = f.recent
         list[#list + 1] = row
         while #list > RECENT do table.remove(list, 1) end
         f.recent_at = row.at
         S.events.last = row
+        if M.own(f, row) == false then S.events.not_own = S.events.not_own + 1 end
     end
 
     -- --- the players ----------------------------------------------------------------
@@ -878,8 +924,10 @@ return function(P, lib)
     --- An aura appearing on another unit (UNIT_AURA "added": { "added",
     --- token, instance_id, spell_id, name, stacks, duration, expiration,
     --- source, is_helpful, is_harmful, dispel }). A helpful aura on an
-    --- enemy is the proxy a cooldown is seen through (Stage 3).
-    function M.on_aura(token, spell_id, name, helpful, now)
+    --- enemy is the proxy a cooldown is seen through (Stage 3) -- when the
+    --- enemy put it there itself: `source` is the caster's token (nil when
+    --- the client does not know it), kept on the row as `by`.
+    function M.on_aura(token, spell_id, name, helpful, now, source)
         if skip_token(token) then return end
         local unit, guid = resolve(token, now)
         if not unit or not guid then
@@ -892,8 +940,21 @@ return function(P, lib)
         if not f then return end
         S.events.auras = S.events.auras + 1
         local id = tonumber(spell_id)
+        -- Its caster: the wearer ("self"), anyone else ("other": ours and
+        -- our group's included), or unknown (nil).
+        local by = nil
+        if type(source) == "string" and source ~= "" then
+            if source == token then
+                by = "self"
+            elseif skip_token(source) then
+                by = "other"
+            else
+                local _, sg = resolve(source, now)
+                if sg then by = (sg == guid) and "self" or "other" end
+            end
+        end
         push_recent(f, { id = id, name = (type(name) == "string" and name ~= "") and name or spell_name(id) or ("aura " .. tostring(id)),
-                         at = now, kind = helpful and "buff" or "debuff", source = "UNIT_AURA" })
+                         at = now, kind = helpful and "buff" or "debuff", source = "UNIT_AURA", by = by })
         return guid
     end
 

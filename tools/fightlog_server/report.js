@@ -9,6 +9,7 @@
 // entry is compared with. A cycle with nothing new writes nothing.
 
 const groups = require('./groups');
+const trust = require('./trust');
 
 const PATTERN_TEXT = {
     mobility_when_slowed: 'closes the gap when slowed',
@@ -53,6 +54,48 @@ function fightsOf(batches, lessons) {
     return Array.from(fights.values());
 }
 
+/** One row per fight in the records the filter lets through, oldest first,
+ *  with what the trust screen did with its batch and its lesson. */
+const FIGHT_ROWS = 60;
+function fightRows(records, keep, th) {
+    const screened = trust.screen(records.batches || [], records.lessons || [], th || {});
+    const fate = {};                        // record id -> { kind: 'repaired' | 'set aside', reasons }
+    for (const r of screened.repaired || []) fate[r.id] = { kind: 'repaired', reasons: r.reasons };
+    for (const q of screened.quarantined) fate[q.id] = { kind: 'set aside', reasons: q.reasons };
+    const fights = new Map();
+    const fid = r => String(r.fight || r.id);
+    const row = r => fights.get(fid(r)) || { received: r.received_at || '', game: r.client && r.client.game, me: r.me, encounter: r.encounter || {},
+        foes: [], obs: 0, eps: 0, fates: [] };
+    for (const b of (records.batches || []).filter(keep)) {
+        const f = row(b);
+        f.obs += (b.observations || []).length; f.eps += (b.episodes || []).length;
+        if (fate[b.id]) f.fates.push(fate[b.id]);
+        if (!f.foes.length) for (const x of b.observations || []) if (!f.foes.includes(x.enemy_class)) f.foes.push(x.enemy_class);
+        fights.set(fid(b), f);
+    }
+    for (const l of (records.lessons || []).filter(keep)) {
+        const f = row(l);
+        f.foes = (l.enemies || []).map(e => e.class);       // the lesson names every one
+        f.encounter = l.encounter || f.encounter;
+        if (fate[l.id]) f.fates.push(fate[l.id]);
+        if (!f.received || (l.received_at && l.received_at < f.received)) f.received = l.received_at || f.received;
+        fights.set(fid(l), f);
+    }
+    return Array.from(fights.values()).sort((a, b) => String(a.received).localeCompare(String(b.received))).map(f => {
+        const counted = {};
+        for (const c of f.foes.filter(Boolean).map(cls)) counted[c] = (counted[c] || 0) + 1;
+        const vs = Object.entries(counted).map(([c, n]) => (n > 1 ? `${c} x${n}` : c)).join(' + ') || 'unknown';
+        const setAside = f.fates.filter(x => x.kind === 'set aside');
+        const repaired = f.fates.filter(x => x.kind === 'repaired');
+        const status = setAside.length ? `set aside: ${setAside[0].reasons.join('; ')}`
+            : repaired.length ? `used, repaired: ${repaired.map(x => x.reasons.join('; ')).join('; ')}` : 'used';
+        return { when: String(f.received).replace('T', ' ').slice(0, 16),
+            what: `${f.game || '?'}: ${cls(f.me && f.me.class)}${f.me && f.me.level ? ' ' + f.me.level : ''} vs ${vs}`,
+            outcome: f.encounter.outcome || '?', length: f.encounter.duration !== undefined ? `${f.encounter.duration} s` : '?',
+            obs: f.obs, eps: f.eps, status };
+    });
+}
+
 function describeFights(list) {
     if (!list.length) return 'no fight';
     const contributors = new Set(list.map(f => f.contributor)).size;
@@ -73,6 +116,7 @@ function describeFights(list) {
 function snapshotOf(model, decision, version) {
     const snap = { at: model.built_at, decision, version: version || null, fights: model.fights, contributors: model.contributors,
         observations: model.observations, episodes: model.episodes, quarantined: model.screen ? model.screen.quarantined : 0,
+        repaired: model.screen ? model.screen.repaired || 0 : 0, fights_listed: true,
         patterns: {}, tactics: {}, lessons: {} };
     for (const [game, G] of Object.entries(model.games || {})) {
         for (const [klass, c] of Object.entries(G.by_class || {})) {
@@ -135,8 +179,23 @@ function entry(cycle, prev, records, opts) {
     const q = model.screen ? model.screen.quarantined : 0;
     const qNew = q - (prev ? prev.quarantined || 0 : 0);
     if (qNew > 0) L.push(`**Set aside (quarantined):** ${qNew} record(s): ${Object.entries(model.screen.reasons || {}).map(([r, n]) => `${r} (${n})`).join('; ')}.`);
+    const rp = model.screen ? model.screen.repaired || 0 : 0;
+    const rpNew = rp - (prev ? prev.repaired || 0 : 0);
+    if (rpNew > 0) L.push(`**Repaired (an older client's known faults taken out, the rest kept):** ${rpNew} record(s): ${Object.entries(model.screen.repairs || {}).map(([r, n]) => `${r} (${n})`).join('; ')}.`);
     L.push(`**In all:** ${model.fights} fight(s) from ${model.contributors} player(s), ${model.observations} prediction check(s), ${model.episodes} decision episode(s).`);
     L.push('');
+
+    // The fights themselves, one row each: the new ones (every one, the first
+    // time this table is written), what each brought and what the screen did with it.
+    const listed = fightRows(records, prev && prev.fights_listed ? fresh : () => true, th);
+    if (listed.length) {
+        L.push(`### The fights (${prev && prev.fights_listed ? 'new since the last cycle' : 'every fight so far'})`);
+        L.push('| Received (UTC) | Fight | Result | Length | Checks | Episodes | What became of it |');
+        L.push('|---|---|---|---|---|---|---|');
+        for (const f of listed.slice(0, FIGHT_ROWS)) L.push(`| ${f.when} | ${f.what} | ${f.outcome} | ${f.length} | ${f.obs} | ${f.eps} | ${f.status} |`);
+        if (listed.length > FIGHT_ROWS) L.push(`| ... | and ${listed.length - FIGHT_ROWS} more | | | | | |`);
+        L.push('');
+    }
 
     // What players get.
     L.push('### What players get');
@@ -254,4 +313,4 @@ function prepend(existing, md) {
     return title + md + '\n' + body;
 }
 
-module.exports = { entry, snapshotOf, prepend, fightsOf, describeFights, shortfall, PATTERN_TEXT };
+module.exports = { entry, snapshotOf, prepend, fightsOf, fightRows, describeFights, shortfall, PATTERN_TEXT };

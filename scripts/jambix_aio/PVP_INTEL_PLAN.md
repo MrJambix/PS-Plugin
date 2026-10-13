@@ -1613,6 +1613,58 @@ unchanged, nothing new explains the crashes they answer.
 (one issue per fight), new `aio_intel_fieldcheck_test` (5), new
 `jcore_units_item_test` (fails on the old sweep). Node: 27.
 
+### 3.22 The second live batch — 2026-10-13
+
+Seventeen fights with players arrived as issues #14 to #30 between 00:16
+and 00:39 UTC (hunter 30, Forever PvP realm; 12 won, 2 lost both 1 against
+5, 3 fled), on top of the first three. Read back from the issues and
+replayed through the service locally, they showed four faults; the user:
+"fix all the issues".
+
+1. **Attribution.** The debrief's `used` and the predictor's defensive
+   habits read every helpful aura on a player as the player's own: a
+   priest's Power Word: Shield on a rogue (issue #24), a paladin's Blessing
+   of Protection on a priest (#14), and an Aimed Shot cast row on a paladin
+   with no enemy hunter in the fight (#17, a token read a moment late). The
+   UNIT_AURA record carries the caster's token (`args[9]`); `state.on_aura`
+   keeps it as `row.by` ("self" / "other" / nil) and `state.own(f, row)`
+   (also `lib.own`) answers false for another's aura or another class's
+   spell (`pvp_data.lua`, unique names; PET, RACIAL and shared names give
+   no owner), true for its own aura, nil when nothing says. Readers of "its
+   doing" skip false: `cooldowns.feed`, `predict` (every pattern's chance
+   and hit), the debrief's `used`. Readers of "what is on it" read every
+   row: threat, kill window, team, episodes, the control plan.
+   `S.events.not_own` counts the rows recorded as another's (at entry, when
+   the class is known); the feeds carry it.
+2. **The fight's clock.** `debrief.T.fight` stays on a closed fight
+   (`T.open` is the running flag). `episodes.open_windows` and
+   `predict`'s observation stamp read `T.fight` alone, so between fights
+   (and on a fight's first tick, before the debrief opens it) they timed
+   from the last fight; those episodes were sent with the next fight past
+   its end (#19, #21, #27, #28, #30) and one forecast too. Both read
+   `T.open` now; `episodes.close_fight(S, now, started_at)` times each
+   episode from the fight's start (one that opened just before it at 0)
+   and drops one whose window closed before the start
+   (`summary.dropped_outside`).
+3. **Rounding.** `encounter.duration` was `floor(x + 0.5)`: a 0.3 s kill
+   was "0 s" with forecasts in it (#21, #30). It is `ceil` now (the service
+   validates whole seconds).
+4. **Brier.** The lesson's `predictions.brier` was the sum of squared
+   errors; it is the mean, the sum as `brier_sum`.
+
+The records carry `client.rev = 2` (`central.lua M.REV`). The service
+repairs revision 1 (`trust.js repair`, CENTRAL_NETWORK §14): with the
+repair all twenty fights are used, twelve records repaired, none set
+aside. What the batch says otherwise, for the stages: enemy casts barely
+reach the picture (42 cast events against 343 auras; 13 of 17 fights had
+none), so the cast-based patterns stay thin; the hold and the bait never
+fired in 17 fights (nothing to judge them on yet); the movement advice was
+followed 3 times, not followed 14, unknown 21; the network's forecasts
+score a coin's 0.25.
+
+**Validation.** New `aio_intel_attribution_test` (5); the server's
+`learn.test.js` gains the repair and the fights table (28 Node tests).
+
 ---
 
 ## 4. Risks, unknowns, and what only the game can answer
