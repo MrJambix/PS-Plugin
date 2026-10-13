@@ -145,7 +145,7 @@ return function(P, lib, data, K)
     local function pat_of(f)
         local p = f.pat
         if not p then
-            p = { cats = {}, scan_at = -huge, pending = {}, alerted = {}, encounter = 0,
+            p = { guid = f.guid, cats = {}, scan_at = -huge, pending = {}, alerted = {}, encounter = 0,
                   last_mobility_at = -huge, last_interrupt_at = -huge, last_interrupt = nil, last_breaker_at = -huge,
                   burst_was = nil, control_was = nil, trinket_was = false,
                   pet_window = nil, pet_next = -huge, in_combat_was = f.in_combat == true,
@@ -161,12 +161,21 @@ return function(P, lib, data, K)
         if not c then
             -- The prior: the central database's rate for this class and
             -- pattern when enough fights back it (central.lua), else 0.5.
-            local prior, backing, level = KP.prior, 0, nil
-            if lib.central and lib.central.prior_for and p.class then
-                local cp, n, lvl = lib.central.prior_for(p.class, key)
-                if cp then prior, backing, level = cp, n, lvl end
+            -- Stage 14: your own memory of THIS player first (memory.lua),
+            -- then the network's, then what your own fights say of its class.
+            local prior, backing, level, source = KP.prior, 0, nil, nil
+            local mp, mn, msrc = nil, 0, nil
+            if lib.memory and lib.memory.prior_for then mp, mn, msrc = lib.memory.prior_for(p.guid, p.class, key) end
+            if mp and msrc == "this player" then
+                prior, backing, level, source = mp, mn, msrc, "memory"
+            else
+                if lib.central and lib.central.prior_for and p.class then
+                    local cp, n, lvl = lib.central.prior_for(p.class, key)
+                    if cp then prior, backing, level, source = cp, n, lvl, "network" end
+                end
+                if source == nil and mp then prior, backing, level, source = mp, mn, msrc, "memory" end
             end
-            c = { events = {}, values = {}, prior = prior, prior_fights = backing, prior_level = level, hits = 0, total = 0, skipped = 0, unverified = 0,
+            c = { events = {}, values = {}, prior = prior, prior_fights = backing, prior_level = level, prior_source = source, hits = 0, total = 0, skipped = 0, unverified = 0,
                   skip_why = nil, unverified_why = nil,
                   recent = { hw = 0, mw = 0, n = 0, p = KP.prior }, earlier = { hw = 0, mw = 0, n = 0, p = KP.prior },
                   session = { hw = 0, mw = 0, n = 0, p = KP.prior },
@@ -681,8 +690,9 @@ return function(P, lib, data, K)
                 e.why = string.format("%d of %d chance(s) this session (%s: %.1f for, %.1f against; reliability %s; prior %.2f%s)%s%s",
                     c.hits, c.total, c.basis,
                     c.basis == "recent" and c.recent.hw or c.session.hw, c.basis == "recent" and c.recent.mw or c.session.mw,
-                    c.label, c.prior, (c.prior_fights or 0) > 0 and string.format(", the database's over %d fights%s", c.prior_fights,
-                        c.prior_level and (" at the " .. tostring(c.prior_level) .. " level") or "") or "",
+                    c.label, c.prior, (c.prior_source == "memory" and string.format(", your own past fights with %s: %.0f chance(s)", tostring(c.prior_level), c.prior_fights or 0))
+                        or ((c.prior_fights or 0) > 0 and string.format(", the database's over %d fights%s", c.prior_fights,
+                        c.prior_level and (" at the " .. tostring(c.prior_level) .. " level") or "")) or "",
                     c.skipped > 0 and string.format("; %d skipped: %s", c.skipped, tostring(c.skip_why)) or "",
                     c.unverified > 0 and string.format("; %d unverified: %s", c.unverified, tostring(c.unverified_why)) or "")
                 e.response, e.fallback = def.response, def.fallback

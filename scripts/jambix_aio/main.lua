@@ -1308,6 +1308,7 @@ local function start(JCore)
     -- The fight debriefs and the central database (2026-10-12).
     intel:toggle("intel_debrief", "Fight debriefs: each fight with a player recorded -- what they used, what you used, what stayed ready, how it ended -- with its lessons (the log: scripts_data/jambix.aio.fights.json)", true)
     intel:toggle("intel_debrief_say", "Say each fight's outcome and first lesson on screen", true)
+    intel:toggle("intel_memory", "Opponent memory: the players you fought and their habits, kept across sessions, and what your own fights say of each class -- where a prediction starts, never past the evidence (the file: scripts_data/jambix.aio.opponents.json)", true)
     intel:toggle("intel_history", "History ledger: each fight's predictions scored, major cooldowns spent for nothing, overlapping controls and defensives, how often the advice changed, advice you could not follow (the log: scripts_data/jambix.aio.history.json; no win rate)", true)
     intel:toggle("intel_episodes", "Decision episodes: a window round each tactical moment (a charge, a burst, a root, the dead zone, a kill window...) with the state before and after, what was predicted and advised, what you did, and a measured result", true)
     intel:label("Nothing here presses a key but the aspect for the moment, through the Aspects window's")

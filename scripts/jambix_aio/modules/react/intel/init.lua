@@ -160,6 +160,10 @@ return function(P, lib)
     local last_W = nil
     local central = load("modules/react/intel/central")(P, lib, data, weights)
     lib.central = central
+    -- Stage 14: the players you have fought, remembered across sessions
+    -- (before the predictor: its priors ask it).
+    local memory = load("modules/react/intel/memory")(P, lib, data, weights)
+    lib.memory = memory
     local predict = load("modules/react/intel/predict")(P, lib, data, weights)
     lib.predict_inputs = predict.inputs_text
     -- Stage 8: the baits, on the predictions, the threat, the ledger and
@@ -191,7 +195,7 @@ return function(P, lib)
     local replay = load("modules/react/intel/replay")(P, lib, data, weights)
     I.state, I.threat, I.cooldowns, I.data, I.weights = state, threat, cooldowns, data, weights
     I.states, I.position, I.explain, I.cc, I.predict, I.bait = states, position, explain, ccplan, predict, bait
-    I.kill, I.team, I.history, I.replay = killwindow, team, history, replay
+    I.kill, I.team, I.history, I.replay, I.memory = killwindow, team, history, replay, memory
     I.debrief, I.central, I.episodes, I.fieldcheck = debrief, central, episodes, fieldcheck
     I.S = state.S
     I.S.threat = threat.T
@@ -369,6 +373,7 @@ return function(P, lib)
         explain.update(W.intel, now)
         episodes.update(W, W.intel, now)
         debrief.update(W, W.intel, now)
+        pcall(memory.update, W, W.intel, now)
         local okh, errh = pcall(history.update, W, W.intel, now)
         if not okh and P.log and type(P.log.once) == "function" then pcall(P.log.once, "warn", "history", "history ledger failed: " .. tostring(errh)) end
         last_W = W
@@ -494,6 +499,7 @@ return function(P, lib)
         -- Logging out: the fight's history is closed and written, then every player forgotten.
         ctx.on("jcore.game_event.PLAYER_LOGOUT", function()
             pcall(history.on_logout, state.S, clock())
+            pcall(memory.on_logout, state.S)
             state.invalidate("logging out")
             killwindow.reset()
             team.reset()

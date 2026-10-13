@@ -420,6 +420,14 @@ S.HISTORY = {
     overlap_left = 1.0,
 }
 
+-- --- the opponent memory (Stage 14, memory.lua) ------------------------------
+S.MEMORY = {
+    -- Players kept on disk (the newest); an old count weighs half after this
+    -- many days; a player's own memory counts from this many chances, its
+    -- class's from class_min chances over class_players players.
+    keep = 300, half_life_days = 7, player_min = 1, class_min = 6, class_players = 2,
+}
+
 -- --- the replay of recorded fights (Stage 13, replay.lua) ----------------------
 S.REPLAY = {
     -- The recorded moments offered to the bench and replayed, newest first.
