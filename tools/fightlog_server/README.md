@@ -74,6 +74,15 @@ the rollback target, the known limitations). Clients seed a prior only
 from a reliable entry, from the narrowest group that has one; no model is
 ever a rule.
 
+## Filing and settings on GitHub
+
+The Action files the open issues once an hour (:07) and runs a learning
+cycle every six hours (:17); it no longer runs on each issue, so its cost
+in Actions minutes does not grow with the players. A fight comes as one
+issue (`jambix-fight <id>`, its lesson and its batch); older clients' two
+issues still file. The repository variable `JAMBIX_MIN_CONTRIBUTORS` sets
+how many players a habit, a tactic and a release need (unset: 2).
+
 ## Routes
 
 All under the client key (`X-Jambix-Key`) except `/health`.

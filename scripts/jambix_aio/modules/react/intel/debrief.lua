@@ -167,9 +167,20 @@ return function(P, lib, data, K)
         end
     end
 
+    --- The picture's enemy-event counters, copied (the fight's feeds are the
+    --- difference between its start and its end).
+    local function events_now(S)
+        local ev = S.events or {}
+        local by = {}
+        for k, v in pairs(ev.unresolved_by or {}) do by[k] = v end
+        return { casts = ev.casts or 0, auras = ev.auras or 0, unresolved = ev.unresolved or 0, by = by,
+                 not_player = ev.not_player or 0, not_hostile = ev.not_hostile or 0 }
+    end
+
     local function start(S, now)
         F = new_fight(S, now)
         T.open, T.fight = true, F
+        F.events_at_start = events_now(S)
         snapshot_ledger(S, F)
         moment(F, now, "the fight begins (" .. tostring(F.mode) .. ")")
     end
@@ -180,7 +191,7 @@ return function(P, lib, data, K)
         local name = spell_name(tonumber(spell_id))
         if not name then return end
         bump(F.me.used, name)
-        F.me.last_cast_at, F.me.last_cast_target = now, target_guid
+        F.me.last_cast_at, F.me.last_cast_target, F.me.last_cast_name = now, target_guid, name
         if data.OUR_SLOW_CASTS[name] then F.me.slow_used_at = now end
         if F.me_sets and F.me_sets.defensives[name] then
             F.me.defensive_used_at = F.me.defensive_used_at or now
@@ -323,10 +334,28 @@ return function(P, lib, data, K)
                 -- Your own control on it, broken by your own hit.
                 local h = foe.cc and foe.cc.held or nil
                 local held_ours = h and h.ours == "yes" and h.breaks and h.name or nil
-                if r.control_was and not held_ours and r.control_left_was > KD.own_break_left
-                    and (now - me.last_cast_at) <= KD.own_break_window and me.last_cast_target == foe.guid then
-                    f.windows.own_break = (f.windows.own_break or 0) + 1
-                    moment(f, now, string.format("your hit broke your %s on %s (%.1fs left)", r.control_was, r.name, r.control_left_was))
+                -- Who broke it, named: a hit of yours at it (a damaging cast
+                -- within the window), else your pet on it, else your running
+                -- attack at it; otherwise not yours to answer for (an ally, a
+                -- tick, its own trinket) and no lesson.
+                if r.control_was and not held_ours and r.control_left_was > KD.own_break_left then
+                    local by = nil
+                    if (now - me.last_cast_at) <= KD.own_break_window and me.last_cast_target == foe.guid
+                        and (data.OUR_DAMAGE[me.last_cast_name or ""] or KD.breaking_casts[me.last_cast_name or ""]) then
+                        by = "your " .. me.last_cast_name
+                    elseif (foe.cc and foe.cc.pet_on) or (S.cc and S.cc.pet and S.cc.pet.guid == foe.guid) then
+                        by = "your pet"
+                    elseif S.env.target.guid == foe.guid and W.player and (W.player.auto_attacking or W.player.shooting) then
+                        by = "your running attack"
+                    end
+                    if by then
+                        f.windows.own_break = (f.windows.own_break or 0) + 1
+                        f.own_break_by = f.own_break_by or {}
+                        f.own_break_by[by] = (f.own_break_by[by] or 0) + 1
+                        moment(f, now, string.format("%s broke your %s on %s (%.1fs left)", by, r.control_was, r.name, r.control_left_was))
+                    else
+                        moment(f, now, string.format("your %s on %s ended early (%.1fs left): no hit of yours seen", r.control_was, r.name, r.control_left_was))
+                    end
                 end
                 r.control_was, r.control_left_was = held_ours, h and h.left or 0
             end
@@ -342,10 +371,11 @@ return function(P, lib, data, K)
                 moment(f, now, rec.name .. " dies")
             end
         end
-        local units = P.units
+        -- Off the unit: only one still there that the game calls dead (a
+        -- unit gone is a player that left: a Vanish, stealth, out of sight).
         for _, guid in ipairs(f.foe_order) do
             local rec = f.foes[guid]
-            if not rec.died and rec.unit and units and units.is_dead and try(units.is_dead, rec.unit) == true then
+            if not rec.died and rec.unit and lib.unit_dead and lib.unit_dead(rec.unit) then
                 rec.died = true
                 moment(f, now, rec.name .. " dies")
             end
@@ -410,7 +440,11 @@ return function(P, lib, data, K)
             add("kill_missed", string.format("kill window missed: %s was at %d%% for %.0f s and lived -- Aimed Shot, Multi-Shot, the pet, Intimidation", k.name, floor(k.hp * 100 + 0.5), k.seconds), k.seconds)
         end
         if (W.own_break or 0) > 0 then
-            add("own_cc_broken", string.format("you broke your own control %d time(s): no damage on a trapped or scattered player (the hold reaction says when)", W.own_break), W.own_break * 5)
+            local by = {}
+            for who, n in pairs(f.own_break_by or {}) do by[#by + 1] = string.format("%s %d", who, n) end
+            table.sort(by)
+            add("own_cc_broken", string.format("you broke your own control %d time(s)%s: no damage on a trapped or scattered player (the hold reaction says when)",
+                W.own_break, #by > 0 and (" (" .. table.concat(by, ", ") .. ")") or ""), W.own_break * 5)
         end
         if W.stoppable >= KD.lesson_min then
             add("cast_unstopped", string.format("%.0f s of dangerous casts at you with a stopper ready: Scatter Shot or Intimidation on the caster", W.stoppable), W.stoppable)
@@ -484,6 +518,21 @@ return function(P, lib, data, K)
             end
         end
         f.lessons = lessons_of(S, f)
+        -- What reached us of the enemy this fight: the events kept, the ones
+        -- dropped and why (the token kinds that did not resolve). On a client
+        -- that reports nothing of an enemy, every "it used" reads empty, and
+        -- this says why.
+        do
+            local a, b = f.events_at_start or events_now(S), events_now(S)
+            local by = {}
+            for k, v in pairs(b.by) do
+                local d = v - (a.by[k] or 0)
+                if d > 0 then by[k] = d end
+            end
+            f.feeds = { casts = b.casts - a.casts, auras = b.auras - a.auras, unresolved = b.unresolved - a.unresolved,
+                        unresolved_by = by, not_hostile = b.not_hostile - a.not_hostile }
+            f.events_at_start = nil
+        end
         -- The decision episodes of the fight, and their summary (the collector).
         if lib.episodes and lib.episodes.close_fight then
             f.episodes, f.episodes_summary = lib.episodes.close_fight(S, now)
@@ -552,7 +601,7 @@ return function(P, lib, data, K)
             me = { class = f.me.class, level = f.me.level, hp_min = f.me.hp_min, died = f.me.died, used = f.me.used,
                    controlled_for = f.me.controlled_for, trap_laid = f.me.trap_laid == true },
             foes = foes, lessons = lessons, moments = moments,
-            predictions = f.predictions, baits = f.baits, holds = f.holds, threat_peak = f.threat_peak, states = f.states,
+            predictions = f.predictions, baits = f.baits, holds = f.holds, threat_peak = f.threat_peak, states = f.states, feeds = f.feeds,
             episodes = f.episodes, episodes_summary = f.episodes_summary,
         }
     end
@@ -599,8 +648,15 @@ return function(P, lib, data, K)
         if not any_alive and #F.foe_order > 0 then
             close(S, now, "they died")
         elseif not any_seen then
+            -- A class that can go unseen and come back (a rogue's Vanish and
+            -- stealth, a druid's Prowl) gets longer: its return is the same fight.
+            local wait = KD.gone_after
+            for _, guid in ipairs(F.foe_order) do
+                local rec = F.foes[guid]
+                if not rec.died and KD.stealthy[tostring(rec.class)] then wait = math.max(wait, KD.stealth_gone_after) end
+            end
             quiet_since = quiet_since or now
-            if (now - quiet_since) >= KD.gone_after then close(S, now, "they left") end
+            if (now - quiet_since) >= wait then close(S, now, "they left") end
         elseif not any_fighting and not S.me.in_combat then
             quiet_since = quiet_since or now
             if (now - quiet_since) >= KD.end_after then close(S, now, "combat ended") end
@@ -643,6 +699,13 @@ return function(P, lib, data, K)
                     r.trinket and "; trinket" or "")
             end
             out[#out + 1] = "You used: " .. (top_used(f.me.used, 8) ~= "" and top_used(f.me.used, 8) or "nothing recorded")
+            if f.feeds then
+                local by = {}
+                for k, v in pairs(f.feeds.unresolved_by or {}) do by[#by + 1] = k .. " " .. v end
+                table.sort(by)
+                out[#out + 1] = string.format("Enemy events this fight: %d cast(s), %d aura(s) kept; %d dropped%s",
+                    f.feeds.casts, f.feeds.auras, f.feeds.unresolved, #by > 0 and (" (unresolved: " .. table.concat(by, ", ") .. ")") or "")
+            end
             out[#out + 1] = string.format("You: low %d%%, controlled %.0f s; threat peak %s %d at %s; states %s",
                 floor((f.me.hp_min or 1) * 100 + 0.5), f.me.controlled_for, f.threat_peak.level, floor(f.threat_peak.score + 0.5),
                 clock_text(f.threat_peak.at), #f.states > 0 and table.concat(f.states, " > ") or "-")
@@ -656,6 +719,10 @@ return function(P, lib, data, K)
             end
         end
         if lib.central and lib.central.status then out[#out + 1] = "Central: " .. lib.central.status() end
+        if lib.fieldcheck and lib.fieldcheck.lines then
+            local ok, lines = pcall(lib.fieldcheck.lines)
+            if ok and type(lines) == "table" then for i = 1, #lines do out[#out + 1] = lines[i] end end
+        end
         return out
     end
 

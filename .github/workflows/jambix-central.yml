@@ -1,12 +1,13 @@
 # The Jambix central PvP intelligence network, with this repository as the
 # service (scripts/jambix_aio/CENTRAL_NETWORK.md §9).
 #
-# The clients open issues titled "jambix-batch <id>", "jambix-lesson <id>"
-# or "jambix-delete <contributor>" with a fenced JSON body, using a
+# The clients open issues titled "jambix-fight <id>" (one per fight, its
+# lesson and its batch; older clients send "jambix-batch <id>" and
+# "jambix-lesson <id>") or "jambix-delete <contributor>" with a fenced JSON body, using a
 # fine-grained token that can only open issues here and read contents. This
-# workflow files each accepted issue into the data branch (jambix-data:
-# data/batches.jsonl, data/lessons.jsonl), answers and closes it, and every
-# six hours runs a learning cycle that publishes a model version
+# workflow files the open issues into the data branch (jambix-data:
+# data/batches.jsonl, data/lessons.jsonl) once an hour, answers and closes
+# each, and every six hours also runs a learning cycle that publishes a model version
 # (data/models/vN.json + manifest.json) the clients download when its
 # gates pass. Refused issues get the reason in a comment.
 #
@@ -15,16 +16,24 @@
 # it never saw, and published as a canary only when the gates pass; a
 # "promote <version>" by hand rolls a canary out to everyone.
 #
+# Hourly, not on each issue (2026-10-12): every run is billed at least a
+# minute of the private repository's Actions minutes, so one run per issue
+# grows with the players; once an hour is some 30 runs a day whatever comes
+# in. An issue waits up to an hour to be filed.
+#
+# The repository variable JAMBIX_MIN_CONTRIBUTORS (Settings > Secrets and
+# variables > Actions > Variables) sets how many players a habit, a tactic
+# and a release need; unset, 2.
+#
 # By hand: Actions > Jambix central > Run workflow ("ingest", "publish",
 # "publish --force", "promote <version>", "withdraw <version>" or "evaluate").
 
 name: Jambix central
 
 on:
-  issues:
-    types: [opened]
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "7 * * * *"          # file the issues
+    - cron: "17 */6 * * *"       # file, then learn
   workflow_dispatch:
     inputs:
       action:
@@ -40,7 +49,6 @@ jobs:
   central:
     name: File the issues, publish the model
     runs-on: ubuntu-latest
-    if: github.event_name != 'issues' || startsWith(github.event.issue.title, 'jambix-')
     permissions:
       contents: write
       issues: write
@@ -76,11 +84,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           DATA_DIR: ${{ github.workspace }}/data-branch/data
           ACTION: ${{ github.event.inputs.action }}
+          SCHEDULE: ${{ github.event.schedule }}
+          MIN_CONTRIBUTORS: ${{ vars.JAMBIX_MIN_CONTRIBUTORS }}
         run: |
           set -e
           case "$GITHUB_EVENT_NAME" in
-            issues) node tools/fightlog_server/github_ingest.js ingest ;;
-            schedule) node tools/fightlog_server/github_ingest.js ingest && node tools/fightlog_server/github_ingest.js publish "scheduled" ;;
+            schedule)
+              node tools/fightlog_server/github_ingest.js ingest
+              if [ "$SCHEDULE" = "17 */6 * * *" ]; then node tools/fightlog_server/github_ingest.js publish "scheduled"; fi ;;
             workflow_dispatch)
               set -- $ACTION
               case "$1" in

@@ -594,7 +594,8 @@ return function(P, lib, data, K)
             if me.moving then e.moved = true end
             local f = e.foe and S.foes[e.foe] or nil
             -- Its death: off the rows, or off the unit (the picture drops a dead player at once).
-            local died = e.foe and dead[e.foe] or (e.unit and units and units.is_dead and try(units.is_dead, e.unit) == true)
+            -- (only a unit still there that the game calls dead: one gone has left)
+            local died = e.foe and dead[e.foe] or (e.unit and lib.unit_dead and lib.unit_dead(e.unit))
             if e.foe and died then
                 e.flags.foe_died = true
                 push_event(e, now, "it dies")

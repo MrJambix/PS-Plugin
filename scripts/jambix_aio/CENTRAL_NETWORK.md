@@ -595,6 +595,47 @@ cycle saw. A cycle with nothing new writes nothing. `evaluate` prints the
 entry it would write and writes nothing. Test: `learn.test.js` ("the
 learning log").
 
+## 13. The relook of the first fights (2026-10-12, later)
+
+The user's three real fights, read back, showed what was wrong in what had
+been built; the user: "let's fix the first 9". In the network's terms:
+
+- **Outcomes.** Two of the three were uploaded as "won" when the opponent
+  had left (a Vanish, out of sight): a gone unit read as dead. A death now
+  needs the game's word on a unit still there; rogues and druids are
+  waited for 30 s. Lessons from before the fix carry the wrong outcome; at
+  three records the learner has nothing to undo.
+- **Enemy events.** Every fight's lesson now carries `feeds`: the enemy
+  casts and auras the client kept, the ones it dropped and by which unit
+  token. The service stores them as they come (not validated beyond the
+  record's bounds); the next fights say whether Forever's events reach the
+  picture.
+- **One chance a window** for "goes for your pet" (it was a sample a
+  second), so one fight no longer fills the 20-check bar.
+- **One issue per fight** (`jambix-fight <id>`: the lesson and, when
+  there is one, the batch; `validate.js validateFight`, `github_ingest.js`).
+  Older clients' `jambix-batch` / `jambix-lesson` issues still file.
+- **Hourly filing.** The Action no longer runs on each issue: it files the
+  open issues at :07 every hour and learns at :17 every six hours. Every run
+  is billed at least a minute of the private repository's Actions minutes,
+  so a run per issue grew with the players; this is some 30 runs a day
+  whatever comes in. An upload waits up to an hour to be filed; the
+  client's "already filed?" lookup reads open issues too.
+- **The two-player rule is a setting**: the repository variable
+  `JAMBIX_MIN_CONTRIBUTORS` (Settings > Secrets and variables > Actions >
+  Variables) sets how many players a habit, a tactic and a release need;
+  unset, 2. Nothing changed it.
+- **The weights check** (`learn.js threatCheck`, in every learning log
+  entry): with 8 measured moments on each side, does a HIGH or CRITICAL
+  threat read come before things getting worse more often than a LOW one?
+  *separates*, *unclear* or *inverted* ("the weights want reweighing"). A
+  check, never a tuning: the client's weights change by hand with this as
+  the evidence.
+- **The token** in every copy of the plugin stays the open risk: anyone
+  with the plugin can open issues. The trust screen refuses what is
+  malformed or implausible; a relay service in front of GitHub is the way
+  to remove the token from the plugin, and does not exist.
+
 ## 8. Not done, and why
 
 - Movement-based recommendations are judged by the target's gap and your

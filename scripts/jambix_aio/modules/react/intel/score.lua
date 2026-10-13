@@ -238,8 +238,10 @@ S.PREDICT = {
     -- cast broke.
     slow_window = 2.0, control_window = 1.5, burst_window = 10.0, retreat_window = 5.0, retreat_speed = 1.0,
     interrupt_window = 0.8,
-    -- The pet's share: one sample a second in combat, each this heavy.
-    pet_sample_every = 1.0, pet_sample_weight = 0.5,
+    -- The pet: one chance per window of this many seconds in combat with
+    -- the pet out (a full-weight hit or miss); a window not read for pet_gap
+    -- closes with no answer.
+    pet_window = 15.0, pet_gap = 3.0,
     -- The defensive episode: a player in combat under the watch line with a
     -- defensive usable will pop one (the hit, at the health it appears) or
     -- fall to the floor without (the miss). Popped under defensive_low it is
@@ -294,6 +296,9 @@ S.DEBRIEF = {
     -- or nobody fights and you are out of combat this long; no new fight
     -- opens within this of a close (the picture keeps the last one a while).
     gone_after = 10.0, end_after = 6.0, restart_after = 2.0,
+    -- A class that can go unseen and return (Vanish, stealth, Prowl) is
+    -- waited for this long before "they left": its re-opener is the same fight.
+    stealth_gone_after = 30.0, stealthy = { ROGUE = true, DRUID = true },
     -- A window a lesson rests on counts from this many seconds; the trap
     -- lesson from this many seconds of a melee player on you.
     lesson_min = 3.0, trap_min = 5.0,
@@ -307,6 +312,9 @@ S.DEBRIEF = {
     -- Your own control broken by you: it ended with this much left within
     -- this many seconds of your cast at it.
     own_break_left = 1.5, own_break_window = 0.6,
+    -- Casts of ours that break a control besides the damage list (data.OUR_DAMAGE).
+    breaking_casts = { ["Wing Clip"] = true, ["Counterattack"] = true, ["Strider Kick"] = true, ["Lacerate"] = true,
+                       ["Concussive Shot"] = true, ["Hunter's Mark"] = false },
     -- The hunter's trap.
     trap = "Freezing Trap",
 }
@@ -336,6 +344,21 @@ S.EPISODES = {
     -- same result in fewer than `agree` of them is contested; then low,
     -- moderate, high by count. Never a rule from one anecdote.
     confidence = { low_below = 3, moderate_below = 6, high_below = 12, agree = 0.6 },
+}
+
+-- --- the field checks (fieldcheck.lua) ----------------------------------------
+S.FIELD = {
+    -- A trap counts as laid in melee with a hostile within this; its effect
+    -- is looked for this long. Disengage: a mob on you within this reach,
+    -- turned off you within this long. A sting at an add: its success this
+    -- long after the request. Feign Death: the cast's own end plus this.
+    melee = 5.0, trap_window = 5.0, disengage_reach = 6.0, disengage_window = 3.0,
+    sting_window = 2.0, feign_slack = 0.5,
+    -- A control landing this soon after the last one on the same player
+    -- ended is the next step of its chain (diminishing returns).
+    chain_window = 18.0,
+    -- The file is written at most this often.
+    save_every = 10.0,
 }
 
 -- --- the central database --------------------------------------------------

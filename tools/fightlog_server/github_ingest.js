@@ -19,7 +19,7 @@
 // Nothing here needs the game; nothing here runs in it.
 
 const path = require('path');
-const { validateBatch, validateLesson, validateDelete } = require('./validate');
+const { validateBatch, validateLesson, validateFight, validateDelete } = require('./validate');
 const storeLib = require('./store');
 const release = require('./release');
 
@@ -53,8 +53,17 @@ function githubApi(repo, token) {
 }
 
 // --- the data files, with the release commands on them ---------------------------------------
+// The contributors a habit, a tactic and a release need (learn.js and
+// release.js default to 2). The Action passes the repository variable
+// JAMBIX_MIN_CONTRIBUTORS as MIN_CONTRIBUTORS; unset, the default stands.
+const MIN_CONTRIBUTORS = Number(process.env.MIN_CONTRIBUTORS) || 0;
+
 function createStore(dataDir, opts) {
     const o = Object.assign({ retentionDays: RETENTION_DAYS, minPlugin: MIN_PLUGIN }, opts || {});
+    if (MIN_CONTRIBUTORS > 0) {
+        o.learn = Object.assign({ minContributors: MIN_CONTRIBUTORS }, o.learn || {});
+        o.release = Object.assign({ minContributors: MIN_CONTRIBUTORS }, o.release || {});
+    }
     const store = storeLib.createStore(dataDir, { retentionDays: o.retentionDays, now: o.now });
     const ro = extra => Object.assign({ minPlugin: o.minPlugin, learn: o.learn }, o.release || {}, extra || {});
     store.publish = (note, extra) => release.cycle(store, ro(Object.assign({ note }, extra || {})));
@@ -66,7 +75,7 @@ function createStore(dataDir, opts) {
 
 // --- one issue -> one record ---------------------------------------------------------------
 function parseIssue(issue) {
-    const m = String(issue.title || '').match(/^jambix-(batch|lesson|delete)\b/i);
+    const m = String(issue.title || '').match(/^jambix-(batch|lesson|fight|delete)\b/i);
     if (!m) return { error: 'not a jambix issue' };
     const kind = m[1].toLowerCase();
     const body = String(issue.body || '');
@@ -84,6 +93,14 @@ function ingestOne(store, issue) {
         const err = validateDelete(record);
         if (err) return { accepted: false, kind, reason: err };
         return { accepted: true, kind, removed: store.forget(record.contributor) };
+    }
+    if (kind === 'fight') {
+        // One issue, two records: the lesson, and the batch when there is one.
+        const err = validateFight(record);
+        if (err) return { accepted: false, kind, reason: err };
+        const a = store.accept('lesson', record.lesson);
+        const b = record.batch ? store.accept('batch', record.batch) : { duplicate: true };
+        return { accepted: true, kind, duplicate: !!a.duplicate && !!b.duplicate };
     }
     const err = kind === 'batch' ? validateBatch(record) : validateLesson(record);
     if (err) return { accepted: false, kind, reason: err };

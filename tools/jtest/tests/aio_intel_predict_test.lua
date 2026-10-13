@@ -376,19 +376,33 @@ T[#T + 1] = { "stacks bursts: Recklessness, then Death Wish; the window passing 
     assert_eq(e.hits, 1, "a miss")
 end }
 
-T[#T + 1] = { "goes for your pet: four seconds on it against one on you", function()
+T[#T + 1] = { "goes for your pet: one chance a window, not one a second -- on the pet in the window is a hit, staying on you through it a miss (live 2026-10-12: a rogue on you for 40 s counted 40 times)", function()
     local G = bundle()
     melee(G); fighting(G)
     G.pet_alive = true
-    G.row.targeting_pet, G.row.targeting_me = true, false
-    G.run(4.2)
-    local e = pred(G, "targeting_pet")
-    assert(e and e.hits >= 4, "four samples on the pet")
-    assert_eq(e.sure, true, "a prediction")
+    -- 40 s on you: under the old sample a second this was 40 checks.
     G.row.targeting_pet, G.row.targeting_me = false, true
-    G.run(1.2)
+    G.run(40)
+    local e = pred(G, "targeting_pet")
+    assert(e, "the pattern is counted")
+    assert_eq(e.total, 2, "two windows of 15 s ended with it on you: two misses (the third still open)")
+    assert_eq(e.hits, 0, "no hit")
+    -- It turns on the pet: one hit, and the next window waits 15 s.
+    G.row.targeting_pet, G.row.targeting_me = true, false
+    G.run(4)
     e = pred(G, "targeting_pet")
-    assert(e.total > e.hits, "a sample on you: a miss")
+    assert_eq(e.hits, 1, "one hit, not four")
+    assert_eq(e.total, 3, "three chances in all")
+    -- Out of combat with a window half gone on you: a miss; a window cut short gives none.
+    local G2 = bundle()
+    melee(G2); fighting(G2)
+    G2.pet_alive = true
+    G2.row.targeting_pet, G2.row.targeting_me = false, true
+    G2.run(3)
+    G2.in_combat, G2.row.in_combat = false, false
+    G2.run(2)
+    local e2 = pred(G2, "targeting_pet")
+    assert(e2 == nil or e2.total == 0, "a window of 3 s cut by the fight's end: no answer")
 end }
 
 T[#T + 1] = { "the same opener: Charge, Charge; Hamstring breaks it; a fight with no cast seen in 6 s is no answer", function()

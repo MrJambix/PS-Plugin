@@ -61,6 +61,7 @@ const DEFAULTS = {
     agree: 0.6,              // the share of them with the same result
     minArm: 6,               // measured episodes each arm of a tactic needs
     minArmFights: 3,         // fights each arm needs (episodes of one fight are not independent)
+    minThreatLevel: 8,       // measured episodes a threat level needs before the weights check reads it
     strongDelta: 0.2,        // a difference this large with the interval clear of zero is strong
     staleDays: 30,           // the recent window a tactic is checked against its earlier self
     staleDrop: 0.25,         // the good rate falling this much lately: stale
@@ -359,6 +360,38 @@ function tactic(strategy, rows, desc, o, newestAt) {
     return out;
 }
 
+// --- the weights check: does the threat score tell the dangerous moments? -------------------------
+// The client's threat weights (intel/score.lua) are first guesses. With
+// enough measured episodes per level, a higher level should come before a
+// worsening more often than a lower one; when it does not, the weights do
+// not separate danger and want reweighing. A check, never a tuning: the
+// weights change by hand, in the client, with this as the evidence.
+const THREAT_ORDER = ['INFORMATIONAL', 'LOW', 'MODERATE', 'HIGH', 'CRITICAL'];
+function threatCheck(tally, o) {
+    const levels = {};
+    for (const lv of THREAT_ORDER) {
+        const t = tally[lv];
+        if (!t) continue;
+        levels[lv] = { n: t.n, fights: t.fights.size, worse: r2(t.worse / t.n), better: r2(t.better / t.n), enough: t.n >= o.minThreatLevel };
+    }
+    const low = ['INFORMATIONAL', 'LOW'].map(l => tally[l]).filter(Boolean).reduce((a, t) => ({ n: a.n + t.n, worse: a.worse + t.worse }), { n: 0, worse: 0 });
+    const high = ['HIGH', 'CRITICAL'].map(l => tally[l]).filter(Boolean).reduce((a, t) => ({ n: a.n + t.n, worse: a.worse + t.worse }), { n: 0, worse: 0 });
+    let verdict, why;
+    if (low.n < o.minThreatLevel || high.n < o.minThreatLevel) {
+        verdict = 'not yet';
+        why = `${high.n} measured moment(s) at HIGH or CRITICAL and ${low.n} at LOW or below; each side needs ${o.minThreatLevel}`;
+    } else {
+        const pl = low.worse / low.n, ph = high.worse / high.n;
+        const diff = ph - pl;
+        const se = Math.sqrt(Math.max(pl * (1 - pl), 0.0025) / low.n + Math.max(ph * (1 - ph), 0.0025) / high.n);
+        if (diff - 1.96 * se > 0) { verdict = 'separates'; why = `things got worse after ${pct(ph)} of HIGH/CRITICAL moments against ${pct(pl)} of LOW ones`; }
+        else if (diff + 1.96 * se < 0) { verdict = 'inverted'; why = `HIGH/CRITICAL moments got worse less often (${pct(ph)}) than LOW ones (${pct(pl)}): the weights want reweighing`; }
+        else { verdict = 'unclear'; why = `HIGH/CRITICAL ${pct(ph)} against LOW ${pct(pl)} got worse: not told apart yet`; }
+    }
+    return { verdict, why, levels };
+}
+const pct = x => `${Math.round(x * 100)}%`;
+
 // --- the build ----------------------------------------------------------------------------------
 function build(batchesIn, lessonsIn, opts) {
     const o = Object.assign({}, DEFAULTS, opts || {});
@@ -372,7 +405,7 @@ function build(batchesIn, lessonsIn, opts) {
     for (const l of lessons) enemiesOf[fightOf(l)] = Array.isArray(l.enemies) ? l.enemies.length : undefined;
 
     const games = {};
-    const game = g => (games[g] || (games[g] = { fights: new Set(), contributors: new Set(), builds: {}, plugins: new Set(), classes: {}, groups: {}, tacticRows: {}, monitoring: {} }));
+    const game = g => (games[g] || (games[g] = { fights: new Set(), contributors: new Set(), builds: {}, plugins: new Set(), classes: {}, groups: {}, tacticRows: {}, monitoring: {}, threat: {} }));
     const cls = (G, c) => (G.classes[c] || (G.classes[c] = { patterns: {}, outcomes: {}, lessons: {}, abilities: {}, fights: new Set(), lesson_fights: new Set(), contributors: new Set(), episodes: {} }));
     const grp = (G, key, desc) => (G.groups[key] || (G.groups[key] = { desc, rows: {}, censored: {}, fights: new Set(), contributors: new Set() }));
     const contributors = new Set(), fightIds = new Set();
@@ -410,6 +443,14 @@ function build(batchesIn, lessonsIn, opts) {
             const c = cls(G, ctx.enemy_class);
             c.fights.add(fid); c.contributors.add(b.contributor);
             episodeInto(c, e, b.contributor);
+            // The weights check: the threat level the client read before the
+            // moment, against what the moment did (measured results only).
+            if (trust.episodeCounts(e) && e.before && e.before.threat) {
+                const lv = String(e.before.threat);
+                const t = G.threat[lv] || (G.threat[lv] = { n: 0, worse: 0, better: 0, fights: new Set() });
+                t.n += 1; t.fights.add(fid);
+                if (e.result.primary === BAD) t.worse += 1; else if (GOOD.has(e.result.primary)) t.better += 1;
+            }
             const po = e.prediction && e.prediction.outcome, pat = e.prediction && e.prediction.pattern;
             const meta = { contributor: b.contributor, fight: fid, at: atOf(b) };
             for (const { level, key } of groups.keysOf(ctx)) {
@@ -494,7 +535,7 @@ function build(batchesIn, lessonsIn, opts) {
         out_games[gname] = {
             fights: G.fights.size, contributors: G.contributors.size, plugins: Array.from(G.plugins).sort(),
             builds: Object.fromEntries(Object.entries(G.builds).map(([b, s]) => [b, s.size])),
-            by_class, groups: out_groups, tactics, monitoring,
+            by_class, groups: out_groups, tactics, monitoring, threat_check: threatCheck(G.threat, o),
         };
     }
     const evaluationOut = {};

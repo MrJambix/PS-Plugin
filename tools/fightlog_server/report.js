@@ -192,6 +192,14 @@ function entry(cycle, prev, records, opts) {
         L.push('');
     }
 
+    // The weights check (learn.js threatCheck), per game.
+    const checks = Object.entries(model.games || {}).filter(([, G]) => G.threat_check);
+    if (checks.length) {
+        L.push('### Weights check');
+        for (const [game, G] of checks) L.push(`- ${game}: does the threat level tell the dangerous moments? **${G.threat_check.verdict}** -- ${G.threat_check.why}.`);
+        L.push('');
+    }
+
     // Changes since the last cycle.
     const now = snapshotOf(model, cycle.decision, cycle.version);
     now.newest = [...records.batches, ...records.lessons].reduce((a, r) => (r.received_at && r.received_at > a ? r.received_at : a), '') || null;

@@ -165,9 +165,23 @@ return function(P, lib, data, K)
         return save(CONFIG, { url = cfg.local_url, key = cfg.local_key, github = cfg.local_github, contributor = cfg.contributor })
     end
 
+    -- The last upload problems, kept with the queue on disk (the newest
+    -- last): what the client read when a try went wrong, for whoever looks
+    -- at scripts_data later (live 2026-10-12 the cause of a fight sent five
+    -- times could not be read back from anywhere).
+    local problems = {}
+    local PROBLEMS_KEEP = 10
+    M.problems = function() return problems end
+
     local function save_queue()
         T.queued = #queue
-        return save(QUEUE, { schema = M.SCHEMA, items = queue })
+        return save(QUEUE, { schema = M.SCHEMA, items = queue, problems = problems })
+    end
+
+    local function note_problem(kind, status, err, what)
+        problems[#problems + 1] = { at = (lib.wall_time and lib.wall_time()) or 0, kind = kind, status = status,
+                                    error = tostring(err), what = what }
+        while #problems > PROBLEMS_KEEP do table.remove(problems, 1) end
     end
 
     local function load_all()
@@ -206,6 +220,7 @@ return function(P, lib, data, K)
         local q = st and st.read_json and try(st.read_json, QUEUE) or nil
         if type(q) == "table" and type(q.items) == "table" and q.schema == M.SCHEMA then
             queue = q.items
+            if type(q.problems) == "table" then problems = q.problems end
             while #queue > KC.queue_max do table.remove(queue, 1) end
             -- The wait was on the last session's clock (core.time restarts
             -- with the game): every item is due now. One tried before may
@@ -361,9 +376,16 @@ return function(P, lib, data, K)
                         diagnostics = diagnostics, episodes = episodes, episodes_summary = summary }
         local lesson = { schema = M.SCHEMA, id = random_hex(24), fight = fight_id, contributor = cfg.contributor, client = client, me = me,
                          encounter = encounter, enemies = enemies, lessons = codes, predictions = f.predictions, baits = f.baits,
-                         holds = f.holds, threat_peak = { level = f.threat_peak.level, score = f.threat_peak.score } }
-        if n > 0 or episodes then enqueue("batch", "/v1/combat/batches", batch) end
-        enqueue("lesson", "/v1/lessons", lesson)
+                         holds = f.holds, threat_peak = { level = f.threat_peak.level, score = f.threat_peak.score }, feeds = f.feeds }
+        if cfg.backend == "github" then
+            -- One issue per fight (2026-10-12): GitHub counts issues and
+            -- Actions runs, so the lesson and the batch travel together.
+            enqueue("fight", "/v1/fights", { schema = M.SCHEMA, id = fight_id, contributor = cfg.contributor,
+                                            lesson = lesson, batch = (n > 0 or episodes) and batch or nil })
+        else
+            if n > 0 or episodes then enqueue("batch", "/v1/combat/batches", batch) end
+            enqueue("lesson", "/v1/lessons", lesson)
+        end
         return true
     end
 
@@ -415,12 +437,21 @@ return function(P, lib, data, K)
     local function github_issue(item)
         local body = item.body
         local text = encode_json(body)
-        if #text > GITHUB_BODY_MAX and item.kind == "batch" and type(body.observations) == "table" then
-            local dropped = 0
-            while #text > GITHUB_BODY_MAX and #body.observations > 0 do
-                table.remove(body.observations)
+        -- Too long for an issue: the batch loses forecasts from the end, then
+        -- episodes, and says so (a fight's lesson is never cut).
+        local b = item.kind == "batch" and body or (item.kind == "fight" and body.batch) or nil
+        if #text > GITHUB_BODY_MAX and type(b) == "table" then
+            local dropped, dropped_eps = 0, 0
+            while #text > GITHUB_BODY_MAX and type(b.observations) == "table" and #b.observations > 0 do
+                table.remove(b.observations)
                 dropped = dropped + 1
-                body.censored = string.format("issue size: %d observation(s) dropped", dropped)
+                b.censored = string.format("issue size: %d observation(s) dropped", dropped)
+                text = encode_json(body)
+            end
+            while #text > GITHUB_BODY_MAX and type(b.episodes) == "table" and #b.episodes > 0 do
+                table.remove(b.episodes)
+                dropped_eps = dropped_eps + 1
+                b.censored = string.format("issue size: %d observation(s), %d episode(s) dropped", dropped, dropped_eps)
                 text = encode_json(body)
             end
         end
@@ -510,9 +541,13 @@ return function(P, lib, data, K)
                         T.uploaded = T.uploaded + 1
                         T.last_status = string.format("%s accepted%s%s", item.kind, data_in and data_in.duplicate and " (duplicate)" or "",
                             err and (" (its answer unread: " .. tostring(err) .. ")") or "")
-                        if err then warn("%s delivered (status %d) but its answer was unread: %s", item.kind, status, tostring(err)) end
+                        if err then
+                            warn("%s delivered (status %d) but its answer was unread: %s", item.kind, status, tostring(err))
+                            note_problem(item.kind, status, err, "delivered, answer unread")
+                        end
                     else
                         warn("%s refused for good (status %d): %s", item.kind, status, tostring(err))
+                        note_problem(item.kind, status, err, "refused for good")
                         T.dropped = T.dropped + 1
                         T.last_status = string.format("%s refused (%s)", item.kind, tostring(err))
                     end
@@ -521,6 +556,7 @@ return function(P, lib, data, K)
                     T.failed = T.failed + 1
                     if cfg.backend == "github" and ambiguous(status) then item.check_first = true end
                     warn("%s try %d failed (status %d): %s", item.kind, item.tries, status, tostring(err))
+                    note_problem(item.kind, status, err, "try " .. item.tries .. " failed")
                     if item.tries >= KC.max_tries then
                         remove_item(item)
                         T.dropped = T.dropped + 1

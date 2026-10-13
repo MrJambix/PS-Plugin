@@ -140,7 +140,12 @@ return function(P, lib)
         foes = {}, foe_list = {}, foes_n = 0, players = 0, attackers = 0, melee_attackers = 0,
         allies = {}, ally_list = {}, allies_n = 0,
         env = { target = { los = {} }, objectives = { carriers = {} } },
-        events = { casts = 0, auras = 0, combat_log = 0, unresolved = 0, last = nil },
+        -- Every enemy event, kept or dropped and why (live 2026-10-12: three
+        -- fights with no enemy ability recorded although the recorder shows
+        -- Forever firing them for "target" and "softenemy"): unresolved by the
+        -- token's kind, not a player, not attackable.
+        events = { casts = 0, auras = 0, combat_log = 0, unresolved = 0, last = nil,
+                   unresolved_by = {}, not_player = 0, not_hostile = 0 },
     }
     M.S = S
 
@@ -801,12 +806,27 @@ return function(P, lib)
 
     --- The unit behind a token (or a guid), resolved through the object
     --- manager and kept TOKEN_KEEP seconds: tokens are recycled.
+    local function usable(unit)
+        if not unit then return nil end
+        local ok, v = pcall(function() return unit:is_valid() end)
+        return (ok and v == true) and unit or nil
+    end
+
     local function resolve(token, now)
-        if not units.by_guid then return nil, nil end
         local hit = tokens[token]
         if hit and (now - hit.at) <= TOKEN_KEEP then return hit.unit, hit.guid end
-        local unit = try(units.by_guid, token)
-        local guid = unit and units.guid(unit) or nil
+        -- JCore's by_guid takes a token too (the object manager's lookup
+        -- accepts both); then the lookup itself; then, for "target", the
+        -- player's own target.
+        local unit = units.by_guid and try(units.by_guid, token) or nil
+        if not unit and type(core) == "table" and core.object_manager and core.object_manager.get_object_from_guid then
+            unit = usable(try(core.object_manager.get_object_from_guid, token))
+        end
+        if not unit and token == "target" then
+            local me = units.player and try(units.player) or nil
+            unit = me and usable(try(me.get_target, me)) or nil
+        end
+        local guid = unit and ((units.guid and units.guid(unit)) or try(unit.get_guid, unit)) or nil
         tokens[token] = { unit = unit, guid = guid, at = now }
         return unit, guid
     end
@@ -820,9 +840,9 @@ return function(P, lib)
     local function foe_for_event(unit, guid, now)
         local f = S.foes[guid]
         if f then return f end
-        if not is_player(unit, guid) then return nil end
+        if not is_player(unit, guid) then S.events.not_player = S.events.not_player + 1 return nil end
         local me = player_unit()
-        if me and try(me.can_attack, me, unit) ~= true then return nil end
+        if me and try(me.can_attack, me, unit) ~= true then S.events.not_hostile = S.events.not_hostile + 1 return nil end
         f = new_foe(guid, unit, now)
         f.seen = "event"
         S.foes[guid] = f
@@ -840,6 +860,8 @@ return function(P, lib)
         local unit, guid = resolve(token, now)
         if not unit or not guid then
             S.events.unresolved = S.events.unresolved + 1
+            local kind = token:match("^%a+") or "?"
+            S.events.unresolved_by[kind] = (S.events.unresolved_by[kind] or 0) + 1
             return
         end
         local f = foe_for_event(unit, guid, now)
@@ -859,6 +881,8 @@ return function(P, lib)
         local unit, guid = resolve(token, now)
         if not unit or not guid then
             S.events.unresolved = S.events.unresolved + 1
+            local kind = token:match("^%a+") or "?"
+            S.events.unresolved_by[kind] = (S.events.unresolved_by[kind] or 0) + 1
             return
         end
         local f = foe_for_event(unit, guid, now)
@@ -867,6 +891,7 @@ return function(P, lib)
         local id = tonumber(spell_id)
         push_recent(f, { id = id, name = (type(name) == "string" and name ~= "") and name or spell_name(id) or ("aura " .. tostring(id)),
                          at = now, kind = helpful and "buff" or "debuff", source = "UNIT_AURA" })
+        return guid
     end
 
     --- Era's combat log: a hostile player's SPELL_CAST_SUCCESS, by guid
@@ -919,6 +944,8 @@ return function(P, lib)
     function M.reset()
         M.invalidate("reset")
         S.events.casts, S.events.auras, S.events.combat_log, S.events.unresolved, S.events.last = 0, 0, 0, 0, nil
+        S.events.not_player, S.events.not_hostile = 0, 0
+        for k in pairs(S.events.unresolved_by) do S.events.unresolved_by[k] = nil end
         S.ticks = 0
     end
 

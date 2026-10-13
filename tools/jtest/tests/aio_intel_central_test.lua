@@ -289,15 +289,16 @@ T[#T + 1] = { "GitHub as the service: the uploads become issues on the repositor
     assert_eq(post.opts.headers["Authorization"], "Bearer github_pat_x", "the token")
     assert_eq(post.opts.headers["X-GitHub-Api-Version"], "2022-11-28", "the API version GitHub asks for")
     has(post.opts.headers["User-Agent"], "jambix-aio/1.7.8", "a user agent")
-    has(post.payload.title, "jambix-batch ", "the kind and the id in the title")
+    has(post.payload.title, "jambix-fight ", "one issue for the fight: the kind and the id in the title")
     assert_eq(post.payload.labels[1], "jambix", "labelled")
     has(post.payload.body, "```json\n{", "the record fenced")
-    has(post.payload.body, '"pattern":"mobility_when_slowed"', "with the forecasts")
+    has(post.payload.body, '"pattern":"mobility_when_slowed"', "with the forecasts (its batch)")
+    has(post.payload.body, '"lesson":{', "and its lesson, in the same issue")
     assert(not post.payload.body:find('"name"', 1, true), "no name in the body")
     post.cb({ number = 12 }, nil, { status = 201 })
-    step(G)
-    assert_eq(#G.net.posts, 2, "the lesson's issue follows")
-    has(G.net.posts[2].payload.title, "jambix-lesson ", "its title")
+    step(G); step(G)
+    assert_eq(#G.net.posts, 1, "one issue per fight, not two")
+    assert_eq(#central(G).queue(), 0, "nothing left")
     -- The manifest, off the data branch through the contents API, asked for raw.
     local manifest = nil
     for _, g in ipairs(G.net.gets) do if g.url:find("manifest", 1, true) then manifest = g end end
@@ -312,6 +313,10 @@ T[#T + 1] = { "GitHub as the service: the uploads become issues on the repositor
     assert_eq(central(G).T.model_version, "2", "adopted")
     has(central(G).status(), "contributing to github.com/MrJambix/PS-Plugin", "the status names the repository")
     -- A 403 from GitHub (a rate limit) is retried; a 422 (a bad record) is dropped.
+    -- (A deletion request is the next item through: the fight went in one issue.)
+    central(G).request_delete()
+    step(G)
+    has(G.net.posts[2].payload.title, "jambix-delete ", "the deletion's issue")
     G.net.posts[2].cb(nil, "http 403", { status = 403 })
     step(G)
     assert_eq(#central(G).queue(), 1, "kept for a retry")
@@ -507,30 +512,39 @@ T[#T + 1] = { "live 2026-10-12: a fight filed five times -- a 201 whose answer i
     G.settings.net_contribute = true
     fight(G)
     step(G)
-    assert_eq(#G.net.posts, 1, "the batch's issue in flight")
-    local title = G.net.posts[1].payload.title
+    assert_eq(#G.net.posts, 1, "the fight's issue in flight")
     -- GitHub created it (201) but the client could not read the answer.
     G.net.posts[1].cb(nil, "malformed json", { ok = true, status = 201 })
-    step(G)
-    assert_eq(#central(G).queue(), 1, "the batch is off the queue")
+    step(G); step(G)
+    assert_eq(#central(G).queue(), 0, "the fight is off the queue")
     assert_eq(central(G).T.uploaded, 1, "counted delivered")
     has(central(G).status(), "accepted (its answer unread: malformed json)", "and says so")
-    assert_eq(#G.net.posts, 2, "the lesson goes straight after, not five retries of the batch")
-    -- The lesson's try ends with no status at all: unclear.
-    G.net.posts[2].cb(nil, "http 0", { ok = false, status = 0 })
-    step(G)
-    local item = central(G).queue()[1]
+    local saved = G.files[QUEUE].problems
+    assert(saved and saved[#saved].status == 201 and saved[#saved].error == "malformed json", "the problem kept with the queue on disk")
+    assert_eq(#G.net.posts, 1, "sent once, not five times")
+
+    -- A try that ends with no status at all: unclear; GitHub is asked first.
+    local G1 = bundle()
+    G1.files[CONFIG] = { github = { repo = "MrJambix/PS-Plugin", branch = "jambix-data", token = "github_pat_x" } }
+    G1.settings.net_contribute = true
+    fight(G1)
+    step(G1)
+    local title = G1.net.posts[1].payload.title
+    G1.net.posts[1].cb(nil, "http 0", { ok = false, status = 0 })
+    step(G1)
+    local item = central(G1).queue()[1]
     assert_eq(item.check_first, true, "an unclear failure: looked for before the next try")
-    G.clock = G.clock + 31; step(G)
-    assert_eq(#G.net.posts, 2, "not posted again yet")
-    local ask = G.net.gets[#G.net.gets]
+    G1.clock = G1.clock + 31; step(G1)
+    assert_eq(#G1.net.posts, 1, "not posted again yet")
+    local ask = G1.net.gets[#G1.net.gets]
     has(ask.url, "/repos/MrJambix/PS-Plugin/issues?state=all&labels=jambix", "GitHub asked for the network's issues")
     assert_eq(ask.opts.headers["Authorization"], "Bearer github_pat_x", "with the token")
-    ask.cb({ { number = 7, title = central(G).issue_title(item) }, { number = 2, title = title } }, nil, { ok = true, status = 200 })
-    step(G)
-    assert_eq(#central(G).queue(), 0, "found filed: done, never sent twice")
-    has(central(G).status(), "lesson already filed (#7): not sent again", "said")
-    assert_eq(#G.net.posts, 2, "two posts in all")
+    assert_eq(central(G1).issue_title(item), title, "the same title every try")
+    ask.cb({ { number = 7, title = title }, { number = 2, title = "jambix-fight something else" } }, nil, { ok = true, status = 200 })
+    step(G1)
+    assert_eq(#central(G1).queue(), 0, "found filed: done, never sent twice")
+    has(central(G1).status(), "fight already filed (#7): not sent again", "said")
+    assert_eq(#G1.net.posts, 1, "one post in all")
 
     -- Not found: it is sent.
     local G2 = bundle()

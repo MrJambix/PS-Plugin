@@ -120,3 +120,26 @@ test('an empty table in either shape (live 2026-10-12): an episode\'s "actions":
     const m = learn.build([...store.batches(), Object.assign({}, b, { id: '8'.repeat(20), fight: '8'.repeat(20), observations: {}, episodes: {} })], store.lessons());
     assert.ok(m.games.Forever, 'built');
 });
+
+test('one issue per fight: "jambix-fight" carries the lesson and the batch; both are filed, the same issue again is a duplicate, a bad lesson refuses the whole fight with the reason', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jambix-ingest-'));
+    const store = createStore(dataDir);
+    const me = hex(24);
+    const b = batch(me, 'a'.repeat(24));
+    const l = { schema: 1, id: 'b'.repeat(24), contributor: me, client: b.client, me: b.me, encounter: b.encounter,
+        enemies: [{ class: 'WARRIOR', role: 'melee', used: {}, controls_on_me: {}, bursts: 0, hp_min: 0.5 }], lessons: [] };
+    const f = { schema: 1, id: 'c'.repeat(24), contributor: me, lesson: l, batch: b };
+    const bad = { schema: 1, id: 'd'.repeat(24), contributor: me, lesson: Object.assign({}, l, { id: 'e'.repeat(24), lessons: ['made_up'] }) };
+    const api = fakeApi([issue(1, 'jambix-fight ' + f.id, f), issue(2, 'jambix-fight ' + f.id, f), issue(3, 'jambix-fight ' + bad.id, bad)]);
+    const s = await ingest(store, api);
+    assert.deepStrictEqual(api.comments, [[1, 'accepted'], [2, 'accepted (duplicate)'], [3, 'refused: lesson: lesson code made_up unknown']]);
+    assert.strictEqual(s.accepted, 1);
+    assert.strictEqual(store.batches().length, 1);
+    assert.strictEqual(store.lessons().length, 1);
+    // A fight with no batch (no forecast, no episode): the lesson alone.
+    const lone = { schema: 1, id: 'f'.repeat(24), contributor: me, lesson: Object.assign({}, l, { id: '9'.repeat(24) }) };
+    const api2 = fakeApi([issue(4, 'jambix-fight ' + lone.id, lone)]);
+    await ingest(store, api2);
+    assert.deepStrictEqual(api2.comments, [[4, 'accepted']]);
+    assert.strictEqual(store.lessons().length, 2);
+});

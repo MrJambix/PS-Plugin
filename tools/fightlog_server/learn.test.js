@@ -440,3 +440,32 @@ test('the learning log: each cycle writes an entry -- what arrived, what the net
     // The words for a fight set.
     assert.strictEqual(report.describeFights([]), 'no fight');
 });
+
+test('the weights check: with enough measured moments, a threat level that comes before things getting worse more often at HIGH than at LOW separates; the other way round is inverted; too few says not yet; the learning log says it', () => {
+    const mk = (threat, result, n, start) => {
+        const out = [];
+        for (let i = 0; i < n; i++) out.push(episode('gap_close_attempt', result, true, { before: { hp: 1, zone: 'ranged', gap: 20, threat, attackers: 1, controlled: false, defensives_ready: 1, foe_hp: 1 } }));
+        return out;
+    };
+    const build = (highWorse, lowWorse) => {
+        const batches = [];
+        for (let c = 1; c <= 2; c++) {
+            for (let f = 0; f < 5; f++) {
+                const eps = [...mk('HIGH', highWorse ? 'SITUATION_WORSENED' : 'POSITION_IMPROVED', 2), ...mk('LOW', lowWorse ? 'SITUATION_WORSENED' : 'POSITION_IMPROVED', 2)];
+                batches.push(batch(who(c), f, [], { episodes: eps }));
+            }
+        }
+        return learn.build(batches, []);
+    };
+    let m = build(true, false);
+    assert.strictEqual(m.games.Forever.threat_check.verdict, 'separates', m.games.Forever.threat_check.why);
+    assert.strictEqual(m.games.Forever.threat_check.levels.HIGH.worse, 1);
+    m = build(false, true);
+    assert.strictEqual(m.games.Forever.threat_check.verdict, 'inverted');
+    assert.match(m.games.Forever.threat_check.why, /want reweighing/);
+    const thin = learn.build([batch(who(1), 0, [], { episodes: mk('HIGH', 'SITUATION_WORSENED', 2) })], []);
+    assert.strictEqual(thin.games.Forever.threat_check.verdict, 'not yet');
+    const report = require('./report');
+    const e = report.entry({ decision: 'reject', version: null, verdict: { failed: [], checks: [], material: { why: 'x' } }, candidate: build(true, false) }, null, { batches: [], lessons: [] });
+    assert.match(e.markdown, /### Weights check\n- Forever: does the threat level tell the dangerous moments\? \*\*separates\*\*/);
+});

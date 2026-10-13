@@ -1585,6 +1585,34 @@ fixes has a test that fails on the old code with the log's own symptom.
 The learning engine is tested on synthetic records only; no contributor
 has sent one.
 
+### 3.17 The relook of the first real fights — 2026-10-12
+
+The user asked what was left and what needed a relook; nine items came
+back, and "let's fix the first 9". Read from the user's own fight log, the
+upload queue and the API recorder: (1) a player that left was recorded as
+dead (JCore's gone-is-dead) -- a death now needs a unit still there,
+rogues and druids get 30 s to come back; (2) no enemy ability reached a
+fight's record although Forever fires the events -- tokens now resolve
+through three paths and every enemy event kept or dropped is counted per
+fight (`feeds`), and the defensive bait no longer treats silence as
+evidence; (3) "goes for your pet" sampled every second -- one chance a
+15 s window now; (4) a Freezing Trap broke under a standing hold -- the
+hold now stops an attack already running, and the debrief names what
+broke a control; (5) upload problems are kept on disk; (6) the field
+checks (`intel/fieldcheck.lua`) let the game answer the hunter work's
+assumptions and measure Forever's DR; (7) the learning engine checks the
+threat weights against measured outcomes; (8) one issue per fight, hourly
+filing, the two-player rule as a repository variable; (9) a new crash
+(19:04, a bag item asked for its position by JCore's object sweep) fixed
+in JCore's sweep and World Click's mouseover -- the earlier crash
+workarounds (no Forever sight rays, the UI over the game's windows) are
+unchanged, nothing new explains the crashes they answer.
+
+**Validation.** Lua: `aio_intel_debrief_test` +5, `aio_intel_predict_test`
+(the pet test rewritten), `aio_intel_bait_test`, `aio_intel_central_test`
+(one issue per fight), new `aio_intel_fieldcheck_test` (5), new
+`jcore_units_item_test` (fails on the old sweep). Node: 27.
+
 ---
 
 ## 4. Risks, unknowns, and what only the game can answer

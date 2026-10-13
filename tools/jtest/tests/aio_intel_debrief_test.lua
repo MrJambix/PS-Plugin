@@ -219,9 +219,48 @@ T[#T + 1] = { "your own hit broke your trap: a lesson with the count", function(
     assert(f, "closed")
     local codes = lesson_codes(f)
     assert(codes.own_cc_broken, "the lesson")
-    has(codes.own_cc_broken, "you broke your own control 1 time(s)", "the count")
+    has(codes.own_cc_broken, "you broke your own control 1 time(s) (your Arcane Shot 1)", "the count, and what broke it")
     local moments = table.concat(f.moments and (function() local t = {} for i = 1, #f.moments do t[i] = f.moments[i].text end return t end)() or {}, " || ")
-    has(moments, "your hit broke your Freezing Trap Effect on Enemy", "the moment")
+    has(moments, "your Arcane Shot broke your Freezing Trap Effect on Enemy", "the moment names the cast")
+end }
+
+T[#T + 1] = { "live 2026-10-12: a control that ends early is blamed on what was there -- not on a cast that does no damage (Hunter's Mark), the pet when it was on it, nothing of yours otherwise", function()
+    -- Hunter's Mark just before: no damage, so not "your hit"; nothing else of yours: no lesson.
+    local G = bundle()
+    melee(G, WARRIOR); fighting(G)
+    step(G)
+    held_by(G, "Freezing Trap Effect", 6, G.player); step(G)
+    our_cast(G, "Hunter's Mark")
+    G.row.control, G.auras[G.target.guid] = nil, {}
+    step(G, 0.2)
+    kill_target(G); step(G)
+    local f = last(G)
+    local codes = lesson_codes(f)
+    assert(not codes.own_cc_broken, "no lesson: nothing of yours broke it")
+    local moments = table.concat((function() local t = {} for i = 1, #f.moments do t[i] = f.moments[i].text end return t end)(), " || ")
+    has(moments, "your Freezing Trap Effect on Enemy ended early (6.0s left): no hit of yours seen", "said as it is")
+end }
+
+T[#T + 1] = { "the hold stops an attack already running on the held target, on every client (live 2026-10-12: the trap broke under a standing hold)", function()
+    local G = bundle()
+    local stops = 0
+    _G.core.input = _G.core.input or {}
+    _G.core.input.stop_attack = function() stops = stops + 1 return true end
+    G.player.is_auto_attacking = function() return G.auto_attacking == true end
+    melee(G, WARRIOR); fighting(G)
+    step(G)
+    held_by(G, "Freezing Trap Effect", 8, G.player); step(G)
+    assert(G.S.cc and G.S.cc.hold, "the plan holds the target")
+    G.auto_attacking = true
+    step(G)
+    assert_eq(stops, 1, "the running attack stopped once")
+    step(G, 0.5)
+    assert_eq(stops, 1, "not again at once")
+    step(G, 2.0)
+    assert_eq(stops, 2, "again after a while if it is still running")
+    G.auto_attacking = false
+    step(G, 2.5)
+    assert_eq(stops, 2, "nothing to stop")
 end }
 
 T[#T + 1] = { "the game's sandbox: with no os table and no _G (live on Forever 2026-10-12, the debrief died on your death and took the intel build with it), a fight lost closes, the log is written, the lesson is queued under a fresh id, the layer runs on", function()
@@ -302,6 +341,92 @@ T[#T + 1] = { "no central address, no network: the status says so and nothing is
     step(G)
     has(G.I.central.status(), "off: no central address", "no address")
     assert_eq(#net.gets, 0, "nothing asked for")
+end }
+
+--- JCore's own rule (units.is_dead): a unit that has gone answers dead.
+local function jcore_is_dead(G)
+    G.P.units.is_dead = function(u)
+        local ok, v = pcall(u.is_valid, u)
+        if not ok or v ~= true then return true end
+        return u.dead
+    end
+end
+
+T[#T + 1] = { "live 2026-10-12: a rogue that vanishes at 72% is not dead -- it comes back and kills you: one fight, lost; a priest gone from sight at full health left: fled, not won", function()
+    local G = bundle()
+    jcore_is_dead(G)
+    melee(G, ROGUE); fighting(G)
+    step(G)
+    their_cast(G, "Gouge"); step(G)
+    G.health[G.target.guid], G.row.hp = 0.72, 0.72
+    G.run(10)
+    -- Vanish: the row goes and the unit with it.
+    G.rows = {}; G.target_present = false
+    G.target.is_valid = function() return false end
+    G.run(14)
+    assert_eq(last(G), nil, "not closed as a death, nor as gone yet: a rogue is waited for")
+    assert_eq(debrief(G).T.open, true, "the fight is still open")
+    -- It comes back and kills you.
+    G.target.is_valid = function() return true end
+    G.rows = { G.row }; G.target_present = true
+    fighting(G); step(G)
+    G.hp = 0.1; G.run(3)
+    G.fire("jcore.player.died", {})
+    local f = last(G)
+    assert(f, "closed on your death")
+    assert_eq(f.outcome, "lost", "one fight, lost")
+    assert_eq(f.foes[f.foe_order[1]].died, false, "the rogue never died")
+    assert_eq(debrief(G).T.count, 1, "one fight, not a win and a loss")
+
+    -- Not a stealth class, gone from sight at full health: it left.
+    local G2 = bundle()
+    jcore_is_dead(G2)
+    melee(G2, PRIEST); fighting(G2)
+    step(G2); G2.run(4)
+    G2.rows = {}; G2.target_present = false
+    G2.target.is_valid = function() return false end
+    G2.run(17)
+    local f2 = last(G2)
+    assert(f2, "closed once it was gone long enough")
+    assert_eq(f2.outcome, "fled", "they left alive, not won")
+    assert_eq(f2.foes[f2.foe_order[1]].died, false, "nobody died")
+end }
+
+T[#T + 1] = { "a real death still counts: the unit is there and the game calls it dead", function()
+    local G = bundle()
+    jcore_is_dead(G)
+    melee(G, WARRIOR); fighting(G)
+    step(G); G.run(3)
+    kill_target(G); step(G)
+    local f = last(G)
+    assert(f, "closed")
+    assert_eq(f.outcome, "won", "won")
+    assert_eq(f.foes[f.foe_order[1]].died, true, "it died")
+end }
+
+T[#T + 1] = { "live 2026-10-12: the fight says what reached us of the enemy -- a cast on \"target\" resolved through your target is kept, one on a token nothing resolves is counted by its kind", function()
+    local G = bundle()
+    G.player.get_target = function() return G.target end
+    melee(G, ROGUE); fighting(G)
+    step(G)
+    -- "target": not a key the unit lookup knows, resolved through your own target.
+    G.fire("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", { "target", 0, G.id_of("Sinister Strike") })
+    -- "softenemy": nothing resolves it here.
+    G.fire("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", { "softenemy", 0, G.id_of("Gouge") })
+    step(G)
+    kill_target(G); step(G)
+    local f = last(G)
+    assert(f, "closed")
+    assert(f.feeds, "the fight's feeds")
+    assert_eq(f.feeds.casts, 1, "one enemy cast kept")
+    assert_eq(f.feeds.unresolved, 1, "one dropped")
+    assert_eq(f.feeds.unresolved_by.softenemy, 1, "by its token's kind")
+    local r = f.foes[f.foe_order[1]]
+    assert_eq(r.used["Sinister Strike"], 1, "the kept cast is in what it used")
+    local lines = table.concat(debrief(G).lines(), " || ")
+    has(lines, "Enemy events this fight: 1 cast(s), 0 aura(s) kept; 1 dropped (unresolved: softenemy 1)", "on the page")
+    local rec = G.files["jambix.aio.fights.json"].fights[1]
+    assert_eq(rec.feeds.casts, 1, "and in the log")
 end }
 
 return T

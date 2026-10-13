@@ -209,6 +209,28 @@ function validateLesson(l) {
     return null;
 }
 
+// One fight in one record (the GitHub backend since 2026-10-12: one issue
+// per fight, not two): its lesson and, when it made forecasts or episodes,
+// its batch, under one id and one contributor.
+function validateFight(f) {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) return 'fight must be an object';
+    if (f.schema !== SCHEMA) return `schema ${f.schema} is not ${SCHEMA}`;
+    if (!isHex(f.id, 16, 64)) return 'id must be 16 to 64 hex characters';
+    if (!isHex(f.contributor, 16, 64)) return 'contributor must be 16 to 64 hex characters';
+    if (!f.lesson || typeof f.lesson !== 'object') return 'lesson missing';
+    let e = validateLesson(f.lesson);
+    if (e) return 'lesson: ' + e;
+    if (f.lesson.contributor !== f.contributor) return 'lesson.contributor does not match';
+    if (f.batch !== undefined && f.batch !== null) {
+        e = validateBatch(f.batch);
+        if (e) return 'batch: ' + e;
+        if (f.batch.contributor !== f.contributor) return 'batch.contributor does not match';
+    }
+    const extra = forbiddenKey(f, 'fight');
+    if (extra) return `forbidden field ${extra}`;
+    return null;
+}
+
 function validateDelete(d) {
     if (!d || typeof d !== 'object') return 'must be an object';
     if (d.schema !== SCHEMA) return `schema ${d.schema} is not ${SCHEMA}`;
@@ -217,4 +239,4 @@ function validateDelete(d) {
 }
 
 module.exports = { normalize, SCHEMA, CLASSES, PATTERNS, OUTCOMES, ENCOUNTERS, LESSON_CODES, EPISODE_TYPES, RESULTS,
-    validateBatch, validateLesson, validateDelete, forbiddenKey };
+    validateBatch, validateLesson, validateFight, validateDelete, forbiddenKey };

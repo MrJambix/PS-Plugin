@@ -184,6 +184,12 @@ return function(P)
         local ok, obj = pcall(fn)
         if not ok or not obj then return nil end
         if P.call(obj, "is_valid") ~= true then return nil end
+        -- An item has no place in the world: asking one for its position is
+        -- a client assert that closes the game (JCore units.lua positionless,
+        -- 2026-10-12). Never handed on.
+        local guid = P.call(obj, "get_guid")
+        if type(guid) == "string" and guid:sub(1, 5) == "Item-" then return nil end
+        if P.call(obj, "is_item") == true then return nil end
         return obj
     end
 

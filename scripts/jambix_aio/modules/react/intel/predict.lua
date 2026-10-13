@@ -148,7 +148,7 @@ return function(P, lib, data, K)
             p = { cats = {}, scan_at = -huge, pending = {}, alerted = {}, encounter = 0,
                   last_mobility_at = -huge, last_interrupt_at = -huge, last_interrupt = nil, last_breaker_at = -huge,
                   burst_was = nil, control_was = nil, trinket_was = false,
-                  pet_sampled_at = -huge, in_combat_was = f.in_combat == true,
+                  pet_window = nil, pet_next = -huge, in_combat_was = f.in_combat == true,
                   openers = {}, waiting_opener = false, opener_since = -huge,
                   watching_defensive = false, defensive_fc = nil, defensive_since = -huge }
             f.pat = p
@@ -436,17 +436,41 @@ return function(P, lib, data, K)
         p.trinket_was = f.st ~= nil and f.st.trinket_down == true
     end
 
-    --- The pet's share: one sample a second in combat while the player's
-    --- target is read (you or the pet; an ally is no sample).
+    --- Does it go for the pet: ONE chance per window of pet_window seconds
+    --- in combat with your pet out, opened the first time its target is read
+    --- (you or the pet; an ally opens nothing), with the forecast as it stood
+    --- then. The hit: it targets the pet within the window (the next window
+    --- opens pet_window later). The miss: the window ends with it on you.
+    --- A window it leaves the picture in (no read for pet_gap) or that the
+    --- fight ends early closes with no answer. Live on 2026-10-12 a sample a
+    --- second made 60 of a session's 80 checks this one pattern, and a fight
+    --- where a rogue simply stayed on you counted 40 times.
     local function read_pet(S, f, p, now)
-        if not (S.pet.alive and f.in_combat) then return end
-        if (now - p.pet_sampled_at) < KP.pet_sample_every then return end
+        local w = p.pet_window
+        if w and (now - w.last) > KP.pet_gap then p.pet_window, w = nil, nil end
+        if not (S.pet.alive and f.in_combat) then
+            if w and w.on_me and (now - w.opened) >= KP.pet_window * 0.5 then
+                observe(f, "targeting_pet", false, now, 1, nil, w.fc, "it stayed on you")
+            end
+            p.pet_window = nil
+            return
+        end
+        if not w then
+            if now < (p.pet_next or -huge) then return end
+            if not (f.targets_pet or f.targets_me) then return end
+            w = { opened = now, last = now, on_me = false, fc = forecast(p.cats.targeting_pet) }
+            p.pet_window = w
+        end
+        w.last = now
         if f.targets_pet then
-            p.pet_sampled_at = now
-            observe(f, "targeting_pet", true, now, KP.pet_sample_weight, nil, forecast(p.cats.targeting_pet), "on the pet")
-        elseif f.targets_me then
-            p.pet_sampled_at = now
-            observe(f, "targeting_pet", false, now, KP.pet_sample_weight, nil, forecast(p.cats.targeting_pet), "on you")
+            observe(f, "targeting_pet", true, now, 1, nil, w.fc, "on the pet")
+            p.pet_window, p.pet_next = nil, now + KP.pet_window
+            return
+        end
+        if f.targets_me then w.on_me = true end
+        if (now - w.opened) >= KP.pet_window then
+            if w.on_me then observe(f, "targeting_pet", false, now, 1, nil, w.fc, "on you through the window") end
+            p.pet_window = nil
         end
     end
 

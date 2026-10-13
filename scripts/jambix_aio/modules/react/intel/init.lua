@@ -87,6 +87,22 @@ return function(P, lib)
         end
     end
 
+    -- A player's death needs the game's word on a unit that is still there.
+    -- JCore's units.is_dead answers true for a unit that has GONE ("gone is
+    -- as good as dead to every caller" -- right for targeting, wrong for a
+    -- fight's outcome): live on 2026-10-12 a rogue's Vanish and a druid
+    -- slipping out of sight were both recorded as deaths, two fights as
+    -- won. A unit that is no longer valid has left; it did not die.
+    if lib.unit_dead == nil then
+        lib.unit_dead = function(unit)
+            if not unit then return false end
+            local okv, valid = pcall(function() return unit:is_valid() end)
+            if not okv or valid ~= true then return false end
+            local okd, dead = pcall(function() return unit:is_dead() end)
+            return okd and dead == true
+        end
+    end
+
     local state = load("modules/react/intel/state")(P, lib)
     -- The one way a later module reads an inference: with a threshold.
     lib.sure = state.sure
@@ -119,6 +135,11 @@ return function(P, lib)
         local ok, name = pcall(rot.detect_class)
         return ok and name or nil
     end
+    -- The field checks: the game's own answers to what was assumed (item 6
+    -- of the user's relook, 2026-10-12).
+    local fieldcheck = load("modules/react/intel/fieldcheck")(P, lib, data, weights)
+    lib.fieldcheck = fieldcheck
+    local last_W = nil
     local central = load("modules/react/intel/central")(P, lib, data, weights)
     lib.central = central
     local predict = load("modules/react/intel/predict")(P, lib, data, weights)
@@ -140,7 +161,7 @@ return function(P, lib)
     lib.debrief = debrief
     I.state, I.threat, I.cooldowns, I.data, I.weights = state, threat, cooldowns, data, weights
     I.states, I.position, I.explain, I.cc, I.predict, I.bait = states, position, explain, ccplan, predict, bait
-    I.debrief, I.central, I.episodes = debrief, central, episodes
+    I.debrief, I.central, I.episodes, I.fieldcheck = debrief, central, episodes, fieldcheck
     I.S = state.S
     I.S.threat = threat.T
     I.S.cds = cooldowns.T
@@ -212,6 +233,36 @@ return function(P, lib)
     ---@param W table
     ---@param now number
     ---@return table S
+    -- The hold, kept. The hold reaction halts the rotation's walk, but an
+    -- attack already running goes on: live on 2026-10-12 a Freezing Trap
+    -- broke with 2.4 s left while the hold stood three times. So while the
+    -- control plan holds the player you have targeted, a running auto attack
+    -- (Auto Shot or the swing) is stopped -- on every client, at most once
+    -- every hold_restop seconds. Nothing is cast; only the attack stops.
+    local HOLD_RESTOP = 2.0
+    local hold_stop = { key = nil, at = -math.huge, stops = 0 }
+    I.hold_stop = hold_stop
+    local function enforce_hold(W, S, now)
+        local h = S.cc and S.cc.hold or nil
+        if not h or h.guid == nil or h.guid ~= (S.env and S.env.target and S.env.target.guid) then
+            hold_stop.key = nil
+            return
+        end
+        local pl = W.player
+        if not (pl and (pl.auto_attacking == true or pl.shooting == true)) then return end
+        local key = tostring(h.guid) .. "|" .. tostring(h.name)
+        if hold_stop.key == key and (now - hold_stop.at) < HOLD_RESTOP then return end
+        local input = type(core) == "table" and core.input or nil
+        if not (input and type(input.stop_attack) == "function") then return end
+        if pcall(input.stop_attack) then
+            if hold_stop.key ~= key and P.log and P.log.fmt then
+                P.log.fmt("info", "intel hold: the attack stopped -- %s", tostring(h.why))
+            end
+            hold_stop.key, hold_stop.at, hold_stop.stops = key, now, hold_stop.stops + 1
+            h.attack_stopped = true
+        end
+    end
+
     function I.update(W, now)
         if not I.enabled() then
             W.intel = state.idle(now, "switched off")
@@ -228,6 +279,7 @@ return function(P, lib)
         if I.module_on("threat") then threat.update(W, W.intel, now) else threat.reset() end
         if I.module_on("cooldowns") then cooldowns.update(W, W.intel, now) else cooldowns.reset() end
         if I.module_on("cc") then ccplan.update(W, W.intel, now) else ccplan.reset() end
+        if I.module_on("cc") then enforce_hold(W, W.intel, now) end
         if I.module_on("predict") then predict.update(W, W.intel, now) else predict.reset() end
         if I.module_on("bait") then bait.update(W, W.intel, now) else bait.reset() end
         if I.module_on("tactics") then states.update(W, W.intel, now) else states.reset() end
@@ -235,6 +287,9 @@ return function(P, lib)
         explain.update(W.intel, now)
         episodes.update(W, W.intel, now)
         debrief.update(W, W.intel, now)
+        last_W = W
+        local okf, errf = pcall(fieldcheck.update, W, W.intel, now)
+        if not okf and P.log and type(P.log.once) == "function" then pcall(P.log.once, "warn", "fieldcheck", "field checks failed: " .. tostring(errf)) end
         -- The network's client last: the uploads and the downloads, both
         -- asynchronous; nothing above waited on it.
         central.update(W, W.intel, now)
@@ -280,6 +335,7 @@ return function(P, lib)
         -- interrupted is a player's doing.
         ctx.on("jcore.game_event.UNIT_SPELLCAST_SUCCEEDED", function(args)
             if type(args) ~= "table" or args[1] ~= "player" then return end
+            pcall(fieldcheck.on_our_cast, lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, last_W, state.S, clock())
             debrief.on_our_cast(args[3], state.S.env.target.guid, clock())
             episodes.on_our_cast(lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, state.S.env.target.guid, clock())
             if not I.module_on("predict") then return end
@@ -305,8 +361,14 @@ return function(P, lib)
             if type(args) ~= "table" or args[1] ~= "added" then return end
             local token = args[2]
             if token == "player" or token == "pet" then return end
-            state.on_aura(token, args[4], args[5], args[10] == true, clock())
+            local guid = state.on_aura(token, args[4], args[5], args[10] == true, clock())
+            -- One of our controls landing on a player: its duration, for the field checks.
+            if guid and args[9] == "player" then pcall(fieldcheck.on_control_aura, guid, args[5], args[7], clock()) end
         end)
+        -- JCore's cast requests (the sting sent at an add) and the rotation's
+        -- word that a spell it called castable never went out.
+        ctx.on("jcore.cast.sent", function(request) pcall(fieldcheck.on_sent, request, state.S, clock()) end)
+        ctx.on("jambix.aio.rotation_stuck", function(name) pcall(fieldcheck.on_stuck, name, clock()) end)
 
         -- Era: the combat log names a hostile player's instant casts by
         -- guid. On Forever the event arrives empty; filtered on its second

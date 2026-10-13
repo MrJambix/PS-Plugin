@@ -154,6 +154,11 @@ T[#T + 1] = { "defensive bait: a rogue whose Evasion is unseen, Rapid Fire ready
     at_range(G, ROGUE); fighting(G)
     G.known["Rapid Fire"] = true
     step(G)
+    -- No enemy spell has reached us yet this session: "unseen" says nothing
+    -- (live 2026-10-12: three fights with no enemy event kept), so no bait on it.
+    assert_eq(bait(G).target, nil, "silence is not evidence: no bait")
+    -- Its first cast seen: enemy events reach us, and "unseen" means something.
+    their_cast(G, "Sinister Strike"); step(G)
     local b = bait(G).target
     assert(b, "a bait")
     assert_eq(b.kind, "defensive", "the defensive")

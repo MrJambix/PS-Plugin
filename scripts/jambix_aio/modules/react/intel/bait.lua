@@ -129,7 +129,9 @@ return function(P, lib, data, K)
             if hp * 100 > at + KB.defensive_margin * 100 then return false end      -- far above: the burst lands before it pops
             why = string.format("%s (%.2f); it is at %d%%", thr, tconf, floor(hp * 100 + 0.5))
             conf = tconf
-        elseif #unseen > 0 then
+        elseif #unseen > 0 and ((S.events and (S.events.casts + S.events.auras)) or 0) > 0 then
+            -- "Unseen" says something only once enemy spells reach us at all:
+            -- with none seen this session, silence is not "it has not used it".
             why = string.format("%s unseen this session; pressure with the fillers until it is spent", table.concat(unseen, ", "))
             conf = KB.unseen_conf
         else
