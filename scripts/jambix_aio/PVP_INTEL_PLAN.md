@@ -17,7 +17,9 @@
 §3.18. Stage 10 (teamfights): §3.19. Stage 11-b (the history ledger and
 the scenario bench): §3.20. Stage 12 (performance): §3.21. Every stage is
 built; one pattern (chasing through bad terrain) is left out on purpose
-(§3.21). None of it is seen in game yet.** The audit's §1.3 row
+(§3.21). Stage 13 (the deferred hook-ups: the bait's burst hold, racial
+breakers, predictions in the advice, the recorded fights replayed): §3.23.
+None of it is seen in game yet.** The audit's §1.3 row
 > for the Reactions page and the §1.11 / §1.12 mentions of `pvpmarks`,
 > `pvpx`, `plays` and `react/marks` describe the tree before §3.11; they are
 > kept as the record of what was there. Every statement below was read from the working tree on
@@ -1793,6 +1795,63 @@ score a coin's 0.25.
 
 **Validation.** New `aio_intel_attribution_test` (5); the server's
 `learn.test.js` gains the repair and the fights table (28 Node tests).
+
+### 3.23 Stage 13: the deferred hook-ups — 2026-10-13
+
+On the user's "continue with next stages", with every planned stage
+built: the pieces the stages' *What was not done* notes left for files
+other sessions owned at the time (§3.12, §3.13, §3.14, §3.20).
+
+- **The burst kept by the defensive bait** (§3.14's note). `bait.lua`
+  now says whose burst it holds (`hold_guid`, `hold_hp`); `burst.lua`
+  `bait_hold` reads it, and `should_open` keeps the window shut while it
+  holds -- after the kill window's HIGH (every out seen down: opens) and
+  its abort / force-defensive (shut), before its PREPARE_BURST. Never under
+  the kill window's no-time line (12%), never for another player, never
+  with *Cooldown baiting* off.
+- **A racial breaker in the held advice** (§3.12's note: "the race is not
+  read"). A racial is in the spellbook of the race that has it, so
+  `known` is the read; `data.SELF_BREAKERS` copies `rules/pvp.lua`'s
+  breakers that are pressed *under* a helpless control (Will of the
+  Forsaken: fear, charm, sleep; Blink: stun; Berserker Rage: fear). Held,
+  DEFENSIVE names the first ready one that breaks this control, then the
+  trinket line. The break-control reaction still presses it; this only
+  names it.
+- **The predictions in the advice** (§3.13: "the tactical states read
+  none yet"). `data.PREDICTED_ADVICE` maps each of the nine patterns to
+  the states its response applies under (and what it adds to avoid). A
+  prediction about the target that is sure and not adapting, read through
+  `intel.sure` at the predictor's threshold as the baits read them, adds
+  "predicted: <consequence> (p, reliability) -- <response>" after the
+  state's own actions, and its avoid line marked "(predicted)". It never
+  enters or leaves a state: that stays on what is observed. Not under
+  DISENGAGE, not while you are held. `T.predicted` lists them.
+- **The recorded fights replayed** (§3.20: "the bench plays situations,
+  not recordings"). New `intel/replay.lua`: each decision episode the
+  debrief kept (`jambix.aio.fights.json`, the newest fights first, test
+  data left out, at most `REPLAY.max_moments`) becomes a bench situation
+  from its compact *before* picture -- your health, the threat, the band
+  and the distance, attackers, controlled, the target's health, class and
+  whether it was on you, the time in, the move and bait advised. What it
+  does not carry (your mana, the target's cooldowns, the tactical state, a
+  second player's class) is the bench's default and said so. The Try-it
+  step's situation list carries them after the ready-made ones
+  (`custom.presets`); its new *Replay over my fights* button judges the
+  reaction at every one (`custom.replay`, on the press, not every frame):
+  "it would have acted at 1 of 3 moments", with the moments and what you
+  did then.
+- **Not needed**: §3.12's "pet.lua reads `W.intel.cc.pet`". pet.lua's own
+  check (`react.out_of_fight`, 1.8.1) keeps the pet off any control damage
+  breaks, a superset of the plan's recall; a second reader would be the
+  competing engine the brief forbids.
+
+**Validation.** New `aio_intel_hookups_test` (5): the burst held and
+each exception; Will of the Forsaken named under a fear, not on its
+cooldown, not under a Polymorph; a sure opener prediction in OPENING's
+advice after its own actions, a forming one absent; the recorded moments
+as situations; a reaction replayed (1 of 3). With the intel, bait,
+kill-window, tactics, window, hunter, reaction, boot, rotation and
+scenario suites: no new failure.
 
 ---
 

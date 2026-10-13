@@ -2639,6 +2639,32 @@ return function(R, P, lib, engine, load)
         return out
     end
 
+    --- The bench's situations: the ready-made ones (custom_data's
+    --- BENCH_PRESETS), then your recorded fights' moments, newest first
+    --- (PvP intelligence, Stage 13: react/intel/replay.lua). Rebuilt when asked.
+    function M.presets()
+        local out = {}
+        for i, p in ipairs(D.BENCH_PRESETS) do out[i] = p end
+        local I = P.react and P.react.intel or nil
+        local R = I and I.replay or nil
+        if R and R.situations then
+            local ok, list = pcall(R.situations)
+            if ok and type(list) == "table" then
+                for i = 1, #list do out[#out + 1] = list[i] end
+            end
+        end
+        return out
+    end
+
+    --- A reaction replayed over your recorded fights (Stage 13), or nil
+    --- without the intelligence layer.
+    function M.replay(r)
+        local I = P.react and P.react.intel or nil
+        local R = I and I.replay or nil
+        if not (R and R.run) then return nil end
+        return R.run(r)
+    end
+
     --- The fight as it is now, as a test-bench situation (the Try it step's
     --- "From the fight now"). nil while the rotation is not running.
     function M.situation_now()

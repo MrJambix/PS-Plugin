@@ -359,6 +359,36 @@ D.HEALS = {
     ["Holy Light"] = true, ["Flash of Light"] = true,
     ["Healing Wave"] = true, ["Lesser Healing Wave"] = true, ["Chain Heal"] = true,
 }
+--- The predictions in the advice (Stage 13): under which tactical states a
+--- sure prediction about the target adds its response (PATTERNS above) to
+--- the actions, labelled "predicted", and what it adds to avoid. A state is
+--- still entered on what is observed; a prediction only adds words after
+--- the state's own actions.
+D.SOURCE.PREDICTED_ADVICE = "this plugin's mapping of the brief's Phase 6 responses onto the Phase 3 states (PVP_INTEL_PLAN.md §3.23)"
+D.PREDICTED_ADVICE = {
+    mobility_when_slowed = { states = { CONTROL_DISTANCE = true, SUSTAINED_PRESSURE = true, RANGED_PRESSURE = true, OPENING = true },
+                             avoid = "a slow with no trap or Scatter Shot ready" },
+    defensive_threshold = { states = { KILL_WINDOW = true, SUSTAINED_PRESSURE = true } },
+    interrupts_casts = { states = { SUSTAINED_PRESSURE = true, RANGED_PRESSURE = true, OPENING = true, KILL_WINDOW = true },
+                         avoid = "Aimed Shot inside its interrupt's reach" },
+    escape_after_control = { states = { CONTROL_DISTANCE = true, CROWD_CONTROL_SETUP = true, RESET_FIGHT = true, PEEL_ENEMY = true,
+                                        PROTECT_ALLY = true },
+                             avoid = "the real control before its trinket is drawn" },
+    over_committing = { states = { ANTI_BURST = true, DEFENSIVE = true }, avoid = "your last defensive on its first burst" },
+    targeting_pet = { states = { SUSTAINED_PRESSURE = true, RANGED_PRESSURE = true, OPENING = true, KILL_WINDOW = true } },
+    same_opener = { states = { PREPARATION = true, OPENING = true } },
+    retreating_when_pressured = { states = { KILL_WINDOW = true, COUNTER_ATTACK = true }, avoid = "chasing it past your allies" },
+    saving_cooldowns_until_low = { states = { KILL_WINDOW = true, SUSTAINED_PRESSURE = true } },
+}
+--- What can be pressed while a control leaves you helpless, and the
+--- mechanics it breaks (Stage 13: the held advice names it). A racial is in
+--- the spellbook of the race that has it, so `known` is the race read.
+D.SOURCE.SELF_BREAKERS = "react/rules/pvp.lua BREAKERS, the ones it presses `under` a helpless control (the break-control reaction presses them; here they are only named)"
+D.SELF_BREAKERS = {
+    { name = "Will of the Forsaken", under = { fear = true, charm = true, sleep = true } },
+    { name = "Blink", under = { stun = true } },
+    { name = "Berserker Rage", under = { fear = true } },
+}
 --- The casts that control a player: every name in CONTROLS above, and the
 --- ones with a cast time it does not list (an interrupt stops those).
 D.CONTROL_NAMES = { ["Hibernate"] = true, ["Mind Control"] = true, ["Scare Beast"] = true, ["Seduction"] = true, ["Banish"] = true }

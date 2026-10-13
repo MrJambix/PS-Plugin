@@ -194,8 +194,15 @@ return function(P, lib, data, K)
               for i = #out, 1, -1 do out[i] = nil end
               local c = X.me.control
               if c and c.helpless and (c.left or 0) >= KT.controlled_left then
-                  out[1] = "break it if it costs more than the trinket is worth (the break-control reaction decides)"
-                  out[2] = "nothing else can be cast: queue nothing"
+                  -- A breaker you can press under this control, ready (Stage 13).
+                  for _, b in ipairs(data.SELF_BREAKERS) do
+                      if b.under[c.kind or ""] and book.known(b.name) and book.ready(b.name) then
+                          out[#out + 1] = string.format("%s (it breaks the %s)", b.name, tostring(c.kind))
+                          break
+                      end
+                  end
+                  out[#out + 1] = "the trinket if it costs more than the trinket is worth (the break-control reaction decides)"
+                  out[#out + 1] = "nothing else can be cast: queue nothing"
                   return out
               end
               local list = lib.cooldowns.cheapest(X.S.melee_attackers > 0 and "melee" or "spell", X.S)
@@ -442,9 +449,36 @@ return function(P, lib, data, K)
 
     local T = {
         state = "NONE", prev = nil, since = 0, why = "no PvP", conf = 0, priority = 0, emergency = false,
-        actions = {}, avoid = {}, reserve = {}, candidates = {}, changed = false,
+        actions = {}, avoid = {}, reserve = {}, candidates = {}, changed = false, predicted = {},
     }
     M.T = T
+
+    -- Stage 13: the target's sure predictions in the advice. Read the way the
+    -- baits read them (intel.sure at the predictor's threshold, sure, not
+    -- adapting); each adds its response after the state's own actions,
+    -- labelled "predicted", and what to avoid -- never which state it is.
+    local KP = K.PREDICT
+    local function add_predicted(name, X)
+        local list = T.predicted
+        for i = #list, 1, -1 do list[i] = nil end
+        if name == "DISENGAGE" then return end
+        local c = X.me and X.me.control
+        if c and c.helpless then return end                   -- held: nothing can be cast
+        local tg = X.tg
+        if not (tg and tg.predict) then return end
+        for key, e in pairs(tg.predict) do
+            local map = data.PREDICTED_ADVICE[key]
+            if map and map.states[name] and e.sure and not e.adapting and lib.sure(e, KP.threshold) ~= nil then
+                list[#list + 1] = { key = key, v = e.v, p = e.p or 0, label = e.label or "", response = e.response, avoid = map.avoid }
+            end
+        end
+        table.sort(list, function(a, b) return a.p > b.p end)
+        for i = 1, #list do
+            local e = list[i]
+            T.actions[#T.actions + 1] = string.format("predicted: %s (p %.2f, %s) -- %s", tostring(e.v), e.p, e.label, tostring(e.response or ""))
+            if e.avoid then T.avoid[#T.avoid + 1] = e.avoid .. " (predicted)" end
+        end
+    end
 
     local cand_pool = {}
     local action_pool, avoid_pool, reserve_pool = {}, {}, {}
@@ -470,6 +504,7 @@ return function(P, lib, data, K)
             for i = #T.avoid, 1, -1 do T.avoid[i] = nil end
             for i = #T.reserve, 1, -1 do T.reserve[i] = nil end
             for i = #T.candidates, 1, -1 do T.candidates[i] = nil end
+            for i = #T.predicted, 1, -1 do T.predicted[i] = nil end
             T.changed = T.prev ~= "NONE"
             if T.changed then T.since = now end
             return T
@@ -528,6 +563,7 @@ return function(P, lib, data, K)
             fill_list(st, "actions", X, T.actions)
             fill_list(st, "avoid", X, T.avoid)
             fill_list(st, "reserve", X, T.reserve)
+            add_predicted(pick.name, X)
             -- What the ledger keeps is kept here too.
             for name, why in pairs(S.cds.reserved or {}) do T.reserve[#T.reserve + 1] = name end
         else
@@ -536,6 +572,7 @@ return function(P, lib, data, K)
             for i = #T.actions, 1, -1 do T.actions[i] = nil end
             for i = #T.avoid, 1, -1 do T.avoid[i] = nil end
             for i = #T.reserve, 1, -1 do T.reserve[i] = nil end
+            for i = #T.predicted, 1, -1 do T.predicted[i] = nil end
         end
         return T
     end
@@ -546,6 +583,7 @@ return function(P, lib, data, K)
         for i = #T.avoid, 1, -1 do T.avoid[i] = nil end
         for i = #T.reserve, 1, -1 do T.reserve[i] = nil end
         for i = #T.candidates, 1, -1 do T.candidates[i] = nil end
+        for i = #T.predicted, 1, -1 do T.predicted[i] = nil end
     end
 
     --- "state CONTROL_DISTANCE (0.90): Enemy in melee, not slowed | do: Wing Clip, step out ... | avoid: ... | keep: ..."

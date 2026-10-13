@@ -2420,7 +2420,7 @@ never while the threat is HIGH. Four baits on the target: *mobility* (it
 closes when slowed and is not on you: Concussive Shot with the trap, Scatter
 Shot or the clip ready), *defensive* (your burst held while its defensive is
 unseen, or while it is within 15% of the health the predictor says it pops
-at; said for the burst's gate, advice until it reads it), *interrupt* (it
+at; the burst window keeps the hold, Stage 13), *interrupt* (it
 interrupts your casts and its interrupt reaches you: show Aimed Shot and
 stop it -- advice, nothing is cancelled here), *trinket* (it breaks a
 control at once: Concussive Shot first, the trap after, the threat at most
@@ -2474,6 +2474,16 @@ under 3 a frame (1.4 measured), each module at its pace, line of sight only
 through `geometry.sight` at most twice a second and never the client's
 `is_line_of_sight`. A new target, a new pet and logging out drop the state
 they make stale.
+
+**The hook-ups (Stage 13).** The burst window keeps the defensive bait's
+hold (not over a high-confidence kill window, not under 12%). Held by a
+player's control, the advice names the breaker you have ready that breaks
+it (Will of the Forsaken out of a fear). A sure prediction about your
+target adds its answer after the state's own advice, labelled
+*predicted*, and never decides the state. Your recorded fights are on
+the Reactions window's test bench: each moment a situation (*Replay:
+...*), and *Replay over my fights* judges a reaction at all of them.
+`react/intel/replay.lua`. Test: `aio_intel_hookups_test`.
 
 **Fight debriefs (`react/intel/debrief.lua`).** Each fight with a player,
 from its first tick to its end (won, lost, fled, reset, draw): who was in

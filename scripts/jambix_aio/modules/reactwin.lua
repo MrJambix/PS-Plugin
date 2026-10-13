@@ -1688,8 +1688,20 @@ return function(P)
     -- made-up picture of a fight. The situation lives in state.bench, from a
     -- ready-made one (custom_data's BENCH_PRESETS), or the fight as it is now.
 
+    -- The situations: the ready-made ones and, after them, your recorded
+    -- fights' moments (Stage 13), rebuilt every few seconds, not every frame.
+    local function presets(c)
+        local now = core.time and core.time() or 0
+        if not state.presets or (now - (state.presets_at or -math.huge)) > 5 then
+            state.presets = c.presets and c.presets() or c.D.BENCH_PRESETS
+            state.presets_at = now
+        end
+        return state.presets
+    end
+
     local function bench_preset(c, i)
-        local p = c.D.BENCH_PRESETS[i] or c.D.BENCH_PRESETS[1]
+        local list = presets(c)
+        local p = list[i] or list[1]
         state.bench = c.copy(p.s)
         state.bench_preset = i
     end
@@ -1737,10 +1749,11 @@ return function(P)
         local s = state.bench
         ui:row({ 0, 170, 90 })
         local plabels = {}
-        for i, p in ipairs(D.BENCH_PRESETS) do plabels[i] = "Situation: " .. p.label end
+        local plist = presets(c)
+        for i, p in ipairs(plist) do plabels[i] = (p.label:find("^Replay: ") and "" or "Situation: ") .. p.label end
         put(ui, "b_preset", state.bench_preset or 1)
         local pv, pch = ui:dropdown("b_preset", nil, plabels, state.bench_preset or 1, { no_wheel = true, max_visible = 12 })
-        if pch and D.BENCH_PRESETS[pv] then bench_preset(c, pv) end
+        if pch and plist[pv] then bench_preset(c, pv) end
         local live = c.latest_W() ~= nil
         if ui:button("b_live", "From the fight now", { style = "ghost", disabled = not live,
             tooltip = live and "The fight as it is this moment, to change from there" or "Needs the rotation running" }) then
@@ -1761,6 +1774,28 @@ return function(P)
             cv:text(fit(cv, res.verdict, cv.w - 24, "body"), 14, 11, tone_col, "body")
         end)
         if ui:hovered() then ui:tooltip(res.verdict) end
+        -- Replayed over your recorded fights (Stage 13): on the button, not every frame.
+        do
+            local key = tostring(r.uid or r.name or "draft")
+            ui:row({ 170, 0 })
+            if ui:button("b_replay", "Replay over my fights", { style = "ghost",
+                tooltip = "This reaction judged at every recorded moment of your fights with players (the fight debriefs' episodes)" }) then
+                state.replay = { key = key, res = c.replay and c.replay(r) or nil }
+            end
+            local rp = state.replay and state.replay.key == key and state.replay.res or nil
+            ui:text(rp and rp.line or "Press to judge it at your recorded fights' moments.", { size = "small", color = rp and DIM or FAINT })
+            ui:end_row()
+            if rp then
+                local shown = 0
+                for _, m in ipairs(rp.list) do
+                    if m.tone == "ok" and shown < 4 then
+                        shown = shown + 1
+                        ui:text(string.format("  %s: %s%s", m.label, m.verdict, m.did ~= "" and (" (you did: " .. m.did .. ")") or ""),
+                            { size = "small", color = DIM })
+                    end
+                end
+            end
+        end
         for i, cond in ipairs(r.conds or {}) do
             local slot = res.conds[cond.uid]
             ui:row({ 22, 0 })

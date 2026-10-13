@@ -131,6 +131,21 @@ return function(P)
         return guid and kill.for_guid(guid) or nil
     end
 
+    --- The defensive bait's hold on our burst for this player (PvP
+    --- intelligence, Stage 8), or nil: the burst's name and why. Not under
+    --- the kill window's no-time line (a player that low is burst at once).
+    function M.bait_hold(unit)
+        local I = P.react and P.react.intel or nil
+        local B = I and I.bait and I.bait.T or nil
+        if not (B and B.hold_burst and B.hold_guid and unit) then return nil end
+        if I.module_on and not I.module_on("bait") then return nil end
+        local guid = P.units and P.units.guid and P.units.guid(unit) or nil
+        if guid ~= B.hold_guid then return nil end
+        local KK = I.weights and I.weights.KILL or nil
+        if KK and B.hold_hp and B.hold_hp <= KK.no_time_hp then return nil end
+        return B.hold_burst, B.hold_why
+    end
+
     function M.should_open(s, class_module)
         -- No switch (1.39.0): whether a window is worth it is the question
         -- below, from the fight -- the same as the racials always were.
@@ -161,11 +176,21 @@ return function(P)
         -- rest goes on to the rules below.
         local kw = M.kill_verdict(s.target)
         if kw then
-            if kw.v == "HIGH_CONFIDENCE_KILL_WINDOW" or kw.v == "PREPARE_BURST" then
+            if kw.v == "HIGH_CONFIDENCE_KILL_WINDOW" then
                 return true, "kill window: " .. tostring(kw.why)
             elseif kw.v == "ABORT_COMMITMENT" or kw.v == "FORCE_DEFENSIVE" then
                 return false, "kill window: " .. kw.v:lower():gsub("_", " ") .. " -- " .. tostring(kw.why)
             end
+        end
+        -- The defensive bait (Stage 8, read here since Stage 13): its
+        -- defensive unseen, or due at the health the predictor says, the
+        -- window waits for it -- a burst into Evasion is the burst wasted.
+        -- Never under the kill window's no-time line, never over a kill
+        -- window with every out seen down (that one opened above).
+        local hold, hold_why = M.bait_hold(s.target)
+        if hold then return false, string.format("bait: hold %s -- %s", hold, tostring(hold_why)) end
+        if kw and kw.v == "PREPARE_BURST" then
+            return true, "kill window: " .. tostring(kw.why)
         end
 
         -- 1. Will the fight last?

@@ -187,9 +187,11 @@ return function(P, lib)
     -- Stage 11-b: the history ledger, on the debrief's fight.
     local history = load("modules/react/intel/history")(P, lib, data, weights)
     lib.history = history
+    -- Stage 13: the recorded fights as bench situations, a reaction replayed over them.
+    local replay = load("modules/react/intel/replay")(P, lib, data, weights)
     I.state, I.threat, I.cooldowns, I.data, I.weights = state, threat, cooldowns, data, weights
     I.states, I.position, I.explain, I.cc, I.predict, I.bait = states, position, explain, ccplan, predict, bait
-    I.kill, I.team, I.history = killwindow, team, history
+    I.kill, I.team, I.history, I.replay = killwindow, team, history, replay
     I.debrief, I.central, I.episodes, I.fieldcheck = debrief, central, episodes, fieldcheck
     I.S = state.S
     I.S.threat = threat.T

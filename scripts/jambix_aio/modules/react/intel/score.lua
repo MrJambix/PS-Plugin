@@ -416,6 +416,12 @@ S.HISTORY = {
     overlap_left = 1.0,
 }
 
+-- --- the replay of recorded fights (Stage 13, replay.lua) ----------------------
+S.REPLAY = {
+    -- The recorded moments offered to the bench and replayed, newest first.
+    max_moments = 60,
+}
+
 -- --- the field checks (fieldcheck.lua) ----------------------------------------
 S.FIELD = {
     -- A trap counts as laid in melee with a hostile within this; its effect

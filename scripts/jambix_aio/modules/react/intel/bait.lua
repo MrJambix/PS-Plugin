@@ -22,8 +22,8 @@
 -- WHAT ACTS: one reaction, "Intel: the bait" (rules/intel.lua), presses the
 -- cheap shot a mobility or a trinket bait asks for (Concussive Shot),
 -- scored below the survival and escape bands. The defensive bait is a hold
--- on our burst, said here (S.bait.hold_burst) for the burst's own gate to
--- read, and advice until it does; the interrupt bait is advice only --
+-- on our burst, said here (S.bait.hold_burst, hold_guid) and kept by the
+-- burst's own gate (burst.lua bait_hold, Stage 13); the interrupt bait is advice only --
 -- nothing here cancels a cast (the brief: never, unless the user's own
 -- reaction with stop_cast does).
 
@@ -61,7 +61,7 @@ return function(P, lib, data, K)
     end
 
     local T = {
-        target = nil, list = {}, hold_burst = nil, hold_why = "",
+        target = nil, list = {}, hold_burst = nil, hold_why = "", hold_guid = nil, hold_hp = nil,
         blocked = nil, candidates = 0,
     }
     M.T = T
@@ -183,7 +183,7 @@ return function(P, lib, data, K)
     -- --- the tick ---------------------------------------------------------------------
 
     function M.update(W, S, now)
-        T.target, T.hold_burst, T.hold_why, T.blocked, T.candidates = nil, nil, "", nil, 0
+        T.target, T.hold_burst, T.hold_why, T.hold_guid, T.hold_hp, T.blocked, T.candidates = nil, nil, "", nil, nil, nil, 0
         for i = #T.list, 1, -1 do T.list[i] = nil end
         if not S.active then return T end
         local tg = S.env.target.guid and S.foes[S.env.target.guid] or nil
@@ -214,7 +214,7 @@ return function(P, lib, data, K)
         T.target = T.list[1]
         for i = 1, n do
             if T.list[i].kind == "defensive" then
-                T.hold_burst, T.hold_why = T.list[i].hold, T.list[i].why
+                T.hold_burst, T.hold_why, T.hold_guid, T.hold_hp = T.list[i].hold, T.list[i].why, T.list[i].guid, tg.hp
                 break
             end
         end
@@ -222,7 +222,7 @@ return function(P, lib, data, K)
     end
 
     function M.reset()
-        T.target, T.hold_burst, T.hold_why, T.blocked, T.candidates = nil, nil, "", nil, 0
+        T.target, T.hold_burst, T.hold_why, T.hold_guid, T.hold_hp, T.blocked, T.candidates = nil, nil, "", nil, nil, nil, 0
         for i = #T.list, 1, -1 do T.list[i] = nil end
     end
 
