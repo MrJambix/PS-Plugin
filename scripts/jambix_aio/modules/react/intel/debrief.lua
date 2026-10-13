@@ -174,7 +174,8 @@ return function(P, lib, data, K)
         local by = {}
         for k, v in pairs(ev.unresolved_by or {}) do by[k] = v end
         return { casts = ev.casts or 0, auras = ev.auras or 0, unresolved = ev.unresolved or 0, by = by,
-                 not_player = ev.not_player or 0, not_hostile = ev.not_hostile or 0, not_own = ev.not_own or 0 }
+                 not_player = ev.not_player or 0, not_hostile = ev.not_hostile or 0, not_own = ev.not_own or 0,
+                 bars = ev.bars or 0, on_me = ev.on_me or 0 }
     end
 
     local function start(S, now)
@@ -541,7 +542,8 @@ return function(P, lib, data, K)
                 if d > 0 then by[k] = d end
             end
             f.feeds = { casts = b.casts - a.casts, auras = b.auras - a.auras, unresolved = b.unresolved - a.unresolved,
-                        unresolved_by = by, not_hostile = b.not_hostile - a.not_hostile, not_own = b.not_own - a.not_own }
+                        unresolved_by = by, not_hostile = b.not_hostile - a.not_hostile, not_own = b.not_own - a.not_own,
+                        bars = (b.bars or 0) - (a.bars or 0), on_me = (b.on_me or 0) - (a.on_me or 0) }
             f.events_at_start = nil
         end
         -- The decision episodes of the fight, and their summary (the collector).
@@ -714,8 +716,8 @@ return function(P, lib, data, K)
                 local by = {}
                 for k, v in pairs(f.feeds.unresolved_by or {}) do by[#by + 1] = k .. " " .. v end
                 table.sort(by)
-                out[#out + 1] = string.format("Enemy events this fight: %d cast(s), %d aura(s) kept; %d dropped%s%s",
-                    f.feeds.casts, f.feeds.auras, f.feeds.unresolved, #by > 0 and (" (unresolved: " .. table.concat(by, ", ") .. ")") or "",
+                out[#out + 1] = string.format("Enemy events this fight: %d cast(s), %d aura(s) kept, %d finished cast bar(s), %d debuff(s) of theirs on you; %d dropped%s%s",
+                    f.feeds.casts, f.feeds.auras, f.feeds.bars or 0, f.feeds.on_me or 0, f.feeds.unresolved, #by > 0 and (" (unresolved: " .. table.concat(by, ", ") .. ")") or "",
                     (f.feeds.not_own or 0) > 0 and string.format("; %d not the player's own (another's aura, another class's spell)", f.feeds.not_own) or "")
             end
             out[#out + 1] = string.format("You: low %d%%, controlled %.0f s; threat peak %s %d at %s; states %s",

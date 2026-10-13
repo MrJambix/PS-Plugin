@@ -424,7 +424,7 @@ T[#T + 1] = { "live 2026-10-12: the fight says what reached us of the enemy -- a
     local r = f.foes[f.foe_order[1]]
     assert_eq(r.used["Sinister Strike"], 1, "the kept cast is in what it used")
     local lines = table.concat(debrief(G).lines(), " || ")
-    has(lines, "Enemy events this fight: 1 cast(s), 0 aura(s) kept; 1 dropped (unresolved: softenemy 1)", "on the page")
+    has(lines, "Enemy events this fight: 1 cast(s), 0 aura(s) kept, 0 finished cast bar(s), 0 debuff(s) of theirs on you; 1 dropped (unresolved: softenemy 1)", "on the page")
     local rec = G.files["jambix.aio.fights.json"].fights[1]
     assert_eq(rec.feeds.casts, 1, "and in the log")
 end }

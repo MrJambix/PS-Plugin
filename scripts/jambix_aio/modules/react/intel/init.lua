@@ -445,7 +445,11 @@ return function(P, lib)
         ctx.on("jcore.game_event.UNIT_AURA", function(args)
             if type(args) ~= "table" or args[1] ~= "added" then return end
             local token = args[2]
-            if token == "player" or token == "pet" then return end
+            if token == "player" or token == "pet" then
+                -- A debuff an enemy put on you or your pet (Stage 14): its cast.
+                if args[10] ~= true then state.on_aura(token, args[4], args[5], false, clock(), args[9]) end
+                return
+            end
             local guid = state.on_aura(token, args[4], args[5], args[10] == true, clock(), args[9])
             -- One of our controls landing on a player: its duration, for the field checks.
             if guid and args[9] == "player" then pcall(fieldcheck.on_control_aura, guid, args[5], args[7], clock()) end

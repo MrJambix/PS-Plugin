@@ -146,7 +146,10 @@ return function(P, lib)
         -- token's kind, not a player, not attackable; and kept but not the
         -- player's own doing (M.own: another's shield on it, another class's spell).
         events = { casts = 0, auras = 0, combat_log = 0, unresolved = 0, last = nil,
-                   unresolved_by = {}, not_player = 0, not_hostile = 0, not_own = 0 },
+                   unresolved_by = {}, not_player = 0, not_hostile = 0, not_own = 0,
+                   -- Stage 14: two more feeds of enemy spells on Forever, where
+                   -- the spell events come only for your target and soft target.
+                   bars = 0, on_me = 0 },
     }
     M.S = S
 
@@ -237,6 +240,7 @@ return function(P, lib)
     end
     lib.own = M.own
 
+    local read_bar                       -- (below: a cast bar run to its end)
     local function push_recent(f, row)
         local list = f.recent
         list[#list + 1] = row
@@ -321,6 +325,45 @@ return function(P, lib)
         f.facing_me = abs(delta) <= math.rad(FACE_HALF)
     end
 
+    --- A cast bar run to its end (Stage 14): Forever sends a player's spell
+    --- events only for your target and soft target (the API recorder: the
+    --- "target" and "softenemy" tokens), but every enemy row carries its cast
+    --- bar. A bar that runs out, with no interrupt seen, is a finished cast:
+    --- into the recent ring as one (unless the event already said so). A
+    --- channel is counted when it starts (its cooldown starts then).
+    local BAR_SLACK = 0.3
+    local function recently(f, name, now, kind)
+        local list = f.recent
+        for i = #list, math.max(1, #list - 4), -1 do
+            local r = list[i]
+            if r.name == name and (now - r.at) < 1.5 and (kind == nil or r.kind == kind) then return true end
+        end
+        return false
+    end
+    function read_bar(f, now)
+        local c = f.casting
+        local bar = f.bar
+        if c and c.name and c.name ~= "" then
+            if not bar or bar.name ~= c.name then
+                bar = { name = c.name, id = c.id, channel = c.channel == true, end_at = now + (c.left or 0), interrupted = false }
+                f.bar = bar
+                if bar.channel and not recently(f, bar.name, now) then
+                    S.events.bars = S.events.bars + 1
+                    push_recent(f, { id = bar.id, name = bar.name, at = now, kind = "channel", source = "cast bar" })
+                end
+            else
+                bar.end_at = now + (c.left or 0)            -- pushed back, or the same bar
+            end
+            return
+        end
+        if not bar then return end
+        f.bar = nil
+        if bar.channel or bar.interrupted or now < (bar.end_at - BAR_SLACK) then return end
+        if recently(f, bar.name, now, "cast") then return end
+        S.events.bars = S.events.bars + 1
+        push_recent(f, { id = bar.id, name = bar.name, at = now, kind = "cast", source = "cast bar" })
+    end
+
     local function fill_from_row(f, r, W, now)
         f.at, f.seen = now, "rows"
         f.unit = r.obj
@@ -364,6 +407,7 @@ return function(P, lib)
             end
             f.casting = cast
         end
+        read_bar(f, now)
         -- The control on it: Era's loss-of-control read, Forever's debuff
         -- read (enemies.lua), each saying what it can.
         local c = r.control
@@ -920,8 +964,9 @@ return function(P, lib)
         if not f then return end
         local id = tonumber(spell_id)
         S.events.casts = S.events.casts + 1
-        push_recent(f, { id = id, name = spell_name(id) or ("spell " .. tostring(id)), at = now,
-                         kind = kind, source = EVENT_OF[kind] or "UNIT_SPELLCAST" })
+        local nm = spell_name(id) or ("spell " .. tostring(id))
+        if kind == "interrupted" and f.bar and (f.bar.id == id or f.bar.name == nm) then f.bar.interrupted = true end
+        push_recent(f, { id = id, name = nm, at = now, kind = kind, source = EVENT_OF[kind] or "UNIT_SPELLCAST" })
     end
 
     --- An aura appearing on another unit (UNIT_AURA "added": { "added",
@@ -931,6 +976,23 @@ return function(P, lib)
     --- enemy put it there itself: `source` is the caster's token (nil when
     --- the client does not know it), kept on the row as `by`.
     function M.on_aura(token, spell_id, name, helpful, now, source)
+        -- A debuff on you or your pet (Stage 14): the enemy player that put
+        -- it there used that ability -- Hamstring, Kidney Shot, Polymorph,
+        -- Fear, a sting. The aura names its caster; resolved to a player in
+        -- the fight, it is that player's cast, observed.
+        if (token == "player" or token == "pet") and not helpful then
+            if type(source) ~= "string" or source == "" or skip_token(source) then return end
+            local cu, cg = resolve(source, now)
+            if not (cu and cg) then return end
+            local f = foe_for_event(cu, cg, now)
+            if not f then return end
+            local id = tonumber(spell_id)
+            local nm = (type(name) == "string" and name ~= "") and name or spell_name(id) or ("aura " .. tostring(id))
+            if recently(f, nm, now) then return cg end
+            S.events.on_me = S.events.on_me + 1
+            push_recent(f, { id = id, name = nm, at = now, kind = "cast", source = "UNIT_AURA on " .. token, by = "self" })
+            return cg
+        end
         if skip_token(token) then return end
         local unit, guid = resolve(token, now)
         if not unit or not guid then
