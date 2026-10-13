@@ -380,6 +380,12 @@ test('release: the first cycle publishes a full version when the gates pass; one
     assert.strictEqual(r.decision, 'unchanged'); assert.strictEqual(r.version, null);
     assert.match(r.verdict.material.why, /no record since the last cycle/);
     assert.strictEqual(store.evaluations().length, rows, 'no evaluation written');
+    // The engine changed (a new screen, a repair; 2026-10-13): the same records are judged again, and the row says by which.
+    r = release.cycle(store, { engine: 'another-engine' });
+    assert.notStrictEqual(r.decision, 'unchanged', 'a changed engine judges the same records again');
+    assert.strictEqual(store.evaluations().slice(-1)[0].engine, 'another-engine');
+    assert.strictEqual(release.cycle(store, { engine: 'another-engine' }).decision, 'unchanged', 'and once judged, the same again is unchanged');
+    assert.match(release.ENGINE, /^[0-9a-f]{12}$/);
     // Two new fights: not material, held; no new version.
     const two = network(2, 1, 3, 0.8, { start: 2, day: 15 });
     for (const b of two.batches) store.accept('batch', b);
@@ -405,7 +411,7 @@ test('release: the first cycle publishes a full version when the gates pass; one
     assert.strictEqual(store.activeVersion().version, '1', 'rolled back');
     assert.strictEqual(release.promote(store, '2'), false, 'a withdrawn version is not promoted');
     const kinds = store.readAudit().map(a => a.kind);
-    assert.deepStrictEqual(kinds, ['cycle', 'publish', 'cycle', 'publish', 'promote', 'withdraw']);
+    assert.deepStrictEqual(kinds, ['cycle', 'publish', 'cycle', 'cycle', 'publish', 'promote', 'withdraw'], '(the second cycle: the changed engine judging again)');
     // Forced past the gates: written as such.
     const empty = createStore(fs.mkdtempSync(path.join(os.tmpdir(), 'jambix-release-')), {});
     const f = release.cycle(empty, { force: true, note: 'by hand' });

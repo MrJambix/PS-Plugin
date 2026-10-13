@@ -116,7 +116,7 @@ function describeFights(list) {
 function snapshotOf(model, decision, version) {
     const snap = { at: model.built_at, decision, version: version || null, fights: model.fights, contributors: model.contributors,
         observations: model.observations, episodes: model.episodes, quarantined: model.screen ? model.screen.quarantined : 0,
-        repaired: model.screen ? model.screen.repaired || 0 : 0, fights_listed: true,
+        repaired: model.screen ? model.screen.repaired || 0 : 0, fights_listed: true, engine: null,
         patterns: {}, tactics: {}, lessons: {} };
     for (const [game, G] of Object.entries(model.games || {})) {
         for (const [klass, c] of Object.entries(G.by_class || {})) {
@@ -176,6 +176,7 @@ function entry(cycle, prev, records, opts) {
     L.push(`## ${when} -- ${head}`);
     L.push('');
     L.push(`**New since the last cycle:** ${describeFights(newFights)}.`);
+    if (prev && o.engine && prev.engine !== o.engine) L.push('**The learning engine changed since the last cycle:** every record is judged again by the new code.');
     const q = model.screen ? model.screen.quarantined : 0;
     const qNew = q - (prev ? prev.quarantined || 0 : 0);
     if (qNew > 0) L.push(`**Set aside (quarantined):** ${qNew} record(s): ${Object.entries(model.screen.reasons || {}).map(([r, n]) => `${r} (${n})`).join('; ')}.`);
@@ -261,6 +262,7 @@ function entry(cycle, prev, records, opts) {
 
     // Changes since the last cycle.
     const now = snapshotOf(model, cycle.decision, cycle.version);
+    now.engine = o.engine || null;
     now.newest = [...records.batches, ...records.lessons].reduce((a, r) => (r.received_at && r.received_at > a ? r.received_at : a), '') || null;
     const changes = [];
     const before = prev ? prev.patterns || {} : {};

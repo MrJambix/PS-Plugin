@@ -14,10 +14,27 @@
 // worded associations; the reaction engine never reads it. (The client's
 // test "nothing from a model becomes a rule" holds that.)
 
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const learn = require('./learn');
 const evaluate = require('./evaluate');
 const { SCHEMA } = require('./validate');
 const reportLib = require('./report');
+const owners = require('./owners');
+
+// The learning engine itself, as a fingerprint of its code and of the
+// tables it reads: the same records under a changed engine (a new screen, a
+// repair, a weight) are judged again. 2026-10-13: the repair of older records
+// came in with no record new, and the cycle answered "unchanged".
+const ENGINE_FILES = ['validate.js', 'trust.js', 'owners.js', 'groups.js', 'learn.js', 'evaluate.js', 'release.js', 'report.js'];
+const ENGINE = (() => {
+    const h = crypto.createHash('sha256');
+    for (const f of [...ENGINE_FILES.map(x => path.join(__dirname, x)), owners.FILE]) {
+        try { h.update(fs.readFileSync(f)); } catch (e) { h.update('missing ' + path.basename(f)); }
+    }
+    return h.digest('hex').slice(0, 12);
+})();
 
 const DEFAULTS = {
     minPlugin: process.env.MIN_PLUGIN || '1.7.8',
@@ -50,7 +67,7 @@ function productionOf(store, active) {
 /** The learning log's entry for a cycle, written unless `dry` (report.js). */
 function logCycle(store, result, records, production, dry) {
     const prev = store.readSnapshot();
-    const e = reportLib.entry(result, prev, records, { current: production ? production.version : null });
+    const e = reportLib.entry(result, prev, records, { current: production ? production.version : null, engine: ENGINE });
     if (!dry) {
         store.writeLearningLog(reportLib.prepend(store.readLearningLog(), e.markdown));
         store.writeSnapshot(e.snapshot);
@@ -118,20 +135,22 @@ function cycle(store, opts) {
     const o = Object.assign({}, DEFAULTS, opts || {});
     const batches = store.batches(), lessons = store.lessons();
     const active = store.activeVersion();
-    // Nothing arrived since the last cycle and production is the same: the
-    // answer would be the same, so nothing is written (the schedule runs
-    // every six hours; the data branch is not committed to for nothing).
+    // Nothing arrived since the last cycle, production and the engine are
+    // the same: the answer would be the same, so nothing is written (the
+    // schedule runs every six hours; the data branch is not committed to for
+    // nothing). A row from before the engine was written down counts as another.
     const records = batches.length + lessons.length;
     const newest = [...batches, ...lessons].reduce((a, r) => (r.received_at && r.received_at > a ? r.received_at : a), '');
     const last = store.evaluations().slice(-1)[0];
-    if (!o.force && last && last.records === records && last.newest === newest && (last.published || last.production) === (active ? active.version : null)) {
+    if (!o.force && last && last.records === records && last.newest === newest && (last.published || last.production) === (active ? active.version : null)
+        && last.engine === (o.engine || ENGINE)) {
         return { decision: 'unchanged', version: null, verdict: { failed: [], checks: [], material: { yes: false, why: `no record since the last cycle (${last.at})` } }, report: null, candidate: null };
     }
     const production = productionOf(store, active);
     const candidate = learn.build(batches, lessons, o.learn);
     const report = evaluate.evaluate(batches, lessons, production, Object.assign({}, o.learn, o.evaluate));
     const verdict = gates(candidate, report, production, o);
-    const row = { at: store.stamp(), records, newest, decision: verdict.decision, forced: !!o.force, failed: verdict.failed, material: verdict.material,
+    const row = { at: store.stamp(), records, newest, engine: o.engine || ENGINE, decision: verdict.decision, forced: !!o.force, failed: verdict.failed, material: verdict.material,
         candidate: { fights: candidate.fights, contributors: candidate.contributors, observations: candidate.observations, episodes: candidate.episodes, quarantined: candidate.screen.quarantined },
         production: active ? active.version : null,
         holdout: report.holdout, brier: { candidate: report.models.candidate.brier, production: report.models.production ? report.models.production.brier : null, prior: report.models.prior.brier, baseline: report.models.baseline.brier },
@@ -199,4 +218,4 @@ function preview(store, opts) {
     return { verdict, report, candidate: pkg, production: active ? active.version : null, log };
 }
 
-module.exports = { DEFAULTS, gates, cycle, promote, withdraw, preview, packageOf, summarizeCandidate };
+module.exports = { DEFAULTS, gates, cycle, promote, withdraw, preview, packageOf, summarizeCandidate, ENGINE };

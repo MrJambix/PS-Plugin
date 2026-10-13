@@ -669,6 +669,12 @@ the result, the length, its checks and episodes, and what became of it
 (used, used and repaired with why, or set aside with why); and a
 **Repaired** line beside *Set aside*.
 
+A learning cycle also runs again when the **engine** changed: each cycle
+writes a fingerprint of the learning code and the spell tables it reads
+(`release.js ENGINE`), and "unchanged" now needs the same records *and*
+the same engine. The repair came in with no new record, and the cycle had
+answered "unchanged" over records the old screen had set aside.
+
 ## 8. Not done, and why
 
 - Movement-based recommendations are judged by the target's gap and your

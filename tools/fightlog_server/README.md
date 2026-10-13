@@ -53,7 +53,9 @@ run through the gates (two contributors, some usable content, not worse
 than the prior or production on the holdout, calibrated, and a material
 change since production). It ends `unchanged` (no record since the last
 cycle: nothing written), `reject` (only the evaluation and the audit are
-written), `hold` (passed, nothing material: no new version) or `publish`. The first version goes out full; later ones as a canary to 25%
+written), `hold` (passed, nothing material: no new version) or `publish`.
+A cycle with no new record still runs when the learning code changed
+(`release.js ENGINE`, a fingerprint written with each cycle). The first version goes out full; later ones as a canary to 25%
 of clients until promoted.
 
 ```
