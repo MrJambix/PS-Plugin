@@ -139,9 +139,11 @@ return function(P, lib, data, K)
         local self_heal = f.class and data.SELF_HEALERS[f.class] == true and not ((f.cc and f.cc.held) or f.control)
         -- Ours.
         local burst = nil
-        for name in pairs(data.OUR_BURSTS) do if ready(name) then burst = name break end end
+        -- Your class's (Stage 14: data.CLASS_KIT; the hunter's Rapid Fire and Bestial Wrath).
+        local kit = (lib.kit and lib.kit()) or { finishers = KK.finishers, bursts = { "Rapid Fire", "Bestial Wrath" } }
+        for i = 1, #kit.bursts do if ready(kit.bursts[i]) then burst = kit.bursts[i] break end end
         local shot = nil
-        for i = 1, #KK.finishers do if ready(KK.finishers[i]) then shot = KK.finishers[i] break end end
+        for i = 1, #kit.finishers do if ready(kit.finishers[i]) then shot = kit.finishers[i] break end end
         local mana_ok = not me.power_counted or (me.power_pct or 1) >= KK.min_power
         -- The others.
         local third, allies_on = 0, 0

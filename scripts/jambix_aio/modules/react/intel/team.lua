@@ -60,9 +60,9 @@ return function(P, lib, data, K)
             local t = list[i]
             if ready(t.name) then
                 if t.pet then
-                    if S.pet and S.pet.alive and S.pet.target_guid == f.guid then return t.name end
+                    if S.pet and S.pet.alive and S.pet.target_guid == f.guid then return t.name, t end
                 elseif d <= t.reach and d >= (t.from or 0) then
-                    return t.name
+                    return t.name, t
                 end
             end
         end
@@ -86,6 +86,8 @@ return function(P, lib, data, K)
         if (now - T.at) < KT.every then return T end
         T.at = now
         local foes, allies = S.foe_list or {}, S.ally_list or {}
+        -- Your class's tools (Stage 14: data.CLASS_KIT; the hunter's are score.lua's).
+        local kit = (lib.kit and lib.kit()) or { stoppers = KT.stoppers, peel = KT.peel_tools }
         local in_group = #allies > 0
         T.active = in_group or #foes >= 2
         T.focus, T.peel, T.interrupt, T.switch, T.healer, T.overlap, T.overextended, T.disengage, T.objectives =
@@ -119,8 +121,9 @@ return function(P, lib, data, K)
             if f.targets_ally and not f.dead then
                 local a = S.allies[f.target_guid]
                 if a and not a.dead and (a.healer or (a.hp or 1) < KT.ally_low) and not held(f) then
-                    local tool = tool_for(KT.peel_tools, f, S)
+                    local tool, entry = tool_for(kit.peel, f, S)
                     T.peel = { guid = f.guid, name = f.name, ally = a.name, ally_healer = a.healer == true, action = tool,
+                               around = entry and entry.around == true, pet = entry and entry.pet == true,
                                why = string.format("%s on %s (%s)%s", f.name, a.name, a.healer and "the healer" or (pct(a.hp) .. "%"),
                                    tool and (": " .. tool) or ": nothing of yours reaches it") }
                     break
@@ -153,7 +156,7 @@ return function(P, lib, data, K)
                 if c.interruptible == false then score = 0 end
                 if score > 0 then
                     T.casts[#T.casts + 1] = { guid = f.guid, name = f.name, spell = c.name, kind = kind, left = c.left, at = target,
-                                              score = score, dist = f.dist, tool = tool_for(KT.stoppers, f, S) }
+                                              score = score, dist = f.dist, tool = (tool_for(kit.stoppers, f, S)) }
                 end
             end
         end
@@ -233,7 +236,7 @@ return function(P, lib, data, K)
                 local h = held(f)
                 local pressure = nil
                 if not h then
-                    local tool = tool_for(KT.peel_tools, f, S)
+                    local tool = (tool_for(kit.peel, f, S))
                     local dry = f.mana_pct ~= nil and f.mana_pct < 0.1
                     if not dry and ready("Viper Sting") and f.dist and f.dist <= KT.sting_reach and f.dist >= 8 then pressure = "Viper Sting (its mana)"
                     elseif tool and kw and kw.best and kw.best.guid ~= f.guid then pressure = tool .. " on it while " .. kw.best.name .. " dies" end

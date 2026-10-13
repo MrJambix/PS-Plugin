@@ -463,6 +463,11 @@ return function(P)
     load_rules("modules/react/rules/pet")
     -- Answering another player, for every class (1.81.0).
     load_rules("modules/react/rules/pvp")
+    -- What the PvP intelligence reads, pressed, for every class (Stage 14;
+    -- the hunter's alone before): the hold, the peel, the switch -- its
+    -- hunter-only rules (the aspect, the bait, the healer's sting) ask for
+    -- the hunter's abilities and do nothing without them.
+    load_rules("modules/react/rules/intel")
 
     -- The player's own reactions, GUI or Lua, and the switches on the
     -- built-in ones (the Reactions window, 1.76.0).
@@ -482,7 +487,7 @@ return function(P)
     local CLASS_RULE_FILES = { hunter = true }
     -- More files for a class (1.7.6: the PvP hunter's reactions, which ask
     -- their own switch before anything).
-    local CLASS_EXTRA_RULES = { hunter = { "hunter_pvp", "intel" } }
+    local CLASS_EXTRA_RULES = { hunter = { "hunter_pvp" } }
 
     local class_rules_for = nil
     local function sync_class_rules()

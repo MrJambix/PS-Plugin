@@ -27,6 +27,7 @@ return function(P, lib, data, K)
     local huge, max, min = math.huge, math.max, math.min
     local KT = K.TACTIC
     local RANK = K.RANK
+    local prune_unknown, fill_from_kit          -- (below: the advice names only what you have)
 
     local function try(fn, ...)
         if type(fn) ~= "function" then return nil end
@@ -243,6 +244,8 @@ return function(P, lib, data, K)
           enter = function(X)
               local f = X.melee_on_me or X.melee_closing
               if not f then return false end
+              -- A melee class wants it there (Stage 14).
+              if data.MELEE_CLASSES[lib.my_class and lib.my_class() or ""] then return false end
               if f.st and f.st.burst then return false end       -- ANTI_BURST's
               if held(f.unit) then return false end              -- frozen: CROWD_CONTROL_SETUP's / RESET_FIGHT's
               local why = X.melee_on_me and string.format("%s in melee%s", f.name, slowed(f.unit) and ", slowed" or ", not slowed")
@@ -453,6 +456,62 @@ return function(P, lib, data, K)
     }
     M.T = T
 
+    -- Stage 14: the advice names only what you have, for every class. A line
+    -- that begins with an ability (any class's kit, the hunter's names) you
+    -- have not trained is dropped; a state left with no action takes your
+    -- class's kit for it (data.CLASS_KIT): what stops a cast, what peels,
+    -- what finishes.
+    local KIT_FOR = { INTERRUPT_OPPORTUNITY = "stoppers", ANTI_BURST = "stoppers", PROTECT_ALLY = "peel", PEEL_ENEMY = "peel",
+                      CONTROL_DISTANCE = "peel", OBJECTIVE_CONTROL = "peel", KILL_WINDOW = "finishers", COUNTER_ATTACK = "finishers",
+                      OPENING = "finishers", SUSTAINED_PRESSURE = "finishers", RANGED_PRESSURE = "finishers" }
+    local ABILITIES = nil
+    local function abilities()
+        if ABILITIES then return ABILITIES end
+        local seen, out = {}, {}
+        local function add(n) if type(n) == "string" and not seen[n] then seen[n] = true out[#out + 1] = n end end
+        for _, kit in pairs(data.CLASS_KIT) do
+            for _, k in ipairs({ "stoppers", "peel", "finishers", "bursts" }) do
+                for _, t in ipairs(kit[k] or {}) do add(type(t) == "table" and t.name or t) end
+            end
+        end
+        for _, set in ipairs({ data.OUR_DAMAGE, data.OUR_COOLDOWNS, data.OUR_SLOW_CASTS }) do
+            for n in pairs(set or {}) do add(n) end
+        end
+        for _, n in ipairs({ "Hunter's Mark", "Aspect of the Monkey", "Aspect of the Hawk", "Summon Hawk", "Freezing Trap", "Frost Trap",
+                             "Feign Death", "Viper Sting", "Wing Clip", "Concussive Shot", "Auto Shot", "Intimidation", "Deterrence",
+                             "Rapid Fire", "Mend Pet" }) do add(n) end
+        table.sort(out, function(a, b) return #a > #b end)     -- the longest name first
+        ABILITIES = out
+        return out
+    end
+    local function leading_ability(text)
+        if type(text) ~= "string" then return nil end
+        local list = abilities()
+        for i = 1, #list do
+            local n = list[i]
+            if text:sub(1, #n) == n then return n end
+        end
+        return nil
+    end
+    function prune_unknown(list)
+        if not book then return end
+        for i = #list, 1, -1 do
+            local n = leading_ability(list[i])
+            if n and not book.known(n) then table.remove(list, i) end
+        end
+    end
+    function fill_from_kit(name)
+        if #T.actions > 0 then return end
+        local key = KIT_FOR[name]
+        local kit = key and lib.kit and lib.kit() or nil
+        if not kit then return end
+        for _, t in ipairs(kit[key] or {}) do
+            local n = type(t) == "table" and t.name or t
+            if book.known(n) then T.actions[#T.actions + 1] = n end
+            if #T.actions >= 3 then break end
+        end
+    end
+
     -- Stage 13: the target's sure predictions in the advice. Read the way the
     -- baits read them (intel.sure at the predictor's threshold, sure, not
     -- adapting); each adds its response after the state's own actions,
@@ -563,6 +622,10 @@ return function(P, lib, data, K)
             fill_list(st, "actions", X, T.actions)
             fill_list(st, "avoid", X, T.avoid)
             fill_list(st, "reserve", X, T.reserve)
+            -- For a class other than the hunter the states were written for:
+            -- the hunter's names it has not got dropped, its own kit in their place.
+            if (lib.my_class and lib.my_class() or "HUNTER") ~= "HUNTER" then prune_unknown(T.actions) end
+            fill_from_kit(pick.name)
             add_predicted(pick.name, X)
             -- What the ledger keeps is kept here too.
             for name, why in pairs(S.cds.reserved or {}) do T.reserve[#T.reserve + 1] = name end

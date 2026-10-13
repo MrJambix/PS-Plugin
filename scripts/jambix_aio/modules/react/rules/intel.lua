@@ -177,9 +177,10 @@ return function(R, P, lib)
             local f = S.foes[p.guid]
             if not (f and f.unit and not f.dead) then return end
             if not (book.known(p.action) and book.ready(p.action)) then return end
-            local pet_tool = p.action == "Intimidation"
-            local c = offer({ name = p.action, target = pet_tool and W.player.unit or f.unit,
-                              target_kind = pet_tool and "self" or "enemy",
+            -- On yourself: the pet's (Intimidation) and what goes off around you (a Frost Nova, a Psychic Scream).
+            local self_cast = p.pet or p.around or p.action == "Intimidation"
+            local c = offer({ name = p.action, target = self_cast and W.player.unit or f.unit,
+                              target_kind = self_cast and "self" or "enemy",
                               event_key = "intel_peel:" .. tostring(p.guid), handled_for = 4, why = p.why })
             c.peel = p
         end,

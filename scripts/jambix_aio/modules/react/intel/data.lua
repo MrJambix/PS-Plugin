@@ -380,6 +380,74 @@ D.PREDICTED_ADVICE = {
     retreating_when_pressured = { states = { KILL_WINDOW = true, COUNTER_ATTACK = true }, avoid = "chasing it past your allies" },
     saving_cooldowns_until_low = { states = { KILL_WINDOW = true, SUSTAINED_PRESSURE = true } },
 }
+--- Each class's kit (Stage 14: the layer reads and presses for every
+--- class, not the hunter alone): what stops a cast, what peels an enemy
+--- off an ally, what finishes a low player, what bursts. `reach` yards,
+--- `from` the nearest it works, `around` it goes off around you (cast on
+--- yourself), `pet` the pet must be on the player. The hunter's are
+--- score.lua TEAM's and KILL's. Classic Era names (the Forever client
+--- prints the same); a name you have not trained is passed over.
+D.SOURCE.CLASS_KIT = "Classic Era class abilities and their tooltip ranges (react/rules/pvp.lua STOPPERS and ANSWERS for the controls); the hunter's from score.lua"
+D.CLASS_KIT = {
+    WARRIOR = {
+        stoppers = { { name = "Pummel", reach = 5 }, { name = "Shield Bash", reach = 5 }, { name = "Concussion Blow", reach = 5 },
+                     { name = "Intercept", reach = 25, from = 8 }, { name = "Intimidating Shout", reach = 10, around = true } },
+        peel = { { name = "Intercept", reach = 25, from = 8 }, { name = "Hamstring", reach = 5 }, { name = "Concussion Blow", reach = 5 },
+                 { name = "Intimidating Shout", reach = 10, around = true }, { name = "Piercing Howl", reach = 10, around = true } },
+        finishers = { "Execute", "Mortal Strike", "Bloodthirst", "Overpower", "Heroic Strike" },
+        bursts = { "Recklessness", "Death Wish", "Sweeping Strikes" },
+    },
+    ROGUE = {
+        stoppers = { { name = "Kick", reach = 5 }, { name = "Gouge", reach = 5 }, { name = "Kidney Shot", reach = 5 }, { name = "Blind", reach = 10 } },
+        peel = { { name = "Gouge", reach = 5 }, { name = "Kidney Shot", reach = 5 }, { name = "Blind", reach = 10 } },
+        finishers = { "Eviscerate", "Sinister Strike", "Backstab", "Hemorrhage" },
+        bursts = { "Adrenaline Rush", "Blade Flurry", "Cold Blood" },
+    },
+    MAGE = {
+        stoppers = { { name = "Counterspell", reach = 30 } },
+        peel = { { name = "Polymorph", reach = 30 }, { name = "Frost Nova", reach = 10, around = true }, { name = "Cone of Cold", reach = 10, around = true },
+                 { name = "Frostbolt", reach = 30 } },
+        finishers = { "Fire Blast", "Frostbolt", "Arcane Missiles", "Fireball", "Pyroblast" },
+        bursts = { "Arcane Power", "Combustion", "Presence of Mind" },
+    },
+    PRIEST = {
+        stoppers = { { name = "Silence", reach = 30 }, { name = "Psychic Scream", reach = 8, around = true } },
+        peel = { { name = "Psychic Scream", reach = 8, around = true }, { name = "Mind Flay", reach = 20 } },
+        finishers = { "Mind Blast", "Smite", "Holy Fire", "Shadow Word: Pain" },
+        bursts = { "Power Infusion", "Inner Focus" },
+    },
+    WARLOCK = {
+        stoppers = { { name = "Death Coil", reach = 30 }, { name = "Howl of Terror", reach = 10, around = true } },
+        peel = { { name = "Fear", reach = 20 }, { name = "Death Coil", reach = 30 }, { name = "Howl of Terror", reach = 10, around = true },
+                 { name = "Curse of Exhaustion", reach = 30 } },
+        finishers = { "Shadowburn", "Conflagrate", "Searing Pain", "Shadow Bolt" },
+        bursts = { "Amplify Curse" },
+    },
+    PALADIN = {
+        stoppers = { { name = "Hammer of Justice", reach = 10 } },
+        peel = { { name = "Hammer of Justice", reach = 10 } },
+        finishers = { "Hammer of Wrath", "Holy Shock", "Exorcism", "Judgement" },
+        bursts = { "Divine Favor" },
+    },
+    DRUID = {
+        stoppers = { { name = "Bash", reach = 5 }, { name = "Feral Charge", reach = 25, from = 8 } },
+        peel = { { name = "Bash", reach = 5 }, { name = "Entangling Roots", reach = 30 }, { name = "Feral Charge", reach = 25, from = 8 } },
+        finishers = { "Ferocious Bite", "Starfire", "Moonfire", "Wrath", "Shred" },
+        bursts = { "Nature's Swiftness", "Tiger's Fury" },
+    },
+    SHAMAN = {
+        stoppers = { { name = "Earth Shock", reach = 20 } },
+        peel = { { name = "Frost Shock", reach = 20 }, { name = "Earthbind Totem", reach = 10, around = true } },
+        finishers = { "Earth Shock", "Stormstrike", "Lightning Bolt", "Chain Lightning", "Flame Shock" },
+        bursts = { "Elemental Mastery", "Nature's Swiftness" },
+    },
+    -- HUNTER: filled from score.lua TEAM and KILL at load (react/intel/init.lua).
+}
+
+--- The classes that fight in melee: a player in melee with them is the
+--- plan, not a distance to keep (Stage 14: CONTROL_DISTANCE is not theirs).
+D.MELEE_CLASSES = { WARRIOR = true, ROGUE = true, PALADIN = true }
+
 --- The controls any damage breaks (Stage 14: an ally's just cast at your
 --- target is kept, as its aura is): Era's breakable incapacitates, fears
 --- and sleeps by name.
