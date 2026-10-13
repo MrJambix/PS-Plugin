@@ -89,7 +89,8 @@ return function(P, lib, data, K)
             if o ~= f and not o.dead then
                 local role = o.inferred and sure(o.inferred.role, KK.healer_conf) or nil
                 local held = (o.cc and o.cc.held) or o.control
-                if role == "healer" and not held and dist2(o, f) <= KK.heal_reach then return o end
+                local dry = o.mana_pct ~= nil and o.mana_pct < KK.healer_dry
+                if role == "healer" and not held and not dry and dist2(o, f) <= KK.heal_reach then return o end
             end
         end
         return nil

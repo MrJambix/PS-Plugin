@@ -97,13 +97,28 @@ return function(P, lib, data, K)
     end
 
     --- What a control gets after `count` of its category in the window:
-    --- Era, DRList's rule; Forever, UNKNOWN.
+    --- Era, DRList's rule; Forever, what the field checks measured (Stage
+    --- 14: each of your controls' durations by its place in a chain, the
+    --- ratio to the first, snapped to full / half / quarter), else UNKNOWN.
+    --- A first control in a window is full on every client.
     ---@param count integer
+    ---@param category? string
     ---@return number|nil mult 1, 0.5, 0.25, 0; nil when unknown
     ---@return string level full, half, quarter, immune, unknown
-    function M.next_of(count)
-        if forever then return nil, "unknown" end
+    function M.next_of(count, category)
         local n = min(max(count or 0, 0), 3)
+        if forever then
+            if n == 0 then return 1, "full" end
+            local fc = lib.fieldcheck
+            local ratio, behind = nil, 0
+            if fc and fc.dr_ratio then
+                ratio, behind = fc.dr_ratio(n + 1, category and function(name) return (M.category(name)) == category end or nil)
+            end
+            if not ratio then return nil, "unknown" end
+            if ratio >= 0.75 then return 1, string.format("full (measured, %d)", behind) end
+            if ratio >= 0.375 then return 0.5, string.format("half (measured, %d)", behind) end
+            return 0.25, string.format("quarter (measured, %d)", behind)
+        end
         return KC.dr_mult[n], KC.dr_level[n]
     end
 
@@ -121,7 +136,7 @@ return function(P, lib, data, K)
         local d = c and c.dr[category] or nil
         local count = d and d.count or 0
         if d and (S.now or 0) > d.reset_at then count = 0 end
-        local mult, level = M.next_of(count)
+        local mult, level = M.next_of(count, category)
         return mult, level, count, d and d.conf or 0
     end
 
@@ -255,7 +270,7 @@ return function(P, lib, data, K)
         local cat = (held and held.category) or "incapacitate"
         c.next_mult, c.next_level = M.next(nil, nil, cat)
         local d = c.dr[cat]
-        if d then c.next_mult, c.next_level = M.next_of(now > d.reset_at and 0 or d.count) end
+        if d then c.next_mult, c.next_level = M.next_of(now > d.reset_at and 0 or d.count, cat) end
     end
 
     --- What the player could break the control with: its trinket as
@@ -382,7 +397,7 @@ return function(P, lib, data, K)
         T.pet.recall, T.pet.guid, T.pet.name, T.pet.why = false, nil, nil, ""
         T.target, T.hold, T.doomed = nil, nil, nil
         for i = #T.unknown, 1, -1 do T.unknown[i] = nil end
-        T.dr_rule = forever and "unknown on Forever (counts observed, the multiplier unverified)" or "DRList's Classic Era rule"
+        T.dr_rule = forever and "Forever: counts observed; the multiplier from your controls' measured durations where enough are measured, else unknown" or "DRList's Classic Era rule"
         if not S.active then return T end
         for _, f in pairs(S.foes) do
             local c = plan_of(f)

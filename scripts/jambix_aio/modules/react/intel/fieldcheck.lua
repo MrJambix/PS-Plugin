@@ -197,6 +197,31 @@ return function(P, lib, data, K)
         dirty = true
     end
 
+    --- Stage 14: what the measured durations say of the diminishing returns
+    --- at a chain step, against the first: the mean ratio over the controls
+    --- that pass the filter with at least KF.dr_min of both, and the fewest
+    --- behind it. nil when nothing measured is enough.
+    ---@param step integer 2, 3 or 4
+    ---@param filter? fun(name: string): boolean
+    ---@return number|nil ratio
+    ---@return integer n
+    function M.dr_ratio(step, filter)
+        local s = load()
+        local sum, names, fewest = 0, 0, math.huge
+        for name, steps in pairs(s.dr) do
+            if not filter or filter(name) then
+                local a, b = steps["1"], steps[tostring(step)]
+                if a and b and (a.n or 0) >= KF.dr_min and (b.n or 0) >= KF.dr_min and (a.sum or 0) > 0 then
+                    sum = sum + (b.sum / b.n) / (a.sum / a.n)
+                    names = names + 1
+                    fewest = math.min(fewest, a.n, b.n)
+                end
+            end
+        end
+        if names == 0 then return nil, 0 end
+        return sum / names, fewest
+    end
+
     -- --- the tick: the open jobs answered or timed out -------------------------------------
 
     function M.update(W, S, now)

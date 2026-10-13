@@ -409,6 +409,13 @@ return function(P, lib)
                 -- Our own and the group's are the engine's and the rotation's
                 -- business; the first line keeps the raid's volume out.
                 if token == "player" or token == "pet" then return end
+                -- An ally's (Stage 14): what it used, and when -- its cooldowns,
+                -- and a control it just cast at a player.
+                local head = type(token) == "string" and token:match("^%a+") or nil
+                if head == "party" or head == "raid" then
+                    if kind == "cast" or kind == "channel" then state.on_ally_cast(token, args[spell_at], clock()) end
+                    return
+                end
                 state.on_cast(token, args[spell_at], kind, clock())
             end
         end
@@ -427,6 +434,11 @@ return function(P, lib)
             pcall(fieldcheck.on_our_cast, lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, last_W, state.S, clock())
             debrief.on_our_cast(args[3], state.S.env.target.guid, clock())
             pcall(history.on_our_cast, lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, state.S.env.target.guid, state.S, clock())
+            -- A shot of ours at the target went out (Stage 14): it was in line of sight.
+            local shot = lib.spell_name and lib.spell_name(tonumber(args[3])) or nil
+            if shot and data.OUR_DAMAGE[shot] and state.S.env.target.guid then
+                state.note_los(state.S.env.target.guid, true, clock(), "your " .. shot .. " went out")
+            end
             episodes.on_our_cast(lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, state.S.env.target.guid, clock())
             if not I.module_on("predict") then return end
             predict.on_our_cast(state.S, args[3], state.S.env.target.guid, clock())
@@ -473,6 +485,17 @@ return function(P, lib)
                 state.on_combat_log(a[4], a[6], a[12], a[13], clock())
             end)
         end
+
+        -- The client's own word on line of sight (Stage 14): Forever's rays are
+        -- off, but a cast refused for it says so ({ type, text, key }).
+        ctx.on("jcore.game_event.UI_ERROR_MESSAGE", function(args)
+            if type(args) ~= "table" then return end
+            local text, key = tostring(args[2] or ""), tostring(args[3] or "")
+            if text:lower():find("line of sight", 1, true) or key:find("LINE_OF_SIGHT", 1, true) then
+                local tg = state.S.env and state.S.env.target and state.S.env.target.guid or nil
+                if tg then state.note_los(tg, false, clock(), "the client: " .. (text ~= "" and text or key)) end
+            end
+        end)
 
         ctx.on("jcore.game_event.DUEL_REQUESTED", function() state.on_duel("DUEL_REQUESTED", clock()) end)
         ctx.on("jcore.game_event.DUEL_FINISHED", function() state.on_duel("DUEL_FINISHED", clock()) end)

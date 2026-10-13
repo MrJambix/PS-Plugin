@@ -362,6 +362,8 @@ S.KILL = {
     base = 0.95, escape_ready = 0.35, defensive_ready = 0.2, escape_unknown = 0.18, defensive_unknown = 0.06,
     healer_near = 0.25, self_heal = 0.08, third_party = 0.12, ally_on = 0.08, no_damage = 0.4, class_unknown = 0.4,
     heal_reach = 40, healer_conf = 0.5,
+    -- A healer whose mana was read under this is not counted (Stage 14).
+    healer_dry = 0.1,
     -- A kill window is "high confidence" from here; a burst is lined up from prepare_conf.
     high_conf = 0.6, prepare_conf = 0.45,
     -- Ours: the abort (you under abort_hp with the threat HIGH, or CRITICAL,
@@ -388,6 +390,9 @@ S.TEAM = {
     -- and over a target that is no kill window only at high confidence or
     -- switch_margin lower in health.
     switch_reach = 35, switch_margin = 0.15,
+    -- An ally's control cast at your target this recently counts as its
+    -- control there before the aura is read (Stage 14).
+    ally_control_fresh = 1.5,
     -- Which cast to stop first: a heal (more for a lower player), a control
     -- at one of us, a damaging cast at one of us (plus its danger), the rest.
     weight = { heal = 3.0, heal_low = 2.0, control = 2.5, damage = 1.0, other = 0.3 },
@@ -445,6 +450,9 @@ S.FIELD = {
     -- A control landing this soon after the last one on the same player
     -- ended is the next step of its chain (diminishing returns).
     chain_window = 18.0,
+    -- A step's measured duration is used (ccplan.lua, Stage 14) from this
+    -- many of it and of the first.
+    dr_min = 3,
     -- The file is written at most this often.
     save_every = 10.0,
 }

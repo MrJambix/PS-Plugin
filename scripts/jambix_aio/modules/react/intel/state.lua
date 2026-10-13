@@ -241,6 +241,7 @@ return function(P, lib)
     lib.own = M.own
 
     local read_bar                       -- (below: a cast bar run to its end)
+    local read_mana                      -- (below: an enemy's mana, where answered)
     local function push_recent(f, row)
         local list = f.recent
         list[#list + 1] = row
@@ -364,6 +365,38 @@ return function(P, lib)
         push_recent(f, { id = bar.id, name = bar.name, at = now, kind = "cast", source = "cast bar" })
     end
 
+    --- Stage 14: an enemy player's mana, where the client answers -- at
+    --- most MANA_N players every MANA_EVERY seconds (two calls each), your
+    --- target first, then the classes that heal. Taken only when both
+    --- numbers are above zero and the current is under the maximum: the
+    --- recorder shows a zero for a unit the client does not answer for, so a
+    --- zero is unknown, never "out of mana".
+    local MANA_EVERY, MANA_N = 1.0, 3
+    local mana_at = -huge
+    function read_mana(list, W, now)
+        if (now - mana_at) < MANA_EVERY then return end
+        mana_at = now
+        local n = 0
+        local tg = W.target and W.target.guid or nil
+        local function read(f)
+            local u = f.unit
+            if not u then return end
+            local cur = tonumber(try(u.get_power, u, 0))
+            local mx = tonumber(try(u.get_max_power, u, 0))
+            if cur and mx and mx > 0 and cur > 0 and cur <= mx then
+                f.mana_pct, f.mana_at = cur / mx, now
+            end
+            n = n + 1
+        end
+        for i = 1, #list do if list[i].guid == tg then read(list[i]) end end
+        for i = 1, #list do
+            if n >= MANA_N then break end
+            local f = list[i]
+            local mana = f.inferred and f.inferred.mana and f.inferred.mana.v == true
+            if f.guid ~= tg and mana then read(f) end
+        end
+    end
+
     local function fill_from_row(f, r, W, now)
         f.at, f.seen = now, "rows"
         f.unit = r.obj
@@ -465,6 +498,7 @@ return function(P, lib)
         end
         S.foes_n = #list
         S.attackers, S.melee_attackers = attackers, melee
+        read_mana(list, W, now)
     end
 
     -- --- us ---------------------------------------------------------------------------
@@ -691,6 +725,15 @@ return function(P, lib)
 
     local los_at = -huge
     local los_target = nil
+    -- Stage 14: what the client said of the target's line of sight when
+    -- the ray cannot (Forever's sight rays are off: the M2HitTest crash):
+    -- "not in line of sight" on a cast of ours, or a shot of ours landing.
+    local los_said = { guid = nil, value = nil, at = -huge, source = nil }
+    local LOS_SAID_KEEP = 2.0
+    function M.note_los(guid, value, now, source)
+        if not guid then return end
+        los_said.guid, los_said.value, los_said.at, los_said.source = guid, value, now, source
+    end
 
     local function build_env(W, now)
         local env, class_module = S.env, W.class
@@ -749,6 +792,10 @@ return function(P, lib)
                 else
                     los.value, los.at, los.source = nil, now, "no geometry service"
                 end
+            end
+            -- The ray had no answer: what the client said a moment ago stands in.
+            if los.value == nil and los_said.guid == tg.guid and (now - los_said.at) <= LOS_SAID_KEEP then
+                los.value, los.at, los.source = los_said.value, los_said.at, los_said.source
             end
             los.age = los.at and (now - los.at) or nil
         else
@@ -1021,6 +1068,24 @@ return function(P, lib)
         push_recent(f, { id = id, name = (type(name) == "string" and name ~= "") and name or spell_name(id) or ("aura " .. tostring(id)),
                          at = now, kind = helpful and "buff" or "debuff", source = "UNIT_AURA", by = by })
         return guid
+    end
+
+    --- An ally's cast (Stage 14: the party and raid tokens, which the enemy
+    --- path skips): kept on the ally, its last ALLY_RECENT, with the player
+    --- it was targeting -- its cooldowns in the open, and a control it just
+    --- cast at someone before the aura says so.
+    local ALLY_RECENT = 8
+    function M.on_ally_cast(token, spell_id, now)
+        local unit, guid = resolve(token, now)
+        if not (unit and guid) then return end
+        local a = S.allies[guid]
+        if not a then return end
+        local id = tonumber(spell_id)
+        a.used = a.used or {}
+        local list = a.used
+        list[#list + 1] = { id = id, name = spell_name(id) or ("spell " .. tostring(id)), at = now, target_guid = a.target_guid }
+        while #list > ALLY_RECENT do table.remove(list, 1) end
+        S.events.ally_casts = (S.events.ally_casts or 0) + 1
     end
 
     --- Era's combat log: a hostile player's SPELL_CAST_SUCCESS, by guid

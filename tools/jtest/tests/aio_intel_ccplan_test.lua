@@ -257,7 +257,7 @@ T[#T + 1] = { "on Forever: the category from the client's own table, an effect a
     assert_eq(mult, nil, "the multiplier is not claimed")
     assert_eq(level, "unknown", "unknown")
     assert_eq(plan(G).next_level, "unknown", "the window's dr_next")
-    has(cc(G).dr_rule, "unknown on Forever", "the rule's own word")
+    has(cc(G).dr_rule, "measured durations where enough are measured, else unknown", "the rule's own word")
     has(row2(G), "DR incapacitate x1 -> unknown", "the readout")
 end }
 

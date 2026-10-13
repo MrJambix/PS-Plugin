@@ -380,6 +380,13 @@ D.PREDICTED_ADVICE = {
     retreating_when_pressured = { states = { KILL_WINDOW = true, COUNTER_ATTACK = true }, avoid = "chasing it past your allies" },
     saving_cooldowns_until_low = { states = { KILL_WINDOW = true, SUSTAINED_PRESSURE = true } },
 }
+--- The controls any damage breaks (Stage 14: an ally's just cast at your
+--- target is kept, as its aura is): Era's breakable incapacitates, fears
+--- and sleeps by name.
+D.DAMAGE_BREAKS = { ["Polymorph"] = true, ["Sap"] = true, ["Gouge"] = true, ["Blind"] = true, ["Hibernate"] = true,
+                    ["Freezing Trap"] = true, ["Freezing Trap Effect"] = true, ["Scatter Shot"] = true, ["Wyvern Sting"] = true,
+                    ["Repentance"] = true, ["Seduction"] = true, ["Fear"] = true, ["Psychic Scream"] = true,
+                    ["Howl of Terror"] = true, ["Intimidating Shout"] = true, ["Scare Beast"] = true }
 --- What can be pressed while a control leaves you helpless, and the
 --- mechanics it breaks (Stage 13: the held advice names it). A racial is in
 --- the spellbook of the race that has it, so `known` is the race read.

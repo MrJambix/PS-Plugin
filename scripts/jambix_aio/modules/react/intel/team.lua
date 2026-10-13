@@ -18,8 +18,10 @@
 --   disengage    outnumbered with nobody to fall back on
 --   objectives   the battleground's flag carriers (no base data exists)
 --
--- Advice and conditions only: nothing here presses anything. Allies'
--- cooldowns cannot be read, so only our own overlap is prevented. Retail
+-- Nothing here presses anything: rules/intel.lua and the cast-stopping
+-- reactions press what it says (Stage 14). Allies' casts are read from the
+-- party's spell events (Stage 14): a control an ally just cast at your
+-- target counts as its control there before the aura is read. Retail
 -- arena assumptions are not made; Forever's battleground rules are UNKNOWN.
 
 return function(P, lib, data, K)
@@ -176,6 +178,23 @@ return function(P, lib, data, K)
             if h and h.ours == "no" and h.breaks then
                 T.overlap = { guid = tg.guid, name = tg.name, control = h.name,
                               why = string.format("%s on %s is an ally's: no control of yours on it, no damage either", h.name, tg.name) }
+            else
+                -- An ally's control cast at it a moment ago (Stage 14: the
+                -- party's spell events), before its aura is read.
+                for i = 1, #allies do
+                    local a = allies[i]
+                    local used = a.used or {}
+                    for j = #used, 1, -1 do
+                        local u = used[j]
+                        if (now - u.at) > KT.ally_control_fresh then break end
+                        if u.target_guid == tg.guid and data.CONTROL_NAMES[u.name] and data.DAMAGE_BREAKS[u.name] then
+                            T.overlap = { guid = tg.guid, name = tg.name, control = u.name,
+                                          why = string.format("%s's %s on %s just now: no control of yours on it, no damage either", tostring(a.name), u.name, tg.name) }
+                            break
+                        end
+                    end
+                    if T.overlap then break end
+                end
             end
         end
 
@@ -215,11 +234,14 @@ return function(P, lib, data, K)
                 local pressure = nil
                 if not h then
                     local tool = tool_for(KT.peel_tools, f, S)
-                    if ready("Viper Sting") and f.dist and f.dist <= KT.sting_reach and f.dist >= 8 then pressure = "Viper Sting (its mana)"
+                    local dry = f.mana_pct ~= nil and f.mana_pct < 0.1
+                    if not dry and ready("Viper Sting") and f.dist and f.dist <= KT.sting_reach and f.dist >= 8 then pressure = "Viper Sting (its mana)"
                     elseif tool and kw and kw.best and kw.best.guid ~= f.guid then pressure = tool .. " on it while " .. kw.best.name .. " dies" end
                 end
-                T.healer = { guid = f.guid, name = f.name, free = not h, held_by = h and h.name or nil, action = pressure,
-                             why = h and string.format("%s held (%s)", f.name, tostring(h.name)) or string.format("%s free to heal%s", f.name, pressure and (": " .. pressure) or "") }
+                local mana = f.mana_pct and string.format(", %d%% mana", pct(f.mana_pct)) or ""
+                T.healer = { guid = f.guid, name = f.name, free = not h, held_by = h and h.name or nil, action = pressure, mana = f.mana_pct,
+                             why = h and string.format("%s held (%s)%s", f.name, tostring(h.name), mana)
+                                 or string.format("%s free to heal%s%s", f.name, mana, pressure and (": " .. pressure) or "") }
                 break
             end
         end
