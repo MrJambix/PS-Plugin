@@ -577,6 +577,16 @@ return function(R, P, lib, engine, load)
             end
             return math.floor(rel * 100 + 0.5)
         end,
+        -- The kill window (react/intel/killwindow.lua, Stage 9): its verdict
+        -- on the target ("NO_KILL_OPPORTUNITY" with none), and how sure (%).
+        kill_verdict = function(W)
+            local k = W.intel and W.intel.kill and W.intel.kill.target or nil
+            return (k and k.guid == W.target.guid and k.v) or "NO_KILL_OPPORTUNITY"
+        end,
+        kill_conf = function(W)
+            local k = W.intel and W.intel.kill and W.intel.kill.target or nil
+            return (k and k.guid == W.target.guid) and math.floor((k.conf or 0) * 100 + 0.5) or 0
+        end,
     }
     local PET = {
         exists = function(W) return W.pet.alive == true end,
@@ -629,6 +639,15 @@ return function(R, P, lib, engine, load)
         within8 = function(W) return enemies_within(W, 8) end,
         within30 = function(W) return enemies_within(W, 30) end,
         players = function(W) return enemies_within(W, 40, true) end,
+        -- Teamfights (react/intel/team.lua, Stage 10). Absent: none of them.
+        team_focus_me = function(W) local T = W.intel and W.intel.team return T ~= nil and T.focus ~= nil and T.focus.on_me == true end,
+        team_peel = function(W) local T = W.intel and W.intel.team return T ~= nil and T.peel ~= nil end,
+        team_interrupt = function(W) local T = W.intel and W.intel.team return T ~= nil and T.interrupt ~= nil end,
+        team_switch = function(W) local T = W.intel and W.intel.team return T ~= nil and T.switch ~= nil end,
+        healer_free = function(W) local T = W.intel and W.intel.team return T ~= nil and T.healer ~= nil and T.healer.free == true end,
+        overextended = function(W) local T = W.intel and W.intel.team return T ~= nil and T.overextended ~= nil end,
+        disengage = function(W) local T = W.intel and W.intel.team return T ~= nil and T.disengage ~= nil end,
+        ally_cc_target = function(W) local T = W.intel and W.intel.team return T ~= nil and T.overlap ~= nil end,
     }
     local WHERE = {
         kind = function(W) return (M.where(W)) end,
@@ -1165,6 +1184,7 @@ return function(R, P, lib, engine, load)
         t_cc_value = function(v) return API.target.cc_value == v end,
         t_dr_next = function(v) return API.target.dr_next == v end,
         t_pattern = function(v) return API.target.pattern == v end,
+        t_kill_verdict = function(v) return API.target.kill_verdict == v end,
         f_bait = function(v) return API.fight.bait == v end,
         f_situation = function(v) return FUNCS.situation(v) end,
         w_kind = function(v) return API.where.kind == v end,
@@ -2206,6 +2226,7 @@ return function(R, P, lib, engine, load)
         if kind == "dr" then return D.DR_LEVELS, D.DR_LEVELS end
         if kind == "patterns" then return D.PATTERNS, D.PATTERNS end
         if kind == "baits" then return D.BAITS, D.BAITS end
+        if kind == "kill_verdicts" then return D.KILL_VERDICTS, D.KILL_VERDICTS end
         if kind == "controls" then return D.CONTROLS, D.CONTROLS end
         if kind == "situations" then
             local labels, values = {}, {}
@@ -2449,6 +2470,24 @@ return function(R, P, lib, engine, load)
                 -- The control plan (Stage 6): the pet's recall, the target's row below.
                 cc = { hold = nil, doomed = nil, target = nil, held_n = 0, ours_n = 0,
                        pet = { recall = s.pet_breaks_cc == true, why = "" }, unknown = {} },
+                -- The kill window (Stage 9): the verdict the situation says.
+                kill = { target = (s.t_kill_verdict and s.t_kill_verdict ~= "NO_KILL_OPPORTUNITY") and
+                             { guid = "bench-target", v = s.t_kill_verdict, conf = (tonumber(s.t_kill_conf) or 70) / 100,
+                               why = "the bench's", actions = {}, reasons = {} } or nil,
+                         by_guid = {}, best = nil, line = "" },
+                -- The teamfight (Stage 10): the reads the situation says.
+                team = { active = s.pvp_focus_me or s.pvp_peel or s.pvp_team_interrupt or s.pvp_switch or s.pvp_healer_free
+                             or s.pvp_overextended or s.pvp_disengage or s.pvp_ally_cc or false,
+                         focus = s.pvp_focus_me and { on_me = true, attackers = 2, name = "you", why = "the bench's" } or nil,
+                         peel = s.pvp_peel and { name = "an enemy", ally = "an ally", action = "Scatter Shot", why = "the bench's" } or nil,
+                         interrupt = s.pvp_team_interrupt and { name = "an enemy", spell = "Flash Heal", kind = "heal", tool = "Scatter Shot",
+                                                                why = "the bench's" } or nil,
+                         switch = s.pvp_switch and { name = "another", why = "the bench's" } or nil,
+                         healer = s.pvp_healer_free and { name = "their healer", free = true, why = "the bench's" } or nil,
+                         overextended = s.pvp_overextended and { why = "the bench's" } or nil,
+                         disengage = s.pvp_disengage and { why = "the bench's" } or nil,
+                         overlap = s.pvp_ally_cc and { guid = "bench-target", name = "your target", why = "the bench's" } or nil,
+                         casts = {}, line = "" },
                 -- The bait (Stage 8): the one the situation says.
                 bait = { target = (s.pvp_bait and s.pvp_bait ~= "none") and
                              { kind = s.pvp_bait, guid = "bench-target", v = s.pvp_bait .. " bait", conf = 0.7, why = "the bench's" } or nil,
@@ -2635,6 +2674,9 @@ return function(R, P, lib, engine, load)
             pvp_threat = FIGHT.threat(W), pvp_threat_score = FIGHT.threat_score(W),
             pvp_incoming_cast = FIGHT.incoming_cast(W), pvp_tactic = FIGHT.tactic(W), pvp_advice = FIGHT.advice(W),
             pvp_bait = FIGHT.bait(W),
+            pvp_focus_me = FIGHT.team_focus_me(W), pvp_peel = FIGHT.team_peel(W), pvp_team_interrupt = FIGHT.team_interrupt(W),
+            pvp_switch = FIGHT.team_switch(W), pvp_healer_free = FIGHT.healer_free(W), pvp_overextended = FIGHT.overextended(W),
+            pvp_disengage = FIGHT.disengage(W), pvp_ally_cc = FIGHT.ally_cc_target(W),
             t_mobility = T.unit ~= nil and TARGET.mobility(W) or false, t_defensive = T.unit ~= nil and TARGET.defensive(W) or false,
             t_cd_seen = (function()
                 local I = W.intel
@@ -2652,6 +2694,8 @@ return function(R, P, lib, engine, load)
             t_pattern = T.unit ~= nil and TARGET.pattern(W) or "none",
             t_pattern_conf = T.unit ~= nil and TARGET.pattern_conf(W) or 0,
             t_pattern_rel = T.unit ~= nil and TARGET.pattern_reliability(W) or 0,
+            t_kill_verdict = T.unit ~= nil and TARGET.kill_verdict(W) or "NO_KILL_OPPORTUNITY",
+            t_kill_conf = T.unit ~= nil and TARGET.kill_conf(W) or 0,
             me_protected = ME.protected(W), me_dead_zone = ME.dead_zone(W), me_safe_escape = ME.safe_escape(W),
             pet_breaks_cc = PET.breaks_cc(W),
         }

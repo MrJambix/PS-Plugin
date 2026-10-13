@@ -320,6 +320,19 @@ D.CLASS_DEFENSIVES = {
     WARRIOR = { "Shield Wall" }, PRIEST = { "Power Word: Shield" }, DRUID = { "Barkskin" },
     HUNTER = { "Deterrence" }, WARLOCK = {}, SHAMAN = {},
 }
+--- A class's ways out of a kill (Stage 9): what ends the fight for us, by
+--- leaving, hiding or becoming untouchable. Racials and the trinket are not
+--- here: the trinket breaks a control, it does not save a player at 10%.
+D.SOURCE.CLASS_ESCAPES = "Classic class abilities (Icy Veins' Classic PvP guides); the names are the Era and Forever clients' own"
+D.CLASS_ESCAPES = {
+    ROGUE = { "Vanish", "Sprint" }, MAGE = { "Blink", "Ice Block" }, HUNTER = { "Feign Death" },
+    DRUID = { "Travel Form", "Dash" }, PALADIN = { "Divine Shield", "Blessing of Protection" },
+    PRIEST = { "Psychic Scream" }, WARLOCK = { "Death Coil", "Howl of Terror" }, SHAMAN = { "Ghost Wolf" },
+    WARRIOR = {},
+}
+--- The classes that heal themselves in a fight.
+D.SELF_HEALERS = { DRUID = true, PALADIN = true, PRIEST = true, SHAMAN = true }
+
 --- A class's interrupt, and how far each reaches.
 D.CLASS_INTERRUPT = {
     ROGUE = "Kick", WARRIOR = "Pummel", MAGE = "Counterspell", SHAMAN = "Earth Shock",
@@ -329,5 +342,22 @@ D.INTERRUPT_REACH = {
     ["Kick"] = 5, ["Pummel"] = 5, ["Shield Bash"] = 5, ["Counterspell"] = 30, ["Earth Shock"] = 20,
     ["Spell Lock"] = 30, ["Silence"] = 30, ["Feral Charge"] = 25,
 }
+
+-- --- teamfights (Stage 10) ------------------------------------------------------------
+
+D.SOURCE.HEALS = "Classic Era's healing spells with a cast time or a channel (the ones an interrupt can stop), by the class that has each; names as both clients print them"
+--- The casts that heal: stopping one keeps a low player low.
+D.HEALS = {
+    ["Lesser Heal"] = true, ["Heal"] = true, ["Greater Heal"] = true, ["Flash Heal"] = true, ["Prayer of Healing"] = true,
+    ["Healing Touch"] = true, ["Regrowth"] = true, ["Tranquility"] = true,
+    ["Holy Light"] = true, ["Flash of Light"] = true,
+    ["Healing Wave"] = true, ["Lesser Healing Wave"] = true, ["Chain Heal"] = true,
+}
+--- The casts that control a player: every name in CONTROLS above, and the
+--- ones with a cast time it does not list (an interrupt stops those).
+D.CONTROL_NAMES = { ["Hibernate"] = true, ["Mind Control"] = true, ["Scare Beast"] = true, ["Seduction"] = true, ["Banish"] = true }
+for _, list in pairs(D.CONTROLS) do
+    for i = 1, #list do D.CONTROL_NAMES[list[i].name] = true end
+end
 
 return D

@@ -346,6 +346,73 @@ S.EPISODES = {
     confidence = { low_below = 3, moderate_below = 6, high_below = 12, agree = 0.6 },
 }
 
+-- --- the kill window (Stage 9, killwindow.lua) --------------------------------
+S.KILL = {
+    -- Health bands: under kill_hp a kill is on; under pressure_hp a burst is
+    -- worth lining up; under build_hp keep the damage going. Under no_time_hp
+    -- a defensive to draw is not waited for.
+    kill_hp = 0.25, pressure_hp = 0.45, build_hp = 0.7, no_time_hp = 0.12,
+    -- The confidence starts here and pays for what stands against the kill:
+    -- each escape or defensive seen ready, each never seen (counted as
+    -- available, at a smaller cost), a healer within heal_reach, a class
+    -- healing itself, each other player on you; an ally on it adds.
+    base = 0.95, escape_ready = 0.35, defensive_ready = 0.2, escape_unknown = 0.18, defensive_unknown = 0.06,
+    healer_near = 0.25, self_heal = 0.08, third_party = 0.12, ally_on = 0.08, no_damage = 0.4, class_unknown = 0.4,
+    heal_reach = 40, healer_conf = 0.5,
+    -- A kill window is "high confidence" from here; a burst is lined up from prepare_conf.
+    high_conf = 0.6, prepare_conf = 0.45,
+    -- Ours: the abort (you under abort_hp with the threat HIGH, or CRITICAL,
+    -- or under abort_ttl seconds to live); the mana a follow-through needs.
+    abort_hp = 0.35, abort_ttl = 5.0, min_power = 0.15,
+    -- What finishes it, first ready first.
+    finishers = { "Aimed Shot", "Arcane Shot", "Multi-Shot", "Serpent Sting" },
+    -- Read this often, for at most this many players.
+    every = 0.2, max_players = 10,
+}
+
+-- --- teamfights (Stage 10, team.lua) ------------------------------------------
+S.TEAM = {
+    -- Focus: this many enemies on one of us. Peel: an ally under ally_low
+    -- (or the healer) with an enemy on it.
+    focus_min = 2, ally_low = 0.5,
+    -- Overextended: in a group, the nearest ally farther than ally_reach with
+    -- overextend_enemies within `near`. Disengage: disengage_on_me players on
+    -- you and fewer allies than that within `near`.
+    near = 30, ally_reach = 30, overextend_enemies = 2, disengage_on_me = 2,
+    -- The enemy healer is read as one from healer_conf; Viper Sting reaches it.
+    healer_conf = 0.5, sting_reach = 35,
+    -- Which cast to stop first: a heal (more for a lower player), a control
+    -- at one of us, a damaging cast at one of us (plus its danger), the rest.
+    weight = { heal = 3.0, heal_low = 2.0, control = 2.5, damage = 1.0, other = 0.3 },
+    -- Ours, first ready and in reach first: what stops a cast, what peels.
+    -- `from` the minimum range (the dead zone), `pet` the pet must be on it.
+    -- Classic tooltips: Scatter Shot 15 yd, Wyvern Sting and Concussive Shot
+    -- 35, Wing Clip melee; Intimidation is the pet's next hit.
+    stoppers = {
+        { name = "Scatter Shot", reach = 15, from = 8 },
+        { name = "Intimidation", reach = 100, pet = true },
+        { name = "Wyvern Sting", reach = 35, from = 8 },
+    },
+    peel_tools = {
+        { name = "Scatter Shot", reach = 15, from = 8 },
+        { name = "Intimidation", reach = 100, pet = true },
+        { name = "Wyvern Sting", reach = 35, from = 8 },
+        { name = "Concussive Shot", reach = 35, from = 8 },
+        { name = "Wing Clip", reach = 5 },
+    },
+    every = 0.25,
+}
+
+-- --- the history ledger (Stage 11-b, history.lua) ----------------------------
+S.HISTORY = {
+    -- Looked at this often in a fight; the ring keeps this many entries a
+    -- fight; the log on disk keeps this many fights.
+    every = 0.5, ring = 60, keep = 100,
+    -- A control on a player held at least this much longer, a defensive
+    -- while another covers this much longer: an overlap.
+    overlap_left = 1.0,
+}
+
 -- --- the field checks (fieldcheck.lua) ----------------------------------------
 S.FIELD = {
     -- A trap counts as laid in melee with a hostile within this; its effect

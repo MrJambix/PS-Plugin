@@ -1299,8 +1299,8 @@ local function start(JCore)
     intel:toggle("intel_cooldowns", "Cooldown management: their ledger, your cover; holds a second defensive while covered", true)
     intel:toggle("intel_tactics", "Hunter PvP tactics: the tactical state, the aspect for the moment", true)
     intel:toggle("intel_position", "Positioning awareness: the move advice (hold, increase, reduce, line of sight...)", true)
-    intel:toggle("intel_kill", "Kill window detection (half-confidence until Stage 9 weighs the target's defensives)", true)
-    intel:toggle("intel_team", "Teamfight awareness: protect an ally, peel, the flag (Stage 10 extends it)", true)
+    intel:toggle("intel_kill", "Kill window detection: its escapes, defensives and heals against your burst and your risk", true)
+    intel:toggle("intel_team", "Teamfight awareness: who is focused, peels, which cast to stop, target switches, the enemy healer, overextending", true)
     intel:toggle("intel_cc", "Crowd control planning: each control on a player, whose, what breaks it, its diminishing returns, what it is worth; holds your damage off one worth keeping", true)
     intel:toggle("intel_predict", "Opponent prediction: what each player tends to do this session (closes when slowed, a defensive at N%, interrupts, escapes control, stacks bursts, goes for the pet, the same opener, backs off, saves cooldowns), never from one sighting", true)
     intel:toggle("intel_bait", "Cooldown baiting: a Concussive Shot to draw a predicted charge into your ready counter or a trinket before the real trap; the burst held for an unseen defensive; a cast to show an interrupter (advice). Never while the threat is HIGH", true)
@@ -1308,6 +1308,7 @@ local function start(JCore)
     -- The fight debriefs and the central database (2026-10-12).
     intel:toggle("intel_debrief", "Fight debriefs: each fight with a player recorded -- what they used, what you used, what stayed ready, how it ended -- with its lessons (the log: scripts_data/jambix.aio.fights.json)", true)
     intel:toggle("intel_debrief_say", "Say each fight's outcome and first lesson on screen", true)
+    intel:toggle("intel_history", "History ledger: each fight's predictions scored, major cooldowns spent for nothing, overlapping controls and defensives, how often the advice changed, advice you could not follow (the log: scripts_data/jambix.aio.history.json; no win rate)", true)
     intel:toggle("intel_episodes", "Decision episodes: a window round each tactical moment (a charge, a burst, a root, the dead zone, a kill window...) with the state before and after, what was predicted and advised, what you did, and a measured result", true)
     intel:label("Nothing here presses a key but the aspect for the moment, through the Aspects window's")
     intel:label("own switch. The rest is advice: three rows in this page's readout, the banners, the")
@@ -1352,6 +1353,15 @@ local function start(JCore)
         if not d then return { "The PvP intelligence layer did not load." } end
         local ok, lines = pcall(d.lines)
         if not ok then return { "debrief readout failed: " .. tostring(lines) } end
+        return lines
+    end)
+    -- The history ledger (react/intel/history.lua): this fight and every fight kept.
+    reactions_page:live_lines(5, function()
+        local I = P.react and P.react.intel
+        local h = I and I.history
+        if not h then return {} end
+        local ok, lines = pcall(h.lines)
+        if not ok then return { "history readout failed: " .. tostring(lines) } end
         return lines
     end)
 

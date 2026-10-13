@@ -79,6 +79,7 @@ D.PATTERNS = { "mobility_when_slowed", "defensive_threshold", "interrupts_casts"
     "over_committing", "targeting_pet", "same_opener", "retreating_when_pressured", "saving_cooldowns_until_low", "none" }
 -- Bait detection (react/intel/bait.lua, Stage 8): the bait on the target.
 D.BAITS = { "mobility", "defensive", "interrupt", "cc", "none" }
+D.KILL_VERDICTS = { "HIGH_CONFIDENCE_KILL_WINDOW", "PREPARE_BURST", "FORCE_DEFENSIVE", "BUILD_PRESSURE", "ABORT_COMMITMENT", "NO_KILL_OPPORTUNITY" }
 
 --- What can take control of you, as react/pvp.lua names it (1.81.0).
 D.CONTROLS = { "stun", "fear", "polymorph", "charm", "sleep", "knockout", "disorient", "freeze", "horror",
@@ -277,6 +278,11 @@ D.CONDITIONS = {
       code = "target.pattern_conf", min = 0, max = 100, suffix = "%", default = 60, op = ">=" },
     { key = "t_pattern_rel", group = "Target", label = "The target's surest pattern: the evidence behind it % (two chances: 50)",
       type = "number", code = "target.pattern_reliability", min = 0, max = 100, suffix = "%", default = 60, op = ">=" },
+    -- PvP intelligence, Stage 9 (react/intel/killwindow.lua): is it about to die, or to get away.
+    { key = "t_kill_verdict", group = "Target", label = "The kill window on my target (its outs, heals, your burst and your risk weighed)",
+      type = "choice", code = "target.kill_verdict == %q", choices = "kill_verdicts", default = "HIGH_CONFIDENCE_KILL_WINDOW" },
+    { key = "t_kill_conf", group = "Target", label = "The kill window on my target: how sure %", type = "number",
+      code = "target.kill_conf", min = 0, max = 100, suffix = "%", default = 60, op = ">=" },
 
     -- Pet
     { key = "pet_exists", group = "Pet", label = "My pet is out", type = "bool", code = "pet.exists" },
@@ -336,6 +342,22 @@ D.CONDITIONS = {
       type = "choice", code = "fight.bait == %q", choices = "baits", default = "mobility" },
     { key = "f_kill_window", group = "Fight", label = "A kill window on my target (PvP intelligence)", type = "bool",
       code = "fight.kill_window" },
+    -- PvP intelligence, Stage 10 (react/intel/team.lua): the fight with more than one player a side.
+    { key = "f_team_focus_me", group = "Fight", label = "Teamfight: the enemies are focusing me (2 or more on me, more than on any ally)",
+      type = "bool", code = "fight.team_focus_me" },
+    { key = "f_team_peel", group = "Fight", label = "Teamfight: an ally needs a peel (an enemy on our healer or on an ally under half health)",
+      type = "bool", code = "fight.team_peel" },
+    { key = "f_team_interrupt", group = "Fight", label = "Teamfight: an enemy cast worth stopping, in reach of a stopper of mine",
+      type = "bool", code = "fight.team_interrupt" },
+    { key = "f_team_switch", group = "Fight", label = "Teamfight: a better target than mine (mine immune or an ally's control on it; a kill window elsewhere)",
+      type = "bool", code = "fight.team_switch" },
+    { key = "f_healer_free", group = "Fight", label = "Teamfight: the enemy healer is free to heal", type = "bool", code = "fight.healer_free" },
+    { key = "f_overextended", group = "Fight", label = "Teamfight: I am overextended (my group far, enemies near)", type = "bool",
+      code = "fight.overextended" },
+    { key = "f_disengage", group = "Fight", label = "Teamfight: outnumbered on me with no one near: disengage", type = "bool",
+      code = "fight.disengage" },
+    { key = "f_ally_cc_target", group = "Fight", label = "Teamfight: an ally's control is on my target (no control or damage of mine on it)",
+      type = "bool", code = "fight.ally_cc_target" },
     { key = "f_within8", group = "Fight", label = "Enemies within 8 yards of me", type = "number", code = "fight.within8",
       min = 0, max = 15, default = 3, op = ">=" },
     { key = "f_within30", group = "Fight", label = "Enemies within 30 yards of me", type = "number", code = "fight.within30",
@@ -700,7 +722,9 @@ D.BENCH_PRESETS = {
         t_mobility = true, t_defensive = false, t_cd_seen = "Recklessness, Intercept", t_cd_ready = 1790,
         me_protected = false, me_dead_zone = true, me_safe_escape = false, pet_breaks_cc = false,
         t_cc_value = "none", t_dr_next = "full", t_cc_ours = false, t_pattern = "none", t_pattern_conf = 0,
-        t_pattern_rel = 0, pvp_bait = "none" } },
+        t_pattern_rel = 0, pvp_bait = "none", t_kill_verdict = "NO_KILL_OPPORTUNITY", t_kill_conf = 0,
+        pvp_focus_me = false, pvp_peel = false, pvp_team_interrupt = false, pvp_switch = false, pvp_healer_free = false,
+        pvp_overextended = false, pvp_disengage = false, pvp_ally_cc = false } },
 }
 
 D.LIBRARY_EXAMPLE = [[-- Your class's own Lua, shared by every reaction of the class.
@@ -723,7 +747,7 @@ D.API = {
     { name = "target", text = "exists, name, hp, distance, ttd, casting, cast_name, cast_left, interruptible, on_me, on_pet, on_tank, on_healer, on_group, fleeing, elite, boss, rare, player, level_diff, creature, controlled, threat, runs, others; immune, bursting, trinket_down, mobility, defensive (a player's)" },
     { name = "pet", text = "exists, hp, attackers, tanking; breaks_cc (on a player held by a control damage breaks)" },
     { name = "group", text = "in_group, in_raid, members, dead, tank_alive, healer_alive, healer_controlled, lowest (health %), hurt (under 50%)" },
-    { name = "fight", text = "mode, danger, engaged, on_me, melee_on_me, nearby, within8, within30, players, casting, elites, boss, pvp; threat (CRITICAL..INFORMATIONAL), threat_score (0-100), incoming_cast, tactic (the PvP state), advice (the move: hold, increase, reduce...)" },
+    { name = "fight", text = "mode, danger, engaged, on_me, melee_on_me, nearby, within8, within30, players, casting, elites, boss, pvp; threat (CRITICAL..INFORMATIONAL), threat_score (0-100), incoming_cast, tactic (the PvP state), advice (the move: hold, increase, reduce...); teamfights: team_focus_me, team_peel, team_interrupt, team_switch, healer_free, overextended, disengage, ally_cc_target" },
     { name = "where", text = "kind (world, world_pvp, bg, arena, dungeon, raid), name" },
     { name = "check", text = 'check("me_hp", "<", 40): any GUI condition by its key' },
     { name = "ready", text = 'ready("Spell"), known("Spell"), cooldown("Spell") in seconds' },
@@ -733,6 +757,7 @@ D.API = {
     { name = "enemy_cd_seen", text = 'enemy_cd_seen("Sprint"): the target was seen using it; enemy_cd_ready_in("Sprint"): seconds until it is back by the client\'s tables (0 when it has run out, 999 when never seen); me.protected: a defensive of yours covers you' },
     { name = "target.cc_value", text = 'target.cc_value: what keeping the control on the target is worth ("survive", "stop_heal", "stop_burst", "kill", "peel", "distance", "reset", "none"); target.dr_next: what your next control on it gets ("full", "half", "quarter", "immune"; "unknown" on Forever); target.cc_ours: the control on it is yours, or its caster is unread; target.cc_left: seconds left on it; pet.breaks_cc: the pet is on a player held by a control damage breaks' },
     { name = "fight.bait", text = 'fight.bait: the bait on the target ("mobility": slow it to draw its charge into your ready counter; "defensive": hold the burst, its defensive is unseen or due; "interrupt": show Aimed Shot to draw its kick, stop_cast is yours; "cc": Concussive Shot to draw the trinket, then the trap; "none")' },
+    { name = "target.kill_verdict", text = 'target.kill_verdict: the kill window on the target (Stage 9) -- "HIGH_CONFIDENCE_KILL_WINDOW", "PREPARE_BURST", "FORCE_DEFENSIVE", "BUILD_PRESSURE", "ABORT_COMMITMENT" or "NO_KILL_OPPORTUNITY"; target.kill_conf: how sure, 0 to 100. Its escapes and defensives seen ready, never seen (counted as available) or down, an enemy healer near it, its own heals, your burst and mana, the threat on you, other players on you, allies on it' },
     { name = "prediction_confidence", text = 'prediction_confidence("mobility_when_slowed"): 0 to 1, the rate the target shows that pattern this session (0: nothing seen; one sighting reads 0.67 and is never a prediction); prediction_reliability("..."): the evidence behind it, 0 to 1 (two chances: 0.5); target.pattern: its surest pattern that is not adapting ("none" when nothing is sure); target.pattern_conf: that rate in %; target.pattern_reliability: that evidence in %. The patterns: mobility_when_slowed, defensive_threshold, interrupts_casts, escape_after_control, over_committing, targeting_pet, same_opener, retreating_when_pressured, saving_cooldowns_until_low' },
     { name = "situation", text = 'situation("outnumbered"); place("Molten Core")' },
     { name = "cast", text = 'cast("Spell", "target"|"self"|"pet"|"caster"|"attacker"|"tank"|"healer"): true when it can go' },

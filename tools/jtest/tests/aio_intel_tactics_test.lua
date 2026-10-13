@@ -260,17 +260,19 @@ T[#T + 1] = { "PROTECT_ALLY when the healer is targeted, PEEL_ENEMY for a melee 
     has(tactic(G).actions[1], "run with it", "run")
 end }
 
-T[#T + 1] = { "KILL_WINDOW at 20% without an immunity, at half confidence; not with Divine Shield up; COUNTER_ATTACK once a burst has ended", function()
+T[#T + 1] = { "KILL_WINDOW at 20% without an immunity, as sure as the kill window's verdict (a paladin's outs never seen: a burst to line up); not with Divine Shield up; COUNTER_ATTACK once a burst has ended", function()
     local G = bundle()
     G.target.get_class = function() return 2 end        -- a paladin
+    G.known["Arcane Shot"] = true                       -- something of ours to finish it with
     G.row.dist, G.distance = 20, 20
     fighting(G, 10)
     G.health[G.target.guid] = 0.2
     G.row.hp = 0.2
     G.tick()
     assert_eq(tactic(G).state, "KILL_WINDOW", "a kill window")
-    assert_near(tactic(G).conf, 0.5, 0.01, "half sure: its defensives are Stage 9's")
-    has(tactic(G).why, "Stage 9", "and says so")
+    assert_near(tactic(G).conf, 0.33, 0.01, "its five outs never seen and its own heals cost the confidence")
+    has(tactic(G).why, "prepare burst", "the verdict's words")
+    has(tactic(G).why, "never seen (counted as available)", "and what it rests on")
     G.aura(G.target.guid, "Divine Shield", 8)
     G.clock = G.clock + 1
     G.tick()

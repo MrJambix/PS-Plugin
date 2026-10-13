@@ -120,6 +120,17 @@ return function(P)
     ---@param class_module table
     ---@return boolean
     ---@return string reason
+    --- The PvP intelligence's kill-window verdict for a unit (a player), or nil.
+    function M.kill_verdict(unit)
+        local react = P.react
+        local kill = react and react.intel and react.intel.kill or nil
+        if not (kill and kill.for_guid and unit) then return nil end
+        local okp, is_player = pcall(function() return unit:is_player() end)
+        if not (okp and is_player == true) then return nil end
+        local guid = P.units and P.units.guid and P.units.guid(unit) or nil
+        return guid and kill.for_guid(guid) or nil
+    end
+
     function M.should_open(s, class_module)
         -- No switch (1.39.0): whether a window is worth it is the question
         -- below, from the fight -- the same as the racials always were.
@@ -141,6 +152,20 @@ return function(P)
         if react and react.out_of_fight then
             local ok, held = pcall(react.out_of_fight, s.target)
             if ok and held == true then return false, "the target is held by crowd control" end
+        end
+
+        -- A PLAYER: the kill window (PvP intelligence, Stage 9) decides first.
+        -- A kill window (high confidence, or a burst to line up) opens it at
+        -- once, however long the fight is measured to last; an abort (we are
+        -- the one in danger) or a defensive to draw first keeps it shut; the
+        -- rest goes on to the rules below.
+        local kw = M.kill_verdict(s.target)
+        if kw then
+            if kw.v == "HIGH_CONFIDENCE_KILL_WINDOW" or kw.v == "PREPARE_BURST" then
+                return true, "kill window: " .. tostring(kw.why)
+            elseif kw.v == "ABORT_COMMITMENT" or kw.v == "FORCE_DEFENSIVE" then
+                return false, "kill window: " .. kw.v:lower():gsub("_", " ") .. " -- " .. tostring(kw.why)
+            end
         end
 
         -- 1. Will the fight last?

@@ -431,7 +431,10 @@ return function(P)
     local unique = memory.unique
 
     local lib = { memory = memory, detect = detect, world = world, engine = engine, latch = L,
-                  journal = journal, petcare = petcare, petthreat = petthreat, pvp = pvp }
+                  journal = journal, petcare = petcare, petthreat = petthreat, pvp = pvp,
+                  -- The PvP intelligence's kill window (Stage 9) for the rules
+                  -- that ask it (the PvP hunter's "finish the low one").
+                  killwindow = intel and intel.kill or nil }
 
     R.add_rule = engine.add_rule
     R.remove_rule = engine.remove_rule

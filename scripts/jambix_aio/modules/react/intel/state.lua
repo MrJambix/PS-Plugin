@@ -574,6 +574,9 @@ return function(P, lib)
                     a.dist = units.distance and try(units.distance, unit) or huge
                     a.hp = units.health_fraction and try(units.health_fraction, unit) or 1
                     a.dead = try(unit.is_dead, unit) == true
+                    -- Whom it is on (the kill window's "allies on it"; Stage 10's focus).
+                    local t = try(unit.get_target, unit)
+                    a.target_guid = t and units.guid(t) or nil
                     a.tank = g.is_tank ~= nil and try(g.is_tank, unit) == true
                     a.healer = g.is_healer ~= nil and try(g.is_healer, unit) == true
                     a.role = a.tank and "tank" or a.healer and "healer" or "damager"

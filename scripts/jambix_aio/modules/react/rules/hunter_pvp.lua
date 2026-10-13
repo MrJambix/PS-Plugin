@@ -495,7 +495,14 @@ return function(R, P, lib)
             if not on() then return end
             local tg = W.target
             if not tg.player or (tg.hp or 1) <= FINISH_FROM then return end
-            local r = pick(W, function(row) return (row.hp or 1) <= FINISH_AT end)
+            -- A kill window (Stage 9) when the layer reads one: low AND no
+            -- out seen ready; health alone when it does not.
+            local kill = lib.killwindow
+            local r = pick(W, function(row)
+                local v = kill and kill.for_guid and kill.for_guid(row.guid) or nil
+                if v then return v.v == "HIGH_CONFIDENCE_KILL_WINDOW" or (v.v == "PREPARE_BURST" and (row.hp or 1) <= FINISH_AT) end
+                return (row.hp or 1) <= FINISH_AT
+            end)
             if not r then return end
             local c = switch_to(offer, r, "pvp_finish:" .. tostring(r.guid),
                 string.format("%s at %d%%", name_of(r.obj), pct(r.hp)))

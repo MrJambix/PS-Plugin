@@ -190,18 +190,32 @@ return function(P, lib, data, K)
           end,
           avoid = { "Aimed Shot while hit", "a second defensive while covered" } },
 
+        -- A dangerous cast at you; in a group (Stage 10, team.lua) also a
+        -- heal on a low enemy or a control at an ally, the first in order a
+        -- stopper of ours reaches.
         { name = "INTERRUPT_OPPORTUNITY", priority = 85,
           enter = function(X)
               local T = X.T
-              if not T.incoming_cast then return false end
-              local stopper = nil
-              if book.known("Scatter Shot") and book.ready("Scatter Shot") then stopper = "Scatter Shot" end
-              if not stopper and book.known("Intimidation") and book.ready("Intimidation") and X.S.pet.on_player then stopper = "Intimidation" end
-              if not stopper and book.known("Feign Death") and book.ready("Feign Death") then stopper = "Feign Death" end
-              if not stopper then return false end
-              return true, "a dangerous cast at you and " .. stopper .. " ready", 1.0
+              if T.incoming_cast then
+                  local stopper = nil
+                  if book.known("Scatter Shot") and book.ready("Scatter Shot") then stopper = "Scatter Shot" end
+                  if not stopper and book.known("Intimidation") and book.ready("Intimidation") and X.S.pet.on_player then stopper = "Intimidation" end
+                  if not stopper and book.known("Feign Death") and book.ready("Feign Death") then stopper = "Feign Death" end
+                  if stopper then return true, "a dangerous cast at you and " .. stopper .. " ready", 1.0 end
+              end
+              local c = module_on("team") and X.S.team and X.S.team.interrupt or nil
+              if c and (c.kind == "heal" or c.kind == "control") and RANK[T.level] < RANK.HIGH then
+                  return true, c.why, 0.8
+              end
+              return false
           end,
-          actions = { "Scatter Shot", "Intimidation", "Feign Death" } },
+          actions = function(X, out)
+              for i = #out, 1, -1 do out[i] = nil end
+              local c = not X.T.incoming_cast and X.S.team and X.S.team.interrupt or nil
+              if c and c.tool then out[1] = c.tool .. " on " .. c.name return out end
+              out[1], out[2], out[3] = "Scatter Shot", "Intimidation", "Feign Death"
+              return out
+          end },
 
         { name = "CONTROL_DISTANCE", priority = 80,
           enter = function(X)
@@ -254,34 +268,69 @@ return function(P, lib, data, K)
           actions = { "walk to 25 yd", "Aimed Shot from range" },
           avoid = { "any damage on it" } },
 
+        -- The team module's peel (Stage 10) names the enemy, the ally and our
+        -- tool that reaches it; without it, the old read.
         { name = "PROTECT_ALLY", priority = 70,
           enter = function(X)
               if not module_on("team") or RANK[X.T.level] >= RANK.HIGH then return false end
+              local p = X.S.team and X.S.team.peel or nil
+              if p then return true, p.why, p.action and 0.9 or 0.7 end
               local f, ally = vulnerable_ally_targeted(X.S)
               if not f then return false end
               return true, string.format("%s on %s (%s)", f.name, ally.name, ally.healer and "the healer" or "hurt"), 0.9
           end,
-          actions = { "Concussive Shot on it", "Wing Clip", "Scatter Shot", "Intimidation" } },
+          actions = function(X, out)
+              for i = #out, 1, -1 do out[i] = nil end
+              local p = X.S.team and X.S.team.peel or nil
+              if p and p.action then out[#out + 1] = p.action .. " on " .. p.name end
+              local base = { "Concussive Shot on it", "Wing Clip", "Scatter Shot", "Intimidation" }
+              for i = 1, #base do
+                  if not (p and p.action and base[i]:find(p.action, 1, true)) then out[#out + 1] = base[i] end
+              end
+              return out
+          end },
 
         { name = "PEEL_ENEMY", priority = 68,
           enter = function(X)
               if not module_on("team") or RANK[X.T.level] >= RANK.HIGH then return false end
               local f, ally = melee_on_ally(X.S)
               if not f then return false end
+              if held(f.unit) then return false end
+              local o = X.S.team and X.S.team.overlap or nil
+              if o and o.guid == f.guid then return false end      -- an ally's control on it: leave it be
               return true, string.format("%s meleeing %s", f.name, ally and ally.name or "an ally"), max(0.6, f.inferred.role.conf)
           end,
           actions = { "Concussive Shot on it", "Scatter Shot", "Freezing Trap in its path" } },
 
+        -- Stage 9: the kill window's verdict (killwindow.lua) -- its outs,
+        -- heals, our burst and our risk weighed -- decides, with its own
+        -- confidence and words; without one, the old read at half.
         { name = "KILL_WINDOW", priority = 65,
           enter = function(X)
               local tg = X.tg
               if not module_on("kill") or not tg or RANK[X.T.level] >= RANK.HIGH then return false end
+              if held(tg.unit) then return false end
+              local k = X.S.kill and X.S.kill.target or nil
+              if k and k.guid == tg.guid then
+                  if k.v == "HIGH_CONFIDENCE_KILL_WINDOW" or k.v == "PREPARE_BURST" then
+                      return true, k.v:lower():gsub("_", " ") .. ": " .. k.why, k.conf
+                  end
+                  return false
+              end
               if tg.hp > KT.kill_hp then return false end
               if tg.st and tg.st.immune then return false end
-              if held(tg.unit) then return false end
-              return true, string.format("%s at %d%% with no immunity up (its defensives are Stage 9's)", tg.name, math.floor(tg.hp * 100 + 0.5)), 0.5
+              return true, string.format("%s at %d%% with no immunity up (no kill-window read)", tg.name, math.floor(tg.hp * 100 + 0.5)), 0.5
           end,
-          actions = { "Rapid Fire", "Aimed Shot", "Arcane Shot", "Multi-Shot on two or more" },
+          actions = function(X, out)
+              for i = #out, 1, -1 do out[i] = nil end
+              local k = X.S.kill and X.S.kill.target or nil
+              if k and k.actions and #k.actions > 0 then
+                  for i = 1, #k.actions do out[i] = k.actions[i] end
+              else
+                  out[1], out[2], out[3], out[4] = "Rapid Fire", "Aimed Shot", "Arcane Shot", "Multi-Shot on two or more"
+              end
+              return out
+          end,
           avoid = { "spending an escape to chase" } },
 
         { name = "COUNTER_ATTACK", priority = 62,

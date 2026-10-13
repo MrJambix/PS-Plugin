@@ -85,6 +85,7 @@ end }
 T[#T + 1] = { "the kill and team switches gate their states", function()
     local G = bundle()
     G.target.get_class = function() return 2 end
+    G.known["Arcane Shot"] = true
     G.row.dist, G.distance = 20, 20
     G.in_combat, G.fight_age = true, 10
     G.row.in_combat, G.row.targeting_me = true, true

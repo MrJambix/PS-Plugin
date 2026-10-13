@@ -565,8 +565,9 @@ T[#T + 1] = { "trapped: another player on you becomes the target while the trap 
     assert(G.switched[1] == other, "to the one not frozen")
 end }
 
-T[#T + 1] = { "finish: another player at 15% while yours is at 80%: switched", function()
+T[#T + 1] = { "finish: another player at 15% while yours is at 80%, a shot of yours ready: switched", function()
     local G = bundle()
+    G.known["Arcane Shot"] = true            -- the kill window (Stage 9) asks for something to finish it with
     G.row.targeting_me = false
     G.row.dist = 25
     G.health[G.target.guid] = 0.8
@@ -575,6 +576,27 @@ T[#T + 1] = { "finish: another player at 15% while yours is at 80%: switched", f
     G.tick()
     assert_eq(#G.switched, 1, "switched")
     assert(G.switched[1] == low, "to the low one")
+end }
+
+T[#T + 1] = { "finish: the kill window decides when the PvP layer reads one -- a low player it calls no kill (immune, healed) is left; one it calls a kill window is taken (Stage 9)", function()
+    local G = bundle()
+    G.row.targeting_me = false
+    G.row.dist = 25
+    G.health[G.target.guid] = 0.8
+    local low = unit(G, "Player-1-00000004", { name = "Low", player = true })
+    G.rows[2] = G.row_for(low, { dist = 25, targeting_me = false, hp = 0.15 })
+    local kill = G.React.intel and G.React.intel.kill
+    assert(kill and kill.for_guid, "the kill window is loaded")
+    local orig = kill.for_guid
+    kill.for_guid = function(g) if g == low.guid then return { v = "NO_KILL_OPPORTUNITY" } end return nil end
+    G.tick()
+    assert_eq(#G.switched, 0, "at 15% but no kill (its immunity, its healer): left alone")
+    kill.for_guid = function(g) if g == low.guid then return { v = "HIGH_CONFIDENCE_KILL_WINDOW" } end return nil end
+    G.clock = G.clock + 4
+    G.tick()
+    kill.for_guid = orig
+    assert_eq(#G.switched, 1, "a kill window: switched")
+    assert(G.switched[1] == low, "to it")
 end }
 
 T[#T + 1] = { "status: the class window's line says what it faces and what it last did", function()

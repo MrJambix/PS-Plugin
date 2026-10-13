@@ -1923,6 +1923,16 @@ return function(P)
             b_slider(ui, "ppatc", "...its rate", "t_pattern_conf", 0, 100, 1, "%", 0)
             b_slider(ui, "ppatr", "...the evidence behind it", "t_pattern_rel", 0, 100, 1, "%", 0)
             pick("pbait", "The bait on the target", "pvp_bait", D.BAITS, "none")
+            pick("pkill", "The kill window on the target", "t_kill_verdict", D.KILL_VERDICTS, "NO_KILL_OPPORTUNITY")
+            b_slider(ui, "pkillc", "...how sure", "t_kill_conf", 0, 100, 1, "%", 0)
+            b_toggle(ui, "pfoc", "Teamfight: the enemies are focusing me", "pvp_focus_me")
+            b_toggle(ui, "ppeel", "Teamfight: an ally needs a peel", "pvp_peel")
+            b_toggle(ui, "pint", "Teamfight: an enemy cast worth stopping", "pvp_team_interrupt")
+            b_toggle(ui, "pswi", "Teamfight: a better target than mine", "pvp_switch")
+            b_toggle(ui, "pheal", "Teamfight: the enemy healer is free", "pvp_healer_free")
+            b_toggle(ui, "povx", "Teamfight: I am overextended", "pvp_overextended")
+            b_toggle(ui, "pdis", "Teamfight: outnumbered, disengage", "pvp_disengage")
+            b_toggle(ui, "pacc", "Teamfight: an ally's control on my target", "pvp_ally_cc")
             b_toggle(ui, "pprot", "A defensive of mine covers me", "me_protected")
             b_toggle(ui, "pdz", "The target is inside my minimum ranged distance", "me_dead_zone")
             b_toggle(ui, "pesc", "A safe escape is available", "me_safe_escape")
@@ -2075,6 +2085,17 @@ return function(P)
                 ui:text("Predict: " .. sm.predictions[k], { size = "small", color = DIM })
             end
             if (sm.inputs or "") ~= "" then ui:text("Inputs: " .. sm.inputs, { size = "small", color = FAINT }) end
+            if (sm.kill or "") ~= "" then
+                ui:text("Kill: " .. sm.kill .. ((sm.kill_why or "") ~= "" and (" -- " .. sm.kill_why) or ""),
+                    { size = "small", color = DIM })
+            end
+            do
+                local H = P.react and P.react.intel and P.react.intel.history or nil
+                local ok, hl = false, nil
+                if H then ok, hl = pcall(H.lines) end
+                for k = 1, (ok and math.min(2, #hl) or 0) do ui:text(hl[k], { size = "small", color = FAINT }) end
+            end
+            for k = 1, math.min(4, #(sm.team or {})) do ui:text("Team: " .. sm.team[k], { size = "small", color = DIM }) end
             if (sm.bait or "") ~= "" then
                 ui:text("Bait: " .. sm.bait .. ((sm.bait_why or "") ~= "" and (" -- " .. sm.bait_why) or ""),
                     { size = "small", color = DIM })

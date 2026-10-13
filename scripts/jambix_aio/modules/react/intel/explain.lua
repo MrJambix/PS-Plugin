@@ -32,7 +32,7 @@ return function(P, lib, K)
         control = "", control_why = "",
         predictions = {},
         inputs = "",
-        bait = "", bait_why = "",
+        bait = "", bait_why = "", kill = "", kill_why = "", team = {},
         cooldowns = {}, suppressed = {}, unknown = {},
     }
     M.summary_table = summary
@@ -105,6 +105,27 @@ return function(P, lib, K)
         -- unverified until seen).
         local pm = lib.predict_inputs
         summary.inputs = pm and pm() or ""
+        -- The kill window on the target (Stage 9): the verdict and why.
+        local KW = S.kill
+        if KW and KW.target then
+            summary.kill = string.format("%s (%.2f)", KW.target.v, KW.target.conf or 0)
+            summary.kill_why = KW.target.why or ""
+        else
+            summary.kill, summary.kill_why = "", ""
+        end
+        -- The teamfight (Stage 10): each read as its own line.
+        local TM, tl = S.team, summary.team
+        for i = #tl, 1, -1 do tl[i] = nil end
+        if TM and TM.active then
+            if TM.focus then tl[#tl + 1] = "focus: " .. TM.focus.why end
+            if TM.peel then tl[#tl + 1] = "peel: " .. TM.peel.why end
+            if TM.interrupt then tl[#tl + 1] = "stop: " .. TM.interrupt.why end
+            if TM.switch then tl[#tl + 1] = "switch: " .. TM.switch.why end
+            if TM.healer then tl[#tl + 1] = "healer: " .. TM.healer.why end
+            if TM.overextended then tl[#tl + 1] = "overextended: " .. TM.overextended.why end
+            if TM.disengage then tl[#tl + 1] = "disengage: " .. TM.disengage.why end
+            if TM.objectives and TM.objectives.why ~= "" then tl[#tl + 1] = "flag: " .. TM.objectives.why end
+        end
         -- The bait (Stage 8): the one on the target, and the burst it holds.
         local BT = S.bait
         if BT and BT.target then

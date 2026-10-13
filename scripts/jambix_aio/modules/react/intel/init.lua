@@ -147,6 +147,13 @@ return function(P, lib)
     -- Stage 8: the baits, on the predictions, the threat, the ledger and
     -- the control plan.
     local bait = load("modules/react/intel/bait")(P, lib, data, weights)
+    -- Stage 9: the kill window, on the picture, the ledger, the threat and
+    -- the predictor; read by the states, the burst and the PvP hunter.
+    local killwindow = load("modules/react/intel/killwindow")(P, lib, data, weights)
+    lib.killwindow = killwindow
+    -- Stage 10: the teamfight, on the picture, the kill window and the control plan.
+    local team = load("modules/react/intel/team")(P, lib, data, weights)
+    lib.team = team
     -- Stage 4: the tactical state, the ground, and the words.
     local states = load("modules/react/intel/states")(P, lib, data, weights)
     local position = load("modules/react/intel/position")(P, lib, data, weights)
@@ -161,6 +168,7 @@ return function(P, lib)
     lib.debrief = debrief
     I.state, I.threat, I.cooldowns, I.data, I.weights = state, threat, cooldowns, data, weights
     I.states, I.position, I.explain, I.cc, I.predict, I.bait = states, position, explain, ccplan, predict, bait
+    I.kill, I.team = killwindow, team
     I.debrief, I.central, I.episodes, I.fieldcheck = debrief, central, episodes, fieldcheck
     I.S = state.S
     I.S.threat = threat.T
@@ -168,6 +176,8 @@ return function(P, lib)
     I.S.cc = ccplan.T
     I.S.predict = predict.T
     I.S.bait = bait.T
+    I.S.kill = killwindow.T
+    I.S.team = team.T
     I.S.debrief = debrief.T
     I.S.tactic = states.T
     I.S.pos = position.T
@@ -196,14 +206,19 @@ return function(P, lib)
             if cc then out[2] = (out[2] or "Intel:") .. " | " .. cc end
             -- The third row: the state, the move, and what the target tends to do.
             local st, mv, pr, bt = states.line(), position.line(), predict.line(S), bait.line(S)
-            if st or mv or pr or bt then
+            local kw = (killwindow.T.target and killwindow.T.line ~= "") and killwindow.T.line or nil
+            if st or mv or pr or bt or kw then
                 local bits = {}
                 if st then bits[#bits + 1] = st end
                 if mv then bits[#bits + 1] = mv end
+                if kw then bits[#bits + 1] = kw end
                 if pr then bits[#bits + 1] = pr end
                 if bt then bits[#bits + 1] = bt end
                 out[3] = "Intel: " .. table.concat(bits, " | ")
             end
+            -- A fourth row only in a fight with more than one player a side.
+            local tm = team.line()
+            if tm then out[#out + 1] = "Intel: " .. tm end
         end
         return out
     end
@@ -270,6 +285,8 @@ return function(P, lib)
             ccplan.reset()
             predict.reset()
             bait.reset()
+            killwindow.reset()
+            team.reset()
             states.reset()
             position.reset()
             return W.intel
@@ -282,6 +299,8 @@ return function(P, lib)
         if I.module_on("cc") then enforce_hold(W, W.intel, now) end
         if I.module_on("predict") then predict.update(W, W.intel, now) else predict.reset() end
         if I.module_on("bait") then bait.update(W, W.intel, now) else bait.reset() end
+        if I.module_on("kill") then killwindow.update(W, W.intel, now) else killwindow.reset() end
+        if I.module_on("team") then team.update(W, W.intel, now) else team.reset() end
         if I.module_on("tactics") then states.update(W, W.intel, now) else states.reset() end
         if I.module_on("position") then position.update(W, W.intel, now) else position.reset() end
         explain.update(W.intel, now)
