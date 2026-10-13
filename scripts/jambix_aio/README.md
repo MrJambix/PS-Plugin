@@ -2485,6 +2485,26 @@ the Reactions window's test bench: each moment a situation (*Replay:
 ...*), and *Replay over my fights* judges a reaction at all of them.
 `react/intel/replay.lua`. Test: `aio_intel_hookups_test`.
 
+**It acts on what it reads (Stage 14).** Everything but the move is
+pressed, through the same engine as every reaction: the enemy cast the
+team read picks is stopped (your interrupt, Scatter Shot, Wyvern Sting, a
+stun), an enemy on your healer or a hurt ally is peeled with your first
+tool in reach, your target is switched off a player an ally holds or onto
+a clearly better kill window, a free enemy healer gets Viper Sting, an
+ally's crowd control on your target holds your damage, a HIGH PvP threat
+fires your defensive and DISENGAGE breaks contact, and a cast-time spell
+waits while a player sure to interrupt it is in reach. It hears more
+(debuffs enemies put on you, enemy cast bars run to their end), remembers
+players and classes across sessions (*Opponent memory*,
+`scripts_data/jambix.aio.opponents.json`), reads line of sight from the
+client's own errors, Forever's diminishing returns from your measured
+controls, enemy mana and your allies' casts, and works for every class
+with its own interrupts, peels and finishers. Two field checks say
+whether your stops and peels worked. `rules/intel.lua`,
+`react/intel/memory.lua`. Tests: `aio_intel_execute_test`,
+`aio_intel_feeds_test`, `aio_intel_memory_test`,
+`aio_intel_blindspots_test`, `aio_intel_classes_test`.
+
 **Fight debriefs (`react/intel/debrief.lua`).** Each fight with a player,
 from its first tick to its end (won, lost, fled, reset, draw): who was in
 it, what each side used, the controls on you, your lows, the threat's

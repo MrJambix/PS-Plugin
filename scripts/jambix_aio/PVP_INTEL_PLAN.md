@@ -19,7 +19,9 @@ the scenario bench): §3.20. Stage 12 (performance): §3.21. Every stage is
 built; one pattern (chasing through bad terrain) is left out on purpose
 (§3.21). Stage 13 (the deferred hook-ups: the bait's burst hold, racial
 breakers, predictions in the advice, the recorded fights replayed): §3.23.
-None of it is seen in game yet.** The audit's §1.3 row
+Stage 14 (it reads and it presses, every class, more enemy spells, the
+opponent memory, the blind spots narrowed): §3.24. None of it is seen in
+game yet.** The audit's §1.3 row
 > for the Reactions page and the §1.11 / §1.12 mentions of `pvpmarks`,
 > `pvpx`, `plays` and `react/marks` describe the tree before §3.11; they are
 > kept as the record of what was there. Every statement below was read from the working tree on
@@ -1852,6 +1854,76 @@ advice after its own actions, a forming one absent; the recorded moments
 as situations; a reaction replayed (1 of 3). With the intel, bait,
 kill-window, tactics, window, hunter, reaction, boot, rotation and
 scenario suites: no new failure.
+
+### 3.24 Stage 14: it reads, and it presses — 2026-10-13
+
+The user asked what the layer lacked and what it actually did; the answer
+was mostly advice. Then: "don't add #1 or #8 [the window's reach, the
+release], go 2-7 and fix/add these capabilities; at the end of the day
+it's supposed to be automatic that it reads and executes (except
+movement)". Six commits, each pushed (no `header.lua`: nothing released).
+
+**Part 1, it presses (d1307c7).** Through the one engine, nothing that
+walks: the team read's interrupt pick (a heal on a low enemy, a control at
+an ally) is taken by the three cast-stopping reactions even when its
+caster is engaged with nobody (`lib.team_pick`; Wyvern Sting joins the
+hunter's); *Intel: peel for an ally* (78), *Intel: switch target* (69,
+off a player an ally holds, onto a clearly better kill window in reach,
+0.6 s dwell), *Intel: drain the healer* (58, Viper Sting); the hold keeps
+an ally's breakable control on your target and stops the running attack
+for it; *Defensive cooldown* fires on a HIGH or CRITICAL PvP threat,
+*Break contact* on DISENGAGE; the rotation's gate (`catalog_blocks`)
+refuses a cast-time spell while a player sure to interrupt stands in its
+interrupt's reach (`intel.press_veto`). All but the defensive and the
+escape stand down while the threat on you is HIGH.
+
+**Part 2, more enemy spells (e6bdc1d).** The API recorder shows Forever
+sends a player's spell events only for your target and soft target (42
+casts against 343 auras in 17 fights). Now: a debuff an enemy puts on you
+or your pet names its caster -- its cast, observed; and every enemy row's
+cast bar run to its end with no interrupt seen is a finished cast (a
+channel counts at its start). Each fight's feeds count both.
+
+**Part 3, memory (7b62820).** `intel/memory.lua`: each fight's players
+and their habit counts in `jambix.aio.opponents.json` (newest 300, by
+guid, faded by half a week), the dead among them (kept by reference as
+the fight goes: the picture drops a dead player at once). A habit's
+starting rate: your memory of that player, then the network's, then your
+own fights with its class. Never past the evidence: sure only on chances
+seen this session.
+
+**Part 4, the blind spots (44065fd).** Line of sight from the client's
+`UI_ERROR_MESSAGE` and from a shot of yours going out (2 s), else
+unknown; Forever's diminishing returns from your controls' measured
+durations (`fieldcheck.dr_ratio`, three of each step; a first control is
+full); an enemy's mana where the client answers (both numbers above zero,
+three players a second): a dry healer gets no Viper Sting and does not
+count against a kill; allies' casts from the party and raid events, a
+control an ally just cast at your target counted before its aura is read.
+Absorbs and terrain stay unread (no API; the walk map's rays).
+
+**Part 5, every class (d821de7).** `data.CLASS_KIT` (each class's
+stoppers, peels, finishers, bursts with their reaches); the team read,
+the kill window and the peel rule use your class's; `rules/intel.lua` is
+loaded for every class; a non-hunter's advice drops the hunter's names
+and takes its own kit; a melee class is never told to keep its distance.
+Found: the kill window charged every non-hunter "no damage ready";
+`lib.my_class` was called but never defined (the fight record's class
+read "?").
+
+**Part 6, the game checks it (4949a30).** Two field checks: a stop of
+yours ended the player's cast early, or not; a peel took the enemy off
+your ally within 3 s, or not.
+
+**Not done.** The Reactions window stays unreachable (the user's #1); no
+release (#8); absorbs, terrain and a second enemy healer's mana beyond the
+three-a-second read; movement stays yours.
+
+**Validation.** New `aio_intel_execute_test` (9), `aio_intel_feeds_test`
+(4), `aio_intel_memory_test` (6), `aio_intel_blindspots_test` (4),
+`aio_intel_classes_test` (5); `aio_intel_debrief_test`,
+`aio_intel_ccplan_test` updated. The layer costs 1.4 game calls a frame
+(`aio_intel_perf_test`, ceiling 3).
 
 ---
 
