@@ -174,15 +174,30 @@ return function(P, lib, data, K)
           end,
           avoid = { "a second defensive while covered", "Aimed Shot" } },
 
+        -- Also: you held by a player's control you cannot act through (the
+        -- scenario suite, 2026-10-12: polymorphed, the advice was still
+        -- Aimed Shot). Nothing of ours can be cast; the break-control
+        -- reaction decides the trinket.
         { name = "DEFENSIVE", priority = 90, emergency = true,
           enter = function(X)
               local T = X.T
+              local c = X.me.control
+              if c and c.helpless and c.from_player ~= false and (c.left or 0) >= KT.controlled_left then
+                  return true, string.format("you are held: %s %.1fs (%s%s)", tostring(c.kind), c.left or 0, tostring(c.name or "?"),
+                      c.from_player and ", a player's" or ""), 0.95
+              end
               if RANK[T.level] >= RANK.HIGH then return true, "threat " .. T.level .. " (" .. tostring(T.highest and T.highest.why or "") .. ")", 0.9 end
               if X.W.sit and X.W.sit.hp_low and X.S.attackers > 0 then return true, "low health with a player on you", 0.95 end
               return false
           end,
           actions = function(X, out)
               for i = #out, 1, -1 do out[i] = nil end
+              local c = X.me.control
+              if c and c.helpless and (c.left or 0) >= KT.controlled_left then
+                  out[1] = "break it if it costs more than the trinket is worth (the break-control reaction decides)"
+                  out[2] = "nothing else can be cast: queue nothing"
+                  return out
+              end
               local list = lib.cooldowns.cheapest(X.S.melee_attackers > 0 and "melee" or "spell", X.S)
               for i = 1, min(3, #list) do out[#out + 1] = list[i].name end
               if #out == 0 then out[1] = "no defensive ready: slow and step away" end

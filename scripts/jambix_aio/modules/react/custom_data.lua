@@ -727,6 +727,62 @@ D.BENCH_PRESETS = {
         pvp_overextended = false, pvp_disengage = false, pvp_ally_cc = false } },
 }
 
+-- The PvP intelligence's scenarios (PVP_INTEL_PLAN.md Stage 11-b; the same
+-- list tools/jtest/tests/aio_intel_scenarios_test.lua plays through the
+-- engine): each a fight with a player as the layer reads it, for your own
+-- reactions to be tried against. A scenario's fields over a calm PvP base.
+do
+    local BASE = { in_combat = true, hp = 80, power = 70, target = true, t_hp = 80, t_distance = 20, on_me = 1, melee_on_me = 0,
+                   engaged = 1, t_player = true, t_on_me = true, pvp = true, players = 1, where = "world_pvp", combat_time = 8,
+                   pet = true, pet_hp = 90, pvp_threat = "LOW", pvp_threat_score = 15, pvp_tactic = "SUSTAINED_PRESSURE",
+                   pvp_advice = "hold", t_kill_verdict = "NO_KILL_OPPORTUNITY", t_kill_conf = 0, pvp_bait = "none" }
+    local function scn(key, label, fields)
+        local s = {}
+        for k, v in pairs(BASE) do s[k] = v end
+        for k, v in pairs(fields) do s[k] = v end
+        D.BENCH_PRESETS[#D.BENCH_PRESETS + 1] = { key = key, label = "Scenario: " .. label, s = s }
+    end
+    scn("scn_gap_closer", "a warrior intercepted into melee", { t_name = "a warrior", t_distance = 3, melee_on_me = 1,
+        t_mobility = true, t_cd_seen = "Intercept", t_cd_ready = 28, pvp_tactic = "CONTROL_DISTANCE", pvp_advice = "increase",
+        pvp_threat = "MODERATE", pvp_threat_score = 35, me_dead_zone = false })
+    scn("scn_mobility_left", "a warrior at 15 yd, Intercept unseen", { t_name = "a warrior", t_distance = 15,
+        pvp_advice = "increase", t_cd_seen = "", t_mobility = false })
+    scn("scn_rogue_opener", "a rogue's Cheap Shot on me", { t_name = "a rogue", t_distance = 3, melee_on_me = 1, controlled = true,
+        control_helpless = true, pvp_tactic = "DEFENSIVE", pvp_threat = "MODERATE", pvp_threat_score = 40, combat_time = 1 })
+    scn("scn_rogue_reset", "a rogue vanished beside me", { target = false, t_name = "", on_me = 0, engaged = 0, players = 0,
+        pvp_tactic = "NONE", pvp_threat = "LOW", pvp_threat_score = 20 })
+    scn("scn_blink", "a mage blinked away", { t_name = "a mage", t_distance = 25, t_mobility = true, t_cd_seen = "Blink", t_cd_ready = 13 })
+    scn("scn_mage_cc", "a mage's Polymorph on me", { t_name = "a mage", t_distance = 25, controlled = true, control_helpless = true,
+        pvp_tactic = "DEFENSIVE", pvp_threat = "MODERATE", pvp_threat_score = 30 })
+    scn("scn_warlock_cast", "a warlock casting Fear at me", { t_name = "a warlock", t_distance = 12, t_casting = true,
+        t_cast_name = "Fear", t_cast_left = 1.2, t_interruptible = true, pvp_incoming_cast = true,
+        pvp_tactic = "INTERRUPT_OPPORTUNITY", pvp_threat = "MODERATE", pvp_threat_score = 30 })
+    scn("scn_healer_pressure", "a warrior on our healer", { t_name = "a warrior", t_on_me = false, on_me = 0, t_on_healer = true,
+        in_group = true, healer_alive = true, pvp_tactic = "PROTECT_ALLY", pvp_peel = true })
+    scn("scn_dead_zone", "a warrior in my dead zone", { t_name = "a warrior", t_distance = 6, me_dead_zone = true,
+        pvp_tactic = "CONTROL_DISTANCE", pvp_advice = "increase" })
+    scn("scn_pet_breaks_cc", "my pet on my trapped target", { t_name = "a warrior", t_distance = 3, t_cc_left = 8,
+        t_cc_value = "reset", t_cc_ours = true, pet_breaks_cc = true, pvp_tactic = "RESET_FIGHT", pvp_advice = "increase" })
+    scn("scn_outnumbered", "three rogues on me at 40%", { hp = 40, t_name = "a rogue", t_distance = 3, on_me = 3, melee_on_me = 3,
+        engaged = 3, players = 3, pvp_tactic = "DEFENSIVE", pvp_threat = "HIGH", pvp_threat_score = 70, pvp_focus_me = true,
+        pvp_disengage = true })
+    scn("scn_immunity", "a paladin bubbled at 15%", { t_name = "a paladin", t_hp = 15, t_defensive = true,
+        t_kill_verdict = "NO_KILL_OPPORTUNITY", t_kill_conf = 95, t_cd_seen = "Divine Shield" })
+    scn("scn_no_defensives", "three on me at 20%, nothing left", { hp = 20, t_name = "a rogue", t_distance = 3, on_me = 3,
+        melee_on_me = 3, engaged = 3, players = 3, pvp_tactic = "DISENGAGE", pvp_threat = "CRITICAL", pvp_threat_score = 90,
+        me_safe_escape = false })
+    scn("scn_low_dangerous", "a rogue at 20%, its outs unseen", { t_name = "a rogue", t_hp = 20, t_kill_verdict = "PREPARE_BURST",
+        t_kill_conf = 53, pvp_tactic = "KILL_WINDOW" })
+    scn("scn_incomplete", "a player the client gives no class", { t_name = "someone", t_hp = 15, t_kill_verdict = "PREPARE_BURST",
+        t_kill_conf = 30, pvp_tactic = "KILL_WINDOW" })
+    scn("scn_wrong_prediction", "a warrior that changed its opener", { t_name = "a warrior", t_pattern = "same_opener",
+        t_pattern_conf = 50, t_pattern_rel = 40 })
+    scn("scn_pvp_to_pve", "the player dead, a mob on me", { t_player = false, t_name = "a wolf", t_distance = 3, players = 0,
+        pvp = false, pvp_tactic = "NONE", pvp_threat = "INFORMATIONAL", pvp_threat_score = 0 })
+    scn("scn_missing_ability", "Forever: no combat log, no sight ray", { t_name = "a warrior", t_distance = 20,
+        pvp_tactic = "SUSTAINED_PRESSURE" })
+end
+
 D.LIBRARY_EXAMPLE = [[-- Your class's own Lua, shared by every reaction of the class.
 -- A function made here can be called from any Lua condition or
 -- action, and picked in the GUI as "My Lua function".

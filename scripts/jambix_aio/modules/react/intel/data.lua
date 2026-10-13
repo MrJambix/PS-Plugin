@@ -260,7 +260,13 @@ D.PATTERNS = {
 }
 --- The brief's patterns this stage does not read, and why.
 D.NOT_BUILT_PATTERNS = {
-    chasing_bad_terrain = "needs the walk map's clear line behind the player (not read here)",
+    -- Looked at again for Stage 12 (2026-10-12) and left out on purpose:
+    -- walkmap.clear_line is free, but asking it wakes the walk map, which
+    -- then casts rays round you every tick (jcore/services/walkmap.lua,
+    -- COST) -- the ray path the Forever M2HitTest crashes came through.
+    -- Without its rays the map knows only objects and stuck spots, so the
+    -- read would be "unknown" nearly always. Built once rays are safe there.
+    chasing_bad_terrain = "needs the walk map awake in a fight (rays round you every tick, the path of the Forever ray crashes); without its rays the terrain is unknown",
 }
 --- The inputs a miss rests on, in words (T.inputs).
 D.INPUT_WORDS = {

@@ -13,7 +13,11 @@
 > brief's Phase 6: opponent prediction): §3.13. Stage 8 (the brief's Phase
 > 7: bait detection): §3.14. Stage 11-a (the fight debrief and the shared
 > network, the brief's Phase 16 in part, on the user's requests of
-> 2026-10-12): §3.15 and `CENTRAL_NETWORK.md`. The rest is not.** The audit's §1.3 row
+> 2026-10-12): §3.15 and `CENTRAL_NETWORK.md`. Stage 9 (the kill window):
+§3.18. Stage 10 (teamfights): §3.19. Stage 11-b (the history ledger and
+the scenario bench): §3.20. Stage 12 (performance): §3.21. Every stage is
+built; one pattern (chasing through bad terrain) is left out on purpose
+(§3.21). None of it is seen in game yet.** The audit's §1.3 row
 > for the Reactions page and the §1.11 / §1.12 mentions of `pvpmarks`,
 > `pvpx`, `plays` and `react/marks` describe the tree before §3.11; they are
 > kept as the record of what was there. Every statement below was read from the working tree on
@@ -1612,6 +1616,131 @@ unchanged, nothing new explains the crashes they answer.
 (the pet test rewritten), `aio_intel_bait_test`, `aio_intel_central_test`
 (one issue per fight), new `aio_intel_fieldcheck_test` (5), new
 `jcore_units_item_test` (fails on the old sweep). Node: 27.
+
+### 3.18 Stage 9 delivered (the brief's Phase 10, kill window analysis) — 2026-10-12
+
+On the user's "go for the rest of the phases". **New**: `intel/killwindow.lua`.
+A verdict per enemy player (the nearest ten), five times a second:
+NO_KILL_OPPORTUNITY (dead, immune, or not low), ABORT_COMMITMENT (the
+threat CRITICAL; you under 35% with it HIGH; under 5 s to live),
+FORCE_DEFENSIVE (low, a defensive or escape of its seen *ready*),
+BUILD_PRESSURE (a defensive *up*: wait it out; or middling health),
+PREPARE_BURST, HIGH_CONFIDENCE_KILL_WINDOW. The confidence starts at 0.95
+and pays for what stands against the kill (`score.lua` KILL): each escape
+or defensive seen ready, each **never seen** (counted as available, at a
+smaller cost -- missing information never makes a kill surer), an enemy
+healer within 40 yd and not held, a class that heals itself, each other
+player on you, no damage of ours ready, the class unread; an ally on it
+adds. The escapes are `data.CLASS_ESCAPES` (Classic class abilities), the
+defensives `CLASS_DEFENSIVES`, read through Stage 3's ledger. Effective
+health counts a defensive up as cover; known absorbs are not read (no
+client answers them), so they are not counted.
+
+**Read by**: the KILL_WINDOW state (its words and confidence; without a
+verdict, the old read at 0.5), `burst.lua` `should_open` (a kill window
+opens the window at once; a defensive to draw or an abort keeps it shut;
+players only), the PvP hunter's "finish the low one" (a kill window, or a
+burst to line up under the finish line), the conditions
+`target.kill_verdict` / `target.kill_conf`, the bench, the Live view's
+*Kill:* line, the readout's third row.
+
+**Validation.** New `aio_intel_killwindow_test` (7); `aio_intel_tactics_test`
+(the paladin's kill window at 0.33, its five outs never seen),
+`aio_intel_window_test`, `aio_hunter_pvp_test` (+1).
+
+### 3.19 Stage 10 delivered (the brief's Phase 12, multiplayer) — 2026-10-12
+
+**New**: `intel/team.lua`, four times a second, only with more than one
+player a side (a group, or two enemy players): the **focus** (the friendly
+unit most enemies target, 2 or more; a tie stays on you); the **peel** (an
+enemy on your healer or on an ally under 50%, not held, and the first tool
+of ours ready that reaches it -- `score.lua` TEAM: Scatter Shot 8-15 yd,
+Intimidation with the pet on it, Wyvern Sting and Concussive Shot 8-35,
+Wing Clip in melee; the dead zone reaches nothing and says so); the
+**interrupt priority** across casters (`data.HEALS` and `CONTROL_NAMES` name
+the cast: a heal scored by how low the healed player is, then a control at
+one of us, then a damaging cast at one of us with its danger; the first a
+stopper of ours reaches); the **switch** (your target immune, or held by an
+ally's control -- friendly crowd control, from the control row's caster --
+or a kill window on another player); the **enemy healer** (free or held;
+Viper Sting for its mana, or a control while the kill lands);
+**overextension** (in a group, the nearest ally past 30 yd with two
+enemies within 30) and **disengage** (more players on you than you and the
+allies near you); the **flag carriers** (from the picture; no base data).
+
+PROTECT_ALLY takes the peel's words and puts its tool first;
+INTERRUPT_OPPORTUNITY also enters on a heal or a control the team module
+names (below HIGH threat), with its tool on its caster; PEEL_ENEMY leaves a
+player an ally holds. Eight conditions (`fight.team_focus_me`, `team_peel`,
+`team_interrupt`, `team_switch`, `healer_free`, `overextended`,
+`disengage`, `ally_cc_target`), bench toggles, a fourth readout row and the
+Live view's *Team:* lines. **Limits**: allies' cooldowns are unreadable, so
+only our own overlap is prevented; no Retail arena assumption; Forever's
+battleground rules UNKNOWN.
+
+**Validation.** New `aio_intel_team_test` (7).
+
+### 3.20 Stage 11-b delivered (the history ledger and the scenario bench) — 2026-10-12
+
+**New**: `intel/history.lua`. It opens and closes with the debrief's fight
+(one fight, one definition). A ring of 60 entries a fight: each change of
+the state or its first action (with the threat, the target's top
+prediction and why), each batch of forecasts scored (confirmed and
+contradicted). Five metrics, no kill or win rate: prediction accuracy
+(this fight's share of the predictor's ledger; none scored reads "no
+forecast", never 0%), cooldown preservation (a major spent while
+`cooldowns.sufficient` held), overlap (our control on a player held with
+1 s or more left; our defensive while another covers), stability (state
+changes per 10 s), invalid advice (a first action naming an ability of
+ours not trained or not ready). The newest 100 fights in
+`scripts_data/jambix.aio.history.json`; the Reactions page's live lines and
+the Live view; on Forever one line to the recorder's trace per fight.
+Switch `intel_history`. **Across sessions** means this file: totals over
+the kept fights; the replay of recorded fights through the engine is not
+built (the bench plays situations, not recordings).
+
+**New**: `tests/aio_intel_scenarios_test.lua`, the eighteen scenarios of
+§3.3's list, each with its setup, events, expected state, expected and
+forbidden advice, explanation and fallback; `custom_data.BENCH_PRESETS`
+gains the same eighteen (`scn_*`). Two gaps found and fixed: a hunter
+polymorphed or stunned by a player was still advised Aimed Shot or the
+clip (DEFENSIVE now enters on a helpless control from a player with 1 s or
+more left -- `TACTIC.controlled_left` -- and asks for no cast); a rogue's
+Vanish turned the layer off unless the PvP hunter's mode was on (a
+vanished player is now a sign in `state.lua`).
+
+**Validation.** New `aio_intel_history_test` (4), `aio_intel_scenarios_test` (19).
+
+### 3.21 Stage 12 delivered (the brief's Phase 17, performance) — 2026-10-12
+
+**New**: `tests/aio_intel_perf_test.lua`: the engine's tick at 60 fps for
+2 s with eleven enemy players and four allies, the layer on against off,
+every method of every game object counted. The first measure was 22 calls
+a frame of the layer's own, nearly all `is_valid` / `is_dead` from the
+debrief's and the episodes' death check on every player every frame;
+`lib.unit_dead` now keeps its answer 0.25 s a unit (the rows' `dead` flag
+still says a death at once): **1.4 a frame**, ceiling 3. The test also holds
+each module to its pace (kill window 0.2 s, team 0.25 s, history 0.5 s),
+the ten-player cap, line of sight through `geometry.sight` only at most
+twice a second, and `is_line_of_sight` called zero times (Era and
+Forever). Stale state: `jcore.target.changed` (the kill window and the team
+read again at once; the hold's re-stop key cleared), `UNIT_PET` for the
+player (the pet's recall stands down), `PLAYER_LOGOUT` (the history fight
+closed and written, the picture invalidated) join the existing
+`jcore.unit.removed`, `jcore.zone.changed`, `jcore.player.died`,
+`PLAYER_ENTERING_WORLD`. Alerts were already de-duplicated (`explain.lua`
+SAY_EVERY and the change-only banners).
+
+**Not built, and why**: *chasing through bad terrain* (Stage 7's tenth
+pattern). `walkmap.clear_line` is cheap, but any query wakes the walk map,
+which then casts rays round the player every tick -- the ray path behind
+the Forever M2HitTest crashes (§3.17, `geometry.lua`); without its rays the
+map knows only objects and stuck spots, and the read would be UNKNOWN
+nearly always. `data.NOT_BUILT_PATTERNS` says so; it can be built once
+rays are safe on Forever.
+
+**Validation.** New `aio_intel_perf_test` (3). The intel, reaction, window,
+boot and hunter suites together: see the commit.
 
 ### 3.22 The second live batch — 2026-10-13
 

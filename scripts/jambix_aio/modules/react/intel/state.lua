@@ -774,6 +774,9 @@ return function(P, lib)
         if S.foes_n > 0 and S.attackers == 0 then signs[#signs + 1] = string.format("%d enemy player(s) within %d yd", S.players, REACH) end
         local ctl = V and (V.control or V.root or V.snare) or nil
         if ctl and ctl.from_player then signs[#signs + 1] = "a player's control on you" end
+        -- A player that vanished beside you is still the fight (the scenario
+        -- suite: without the PvP hunter's mode the layer went quiet on it).
+        if V and V.vanished then signs[#signs + 1] = "a player vanished beside you" end
         if W.env.context == "pvp" and not m.bg and not m.arena then signs[#signs + 1] = "a PvP instance" end
         local ph = P.pvphunter
         if ph and ph.mode and try(ph.mode) == true then signs[#signs + 1] = "the PvP hunter's mode" end

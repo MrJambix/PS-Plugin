@@ -93,13 +93,31 @@ return function(P, lib)
     -- fight's outcome): live on 2026-10-12 a rogue's Vanish and a druid
     -- slipping out of sight were both recorded as deaths, two fights as
     -- won. A unit that is no longer valid has left; it did not die.
+    -- Stage 12: the answer is kept DEAD_EVERY seconds a unit (the debrief
+    -- and the episodes ask for every player of the fight every frame: two
+    -- calls into the game a player a frame, measured by aio_intel_perf_test);
+    -- the rows' dead flag still says a death at once.
     if lib.unit_dead == nil then
+        local DEAD_EVERY = 0.25
+        local dead_seen = setmetatable({}, { __mode = "k" })
+        local function now_s() return type(core) == "table" and type(core.time) == "function" and core.time() or 0 end
         lib.unit_dead = function(unit)
             if not unit then return false end
+            local now = now_s()
+            local c = dead_seen[unit]
+            if c and (now - c.at) < DEAD_EVERY and now >= c.at then return c.v end
+            local v = false
             local okv, valid = pcall(function() return unit:is_valid() end)
-            if not okv or valid ~= true then return false end
-            local okd, dead = pcall(function() return unit:is_dead() end)
-            return okd and dead == true
+            if okv and valid == true then
+                local okd, dead = pcall(function() return unit:is_dead() end)
+                v = okd and dead == true
+            end
+            if type(unit) == "table" or type(unit) == "userdata" then
+                c = c or {}
+                c.at, c.v = now, v
+                dead_seen[unit] = c
+            end
+            return v
         end
     end
 
@@ -166,9 +184,12 @@ return function(P, lib)
     -- Stage 11-a: the lessons of each fight, after everything else has read the tick.
     local debrief = load("modules/react/intel/debrief")(P, lib, data, weights)
     lib.debrief = debrief
+    -- Stage 11-b: the history ledger, on the debrief's fight.
+    local history = load("modules/react/intel/history")(P, lib, data, weights)
+    lib.history = history
     I.state, I.threat, I.cooldowns, I.data, I.weights = state, threat, cooldowns, data, weights
     I.states, I.position, I.explain, I.cc, I.predict, I.bait = states, position, explain, ccplan, predict, bait
-    I.kill, I.team = killwindow, team
+    I.kill, I.team, I.history = killwindow, team, history
     I.debrief, I.central, I.episodes, I.fieldcheck = debrief, central, episodes, fieldcheck
     I.S = state.S
     I.S.threat = threat.T
@@ -306,6 +327,8 @@ return function(P, lib)
         explain.update(W.intel, now)
         episodes.update(W, W.intel, now)
         debrief.update(W, W.intel, now)
+        local okh, errh = pcall(history.update, W, W.intel, now)
+        if not okh and P.log and type(P.log.once) == "function" then pcall(P.log.once, "warn", "history", "history ledger failed: " .. tostring(errh)) end
         last_W = W
         local okf, errf = pcall(fieldcheck.update, W, W.intel, now)
         if not okf and P.log and type(P.log.once) == "function" then pcall(P.log.once, "warn", "fieldcheck", "field checks failed: " .. tostring(errf)) end
@@ -356,6 +379,7 @@ return function(P, lib)
             if type(args) ~= "table" or args[1] ~= "player" then return end
             pcall(fieldcheck.on_our_cast, lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, last_W, state.S, clock())
             debrief.on_our_cast(args[3], state.S.env.target.guid, clock())
+            pcall(history.on_our_cast, lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, state.S.env.target.guid, state.S, clock())
             episodes.on_our_cast(lib.spell_name and lib.spell_name(tonumber(args[3])) or nil, state.S.env.target.guid, clock())
             if not I.module_on("predict") then return end
             predict.on_our_cast(state.S, args[3], state.S.env.target.guid, clock())
@@ -407,6 +431,27 @@ return function(P, lib)
         ctx.on("jcore.player.died", function() state.invalidate("you died") end)
         ctx.on("jcore.game_event.PLAYER_ENTERING_WORLD", function() state.invalidate("entering the world") end)
         ctx.on("jcore.combat.leave", function() state.combat_end() end)
+        -- Stage 12: the rest of the stale state. A new target: the kill
+        -- window and the team read again at once (never the old target's
+        -- verdict for a tick), the hold's re-stop forgets the old key.
+        ctx.on("jcore.target.changed", function()
+            killwindow.T.at, team.T.at = -math.huge, -math.huge
+            hold_stop.key = nil
+        end)
+        -- A new or dismissed pet: the recall asked of the old one stands down.
+        ctx.on("jcore.game_event.UNIT_PET", function(args)
+            if type(args) ~= "table" or args[1] ~= "player" then return end
+            local p = ccplan.T.pet
+            if p then p.recall, p.guid, p.name, p.why = false, nil, nil, "" end
+            team.T.at = -math.huge
+        end)
+        -- Logging out: the fight's history is closed and written, then every player forgotten.
+        ctx.on("jcore.game_event.PLAYER_LOGOUT", function()
+            pcall(history.on_logout, state.S, clock())
+            state.invalidate("logging out")
+            killwindow.reset()
+            team.reset()
+        end)
     end
 
     return I

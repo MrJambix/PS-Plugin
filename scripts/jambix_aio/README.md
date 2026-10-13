@@ -2346,8 +2346,8 @@ my minimum ranged distance*, *A safe escape is available* (`fight.tactic`,
 **On the page and in the window (Stage 5).** The Reactions page's
 *Advanced PvP Intelligence* section holds the layer's emergency switch, the
 alerts, and one switch per module (threat, cooldowns, tactics, positioning,
-kill windows, teamfight awareness; the four not built yet under advanced,
-each naming its stage); a module off reads calm. The Reactions window's
+kill windows, teamfight awareness, control planning, prediction, baiting,
+the debriefs, the episodes, the history ledger); a module off reads calm. The Reactions window's
 Try-it bench has a *PVP INTELLIGENCE* group whose fields build a made-up
 picture, so every intel condition can be tried without a fight (the
 situation *PvP: a warrior bursting on me* has them set), and *From the
@@ -2430,6 +2430,50 @@ Shot a mobility or a trinket bait asks for, under the survival and escape
 bands, once per player per 10 to 15 s. The third intel row, the Live view's
 *Bait* line and the condition *PvP bait on my target* (`fight.bait`) carry
 it. Switch: *Cooldown baiting*. Test: `aio_intel_bait_test`.
+
+**The kill window (Stage 9, `react/intel/killwindow.lua`).** For each enemy
+player, is it about to die or to get away: *no kill*, *build pressure*,
+*force a defensive* (one of its outs seen ready: draw it first), *prepare
+the burst*, *a high-confidence kill window*, or *abort* (you are the one in
+danger). Its escapes and defensives are read through the cooldown ledger as
+ready, down or never seen; a never-seen one counts as available at a cost,
+so missing information never makes a kill surer. An enemy healer near it,
+its own heals, your burst and mana, other players on you and allies on it
+weigh in. The KILL_WINDOW state speaks with its words; the burst window
+opens at once on a kill window and stays shut on a defensive to draw or an
+abort; the PvP hunter's "finish the low one" asks it. Conditions: *The kill
+window on my target* and *...how sure %*. Switch: *Kill window detection*.
+Test: `aio_intel_killwindow_test`.
+
+**Teamfights (Stage 10, `react/intel/team.lua`).** With more than one
+player a side: whom the enemies focus; a peel (an enemy on your healer or a
+hurt ally, with the first tool of yours that reaches it, never one an ally
+already holds); which enemy cast to stop first (a heal on a low enemy, then
+a control at one of you) and with what; a better target (yours immune or
+held by an ally's control, or a kill window elsewhere); the enemy healer
+free; overextended from your group; outnumbered (disengage). PROTECT_ALLY
+and INTERRUPT_OPPORTUNITY take its picks; a fourth readout row, the Live
+view's *Team:* lines and eight *Teamfight:* conditions carry it. Allies'
+cooldowns cannot be read. Switch: *Teamfight awareness*. Test:
+`aio_intel_team_test`.
+
+**The history ledger (Stage 11-b, `react/intel/history.lua`).** How good
+the advice was, fight by fight: forecasts scored and right, major cooldowns
+spent while another defensive was already enough, controls and defensives
+that overlapped, how often the advice changed, advice you could not follow
+(not trained, not ready). No win rate. The newest 100 fights in
+`scripts_data/jambix.aio.history.json`, on the Reactions page and in the
+Live view; on Forever a line to the recorder's trace. Switch: *History
+ledger*. The brief's eighteen scenarios are played through the engine by
+`aio_intel_scenarios_test` and are bench presets (*Situation: Scenario:
+...*). Test: `aio_intel_history_test`.
+
+**What it costs (Stage 12).** `aio_intel_perf_test` plays ten enemy players
+and four allies at 60 fps: the layer's own calls into the game are held
+under 3 a frame (1.4 measured), each module at its pace, line of sight only
+through `geometry.sight` at most twice a second and never the client's
+`is_line_of_sight`. A new target, a new pet and logging out drop the state
+they make stale.
 
 **Fight debriefs (`react/intel/debrief.lua`).** Each fight with a player,
 from its first tick to its end (won, lost, fled, reset, draw): who was in

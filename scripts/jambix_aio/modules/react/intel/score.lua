@@ -147,6 +147,9 @@ S.TACTIC = {
     counter_window = 12.0,
     -- Our Freezing Trap with this much left is a reset (pvphunter's RESET_MIN_LEFT).
     reset_left = 3.0,
+    -- Held by a control you cannot act through with this much left: DEFENSIVE
+    -- says so and asks for no cast (a global cooldown's worth).
+    controlled_left = 1.0,
 }
 S.POSITION = {
     -- Auto Shot aims for half a second (kite.lua AIM_TIME); a move inside
