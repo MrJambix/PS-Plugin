@@ -2,3 +2,4 @@
 {"at":"2026-10-13T01:13:45.717Z","kind":"cycle","action":"reject","failed":["contributors","content"],"material":"the first model","candidate":{"fights":20,"contributors":1,"observations":83,"episodes":38,"quarantined":6}}
 {"at":"2026-10-13T01:42:28.134Z","kind":"cycle","action":"reject","failed":["contributors","content"],"material":"the first model","candidate":{"fights":20,"contributors":1,"observations":90,"episodes":39,"quarantined":0}}
 {"at":"2026-10-14T00:59:44.746Z","kind":"cycle","action":"reject","failed":["contributors","content"],"material":"the first model","candidate":{"fights":28,"contributors":1,"observations":136,"episodes":66,"quarantined":0}}
+{"at":"2026-10-18T18:31:11.600Z","kind":"cycle","action":"reject","failed":["content"],"material":"the first model","candidate":{"fights":30,"contributors":2,"observations":147,"episodes":68,"quarantined":0}}
