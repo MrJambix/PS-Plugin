@@ -2,6 +2,100 @@
 
 What each learning cycle took in, what the network knows, what changed and what players get. Newest first.
 
+## 2026-10-22 06:46 UTC -- no new version: not enough to go on yet
+
+**New since the last cycle:** 16 fight(s) from 1 contributor(s) -- Forever: hunter vs paladin + priest + rogue; Forever: hunter vs druid + paladin + rogue x2; Forever: hunter vs mage + paladin + priest + rogue + warlock; Forever: hunter vs druid + hunter + mage + paladin + priest; Forever: hunter vs druid + paladin + priest + rogue + warlock; Forever: hunter vs paladin; Forever: hunter vs rogue x2; Forever: hunter vs ? + druid + hunter + rogue; Forever: hunter vs druid + rogue + warlock; Forever: hunter vs druid; Forever: hunter vs druid + hunter + paladin + priest + rogue; Forever: hunter vs priest; Forever: hunter vs priest + rogue; Forever: hunter vs warlock (fled 6, won 8, lost 2).
+**In all:** 49 fight(s) from 2 player(s), 197 prediction check(s), 106 decision episode(s).
+
+### The fights (new since the last cycle)
+| Received (UTC) | Fight | Result | Length | Checks | Episodes | What became of it |
+|---|---|---|---|---|---|---|
+| 2026-10-22 05:23 | Forever: hunter 30 vs paladin + rogue x2 + priest x2 | fled | 53 s | 2 | 2 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs paladin + druid + rogue | fled | 46 s | 5 | 5 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs paladin + rogue + mage + priest x2 + warlock | fled | 59 s | 4 | 3 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs paladin x2 + mage + hunter + druid + priest | fled | 77 s | 6 | 3 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs rogue + paladin x3 + priest + warlock + druid | won | 61 s | 6 | 3 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs paladin | fled | 17 s | 1 | 1 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs druid + rogue + paladin | fled | 58 s | 3 | 0 | used |
+| 2026-10-22 05:23 | Forever: hunter 30 vs rogue | won | 16 s | 3 | 3 | used |
+| 2026-10-22 06:36 | Forever: hunter 30 vs hunter + druid + rogue | lost | 16 s | 2 | 3 | used |
+| 2026-10-22 06:36 | Forever: hunter 30 vs druid x2 + warlock + rogue | won | 51 s | 5 | 2 | used |
+| 2026-10-22 06:36 | Forever: hunter 30 vs druid | won | 14 s | 3 | 1 | used |
+| 2026-10-22 06:36 | Forever: hunter 30 vs priest + druid x2 + hunter x2 + rogue + paladin | lost | 24 s | 2 | 3 | used |
+| 2026-10-22 06:36 | Forever: hunter 30 vs priest | won | 1 s | 0 | 1 | used |
+| 2026-10-22 06:36 | Forever: hunter 30 vs priest | won | 6 s | 2 | 1 | used |
+| 2026-10-22 06:37 | Forever: hunter 30 vs rogue | won | 1 s | 2 | 1 | used |
+| 2026-10-22 06:37 | Forever: hunter 30 vs warlock | won | 3 s | 0 | 1 | used |
+
+### What players get
+- Nothing changes for players. Gates not passed: calibration (calibration error 0.205 on 44 forecast(s), limit 0.15).
+
+### What the network knows on Forever
+
+| Opponent | Habit | Rate | Checks | Fights | Status |
+|---|---|---|---|---|---|
+| Rogue | closes the gap when slowed | 15% | 11 | 10 | not used yet: 11 of 20 checks, 9.3 of 10 independent fights' worth, one player holds most of it |
+| Paladin | goes for your pet | 36% | 12 | 6 | not used yet: 12 of 20 checks, 5.1 of 10 independent fights' worth |
+| Warlock | goes for your pet | 73% | 9 | 7 | not used yet: 9 of 20 checks, 6.2 of 10 independent fights' worth |
+| Paladin | uses a defensive at a health line | 27% | 9 | 6 | not used yet: 9 of 20 checks, 4.8 of 10 independent fights' worth, one player holds most of it |
+| Druid | goes for your pet | 46% | 9 | 4 | not used yet: 9 of 20 checks, 3.2 of 10 independent fights' worth |
+| Warrior | closes the gap when slowed | 9% | 9 | 4 | not used yet: 9 of 20 checks, 1 of 2 players, 3.2 of 10 independent fights' worth |
+| Hunter | uses a defensive at a health line | 13% | 6 | 5 | not used yet: 6 of 20 checks, 1 of 2 players, 4.5 of 10 independent fights' worth |
+| Hunter | goes for your pet | 50% | 6 | 4 | not used yet: 6 of 20 checks, 1 of 2 players, 3.6 of 10 independent fights' worth |
+| Druid | closes the gap when slowed | 14% | 5 | 5 | not used yet: 5 of 20 checks, 5 of 10 independent fights' worth, one player holds most of it |
+| Priest | uses a defensive at a health line | 29% | 5 | 5 | not used yet: 5 of 20 checks, 5 of 10 independent fights' worth |
+| Paladin | backs off under pressure | 71% | 5 | 5 | not used yet: 5 of 20 checks, 5 of 10 independent fights' worth |
+| Rogue | goes for your pet | 13% | 46 | 6 | not used yet: 2.5 of 10 independent fights' worth, one player holds most of it |
+| Warlock | interrupts your casts | 88% | 6 | 3 | not used yet: 6 of 20 checks, 2 of 10 independent fights' worth, one player holds most of it |
+| Rogue | breaks your control at once | 17% | 4 | 3 | not used yet: 4 of 20 checks, 2.7 of 10 independent fights' worth |
+| Rogue | uses a defensive at a health line | 17% | 4 | 3 | not used yet: 4 of 20 checks, 2.7 of 10 independent fights' worth, one player holds most of it |
+| Priest | goes for your pet | 50% | 4 | 3 | not used yet: 4 of 20 checks, 2.7 of 10 independent fights' worth |
+| Druid | interrupts your casts | 89% | 7 | 2 | not used yet: 7 of 20 checks, 1 of 2 players, 1.7 of 10 independent fights' worth |
+| Warrior | uses a defensive at a health line | 20% | 3 | 3 | not used yet: 3 of 20 checks, 1 of 2 players, 3 of 10 independent fights' worth |
+| Warrior | goes for your pet | 57% | 5 | 2 | not used yet: 5 of 20 checks, 1 of 2 players, 1.5 of 10 independent fights' worth |
+| Shaman | interrupts your casts | 92% | 10 | 1 | not used yet: 10 of 20 checks, 1 of 2 players, 1 of 10 independent fights' worth |
+| ... | 12 more | | | | |
+
+Tactics (associations, never causes):
+- not yet: trading a minor cooldown, not a major one against a paladin (matchup): minor 8 / major 2 episode(s); arms of 8 and 2 measured episode(s), each needs 6; arms over 6 and 2 fight(s), each needs 3
+- not yet: trading a minor cooldown, not a major one against a rogue (matchup): minor 6 / major 3 episode(s); arms of 6 and 3 measured episode(s), each needs 6; arms over 5 and 2 fight(s), each needs 3
+- not yet: controlling the distance against a rogue (matchup): followed 1 / not followed 5 episode(s); arms of 1 and 5 measured episode(s), each needs 6; arms over 1 and 4 fight(s), each needs 3
+
+### What the network knows on Vanilla
+
+| Opponent | Habit | Rate | Checks | Fights | Status |
+|---|---|---|---|---|---|
+| Rogue | repeats its opener | 75% | 2 | 1 | not used yet: 2 of 20 checks, 1 of 2 players, 1 of 10 independent fights' worth |
+| Rogue | uses a defensive at a health line | 25% | 2 | 1 | not used yet: 2 of 20 checks, 1 of 2 players, 1 of 10 independent fights' worth |
+
+Tactics (associations, never causes):
+- not yet: trading a minor cooldown, not a major one against a rogue (matchup): minor 2 / major 0 episode(s); arms of 2 and 0 measured episode(s), each needs 6; arms over 1 and 0 fight(s), each needs 3; 1 contributor(s), needs 2
+- not yet: controlling the distance against a rogue (matchup): followed 0 / not followed 1 episode(s); arms of 0 and 1 measured episode(s), each needs 6; arms over 0 and 1 fight(s), each needs 3; 1 contributor(s), needs 2
+
+### Weights check
+- Forever: does the threat level tell the dangerous moments? **separates** -- things got worse after 70% of HIGH/CRITICAL moments against 39% of LOW ones.
+- Vanilla: does the threat level tell the dangerous moments? **not yet** -- 1 measured moment(s) at HIGH or CRITICAL and 0 at LOW or below; each side needs 8.
+
+### Changes since the last cycle
+- moved: Forever rogue: breaks your control at once 25% -> 17% (2 -> 4 checks)
+- moved: Forever rogue: backs off under pressure 67% -> 75% (1 -> 2 checks)
+- moved: Forever rogue: closes the gap when slowed 33% -> 15% (4 -> 11 checks)
+- moved: Forever rogue: uses a defensive at a health line 33% -> 17% (1 -> 4 checks)
+- new: Forever rogue: interrupts your casts -- 67% over 1 check(s)
+- moved: Forever druid: goes for your pet 71% -> 46% (5 -> 9 checks)
+- moved: Forever druid: uses a defensive at a health line 33% -> 25% (1 -> 2 checks)
+- moved: Forever druid: backs off under pressure 67% -> 75% (1 -> 2 checks)
+- moved: Forever druid: closes the gap when slowed 33% -> 14% (1 -> 5 checks)
+- moved: Forever hunter: backs off under pressure 67% -> 75% (1 -> 2 checks)
+- moved: Forever priest: uses a defensive at a health line 20% -> 29% (3 -> 5 checks)
+- moved: Forever priest: goes for your pet 75% -> 50% (2 -> 4 checks)
+- moved: Forever paladin: uses a defensive at a health line 22% -> 27% (7 -> 9 checks)
+- moved: Forever paladin: backs off under pressure 60% -> 71% (3 -> 5 checks)
+- moved: Forever paladin: goes for your pet 56% -> 36% (7 -> 12 checks)
+- new: Forever mage: goes for your pet -- 67% over 1 check(s)
+
+<sub>A habit is used once it has 20 checks from 2+ players over 10+ independent fights' worth, forecasts within an error of 0.3, and half its inputs verified; a client starts from it only with 10+ fights behind it. A tactic needs 6+ measured episodes on each side over 3+ fights from 2+ players.</sub>
+
 ## 2026-10-21 01:00 UTC -- no new version: not enough to go on yet
 
 **New since the last cycle:** 1 fight(s) from 1 contributor(s) -- Vanilla: warrior vs hunter + priest + shaman + warrior (fled 1).
