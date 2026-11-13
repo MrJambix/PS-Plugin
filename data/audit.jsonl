@@ -11,3 +11,4 @@
 {"at":"2026-10-23T06:46:35.533Z","kind":"cycle","action":"reject","failed":["calibration"],"material":"the first model","candidate":{"fights":68,"contributors":2,"observations":234,"episodes":145,"quarantined":0}}
 {"at":"2026-10-24T06:42:36.847Z","kind":"cycle","action":"reject","failed":["calibration"],"material":"the first model","candidate":{"fights":69,"contributors":2,"observations":234,"episodes":147,"quarantined":0}}
 {"at":"2026-11-05T06:32:01.486Z","kind":"cycle","action":"reject","failed":["calibration"],"material":"the first model","candidate":{"fights":70,"contributors":2,"observations":234,"episodes":148,"quarantined":0}}
+{"at":"2026-11-13T00:42:27.426Z","kind":"cycle","action":"reject","failed":["calibration"],"material":"the first model","candidate":{"fights":73,"contributors":2,"observations":238,"episodes":152,"quarantined":0}}
